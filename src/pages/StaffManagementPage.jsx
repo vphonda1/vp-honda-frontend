@@ -12,6 +12,49 @@ import html2pdf from 'html2pdf.js';
 const ADMIN_PASSWORD = 'vphonda@123';
 const MONTHS = ['April','May','June','July','August','September','October','November','December','January','February','March'];
 
+const StaffFormFields = ({ data, setData, showBank = true }) => (
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <div><label className="text-slate-400 text-xs mb-1 block">नाम *</label>
+        <Input value={data.name || ''} onChange={e => setData({ ...data, name: e.target.value })} className="bg-slate-700 text-white border-slate-600" placeholder="पूरा नाम" /></div>
+      <div><label className="text-slate-400 text-xs mb-1 block">पिता का नाम</label>
+        <Input value={data.father || ''} onChange={e => setData({ ...data, father: e.target.value })} className="bg-slate-700 text-white border-slate-600" /></div>
+      <div><label className="text-slate-400 text-xs mb-1 block">फोन</label>
+        <Input value={data.phone || ''} onChange={e => setData({ ...data, phone: e.target.value })} className="bg-slate-700 text-white border-slate-600" /></div>
+      <div><label className="text-slate-400 text-xs mb-1 block">ईमेल</label>
+        <Input value={data.email || ''} onChange={e => setData({ ...data, email: e.target.value })} className="bg-slate-700 text-white border-slate-600" /></div>
+      <div><label className="text-slate-400 text-xs mb-1 block">आधार नंबर</label>
+        <Input value={data.aadharNo || ''} onChange={e => setData({ ...data, aadharNo: e.target.value })} className="bg-slate-700 text-white border-slate-600" /></div>
+      <div><label className="text-slate-400 text-xs mb-1 block">PAN</label>
+        <Input value={data.panNo || ''} onChange={e => setData({ ...data, panNo: e.target.value.toUpperCase() })} className="bg-slate-700 text-white border-slate-600" maxLength="10" /></div>
+      <div><label className="text-slate-400 text-xs mb-1 block">पद</label>
+        <select value={data.position || 'Mechanic'} onChange={e => setData({ ...data, position: e.target.value })} className="w-full px-3 py-2 bg-slate-700 text-white border border-slate-600 rounded-md text-sm">
+          <option>Mechanic</option><option>Sales Executive</option><option>Helper</option>
+          <option>Manager</option><option>Receptionist</option><option>Accountant</option>
+        </select></div>
+      <div><label className="text-slate-400 text-xs mb-1 block">मासिक वेतन (₹) *</label>
+        <Input type="number" value={data.monthlySalary || ''} onChange={e => setData({ ...data, monthlySalary: parseFloat(e.target.value) })} className="bg-slate-700 text-white border-slate-600" /></div>
+      <div><label className="text-slate-400 text-xs mb-1 block">Join Date</label>
+        <Input type="date" value={data.joinDate || ''} onChange={e => setData({ ...data, joinDate: e.target.value })} className="bg-slate-700 text-white border-slate-600" /></div>
+      {showBank && <>
+        <div className="col-span-2 md:col-span-3 mt-1">
+          <div className="h-px bg-slate-600 my-2" />
+          <p className="text-cyan-400 text-xs font-bold mb-2">🏦 Bank Details</p>
+        </div>
+        <div><label className="text-slate-400 text-xs mb-1 block">Bank Account No.</label>
+          <Input value={data.bankAccount || ''} onChange={e => setData({ ...data, bankAccount: e.target.value })} className="bg-slate-700 text-white border-slate-600" placeholder="खाता नंबर" /></div>
+        <div><label className="text-slate-400 text-xs mb-1 block">IFSC Code</label>
+          <Input value={data.ifscCode || ''} onChange={e => setData({ ...data, ifscCode: e.target.value.toUpperCase() })} className="bg-slate-700 text-white border-slate-600" placeholder="SBIN0001234" /></div>
+        <div><label className="text-slate-400 text-xs mb-1 block">Bank Name</label>
+          <Input value={data.bankName || ''} onChange={e => setData({ ...data, bankName: e.target.value })} className="bg-slate-700 text-white border-slate-600" placeholder="State Bank of India" /></div>
+        <div><label className="text-slate-400 text-xs mb-1 block">Branch</label>
+          <Input value={data.bankBranch || ''} onChange={e => setData({ ...data, bankBranch: e.target.value })} className="bg-slate-700 text-white border-slate-600" placeholder="Branch Name" /></div>
+        <div><label className="text-slate-400 text-xs mb-1 block">🔐 Login PIN (4 अंक)</label>
+          <Input type="text" value={data.pin || '1234'} onChange={e => setData({ ...data, pin: e.target.value.replace(/\D/g,'').slice(0,6) })} className="bg-slate-700 text-white border-slate-600" placeholder="1234" maxLength="6" />
+          <p className="text-slate-500 text-xs mt-1">कर्मचारी इस PIN से login करेगा। Default: 1234</p></div>
+      </>}
+    </div>
+  );
+
 export default function StaffManagementPage() {
   const [staffList, setStaffList] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState({});
@@ -772,49 +815,6 @@ export default function StaffManagementPage() {
     });
   };
   const reminders = getReminders();
-
-  const StaffFormFields = ({ data, setData, showBank = true }) => (
-    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-      <div><label className="text-slate-400 text-xs mb-1 block">नाम *</label>
-        <Input value={data.name || ''} onChange={e => setData({ ...data, name: e.target.value })} className="bg-slate-700 text-white border-slate-600" placeholder="पूरा नाम" /></div>
-      <div><label className="text-slate-400 text-xs mb-1 block">पिता का नाम</label>
-        <Input value={data.father || ''} onChange={e => setData({ ...data, father: e.target.value })} className="bg-slate-700 text-white border-slate-600" /></div>
-      <div><label className="text-slate-400 text-xs mb-1 block">फोन</label>
-        <Input value={data.phone || ''} onChange={e => setData({ ...data, phone: e.target.value })} className="bg-slate-700 text-white border-slate-600" /></div>
-      <div><label className="text-slate-400 text-xs mb-1 block">ईमेल</label>
-        <Input value={data.email || ''} onChange={e => setData({ ...data, email: e.target.value })} className="bg-slate-700 text-white border-slate-600" /></div>
-      <div><label className="text-slate-400 text-xs mb-1 block">आधार नंबर</label>
-        <Input value={data.aadharNo || ''} onChange={e => setData({ ...data, aadharNo: e.target.value })} className="bg-slate-700 text-white border-slate-600" /></div>
-      <div><label className="text-slate-400 text-xs mb-1 block">PAN</label>
-        <Input value={data.panNo || ''} onChange={e => setData({ ...data, panNo: e.target.value.toUpperCase() })} className="bg-slate-700 text-white border-slate-600" maxLength="10" /></div>
-      <div><label className="text-slate-400 text-xs mb-1 block">पद</label>
-        <select value={data.position || 'Mechanic'} onChange={e => setData({ ...data, position: e.target.value })} className="w-full px-3 py-2 bg-slate-700 text-white border border-slate-600 rounded-md text-sm">
-          <option>Mechanic</option><option>Sales Executive</option><option>Helper</option>
-          <option>Manager</option><option>Receptionist</option><option>Accountant</option>
-        </select></div>
-      <div><label className="text-slate-400 text-xs mb-1 block">मासिक वेतन (₹) *</label>
-        <Input type="number" value={data.monthlySalary || ''} onChange={e => setData({ ...data, monthlySalary: parseFloat(e.target.value) })} className="bg-slate-700 text-white border-slate-600" /></div>
-      <div><label className="text-slate-400 text-xs mb-1 block">Join Date</label>
-        <Input type="date" value={data.joinDate || ''} onChange={e => setData({ ...data, joinDate: e.target.value })} className="bg-slate-700 text-white border-slate-600" /></div>
-      {showBank && <>
-        <div className="col-span-2 md:col-span-3 mt-1">
-          <div className="h-px bg-slate-600 my-2" />
-          <p className="text-cyan-400 text-xs font-bold mb-2">🏦 Bank Details</p>
-        </div>
-        <div><label className="text-slate-400 text-xs mb-1 block">Bank Account No.</label>
-          <Input value={data.bankAccount || ''} onChange={e => setData({ ...data, bankAccount: e.target.value })} className="bg-slate-700 text-white border-slate-600" placeholder="खाता नंबर" /></div>
-        <div><label className="text-slate-400 text-xs mb-1 block">IFSC Code</label>
-          <Input value={data.ifscCode || ''} onChange={e => setData({ ...data, ifscCode: e.target.value.toUpperCase() })} className="bg-slate-700 text-white border-slate-600" placeholder="SBIN0001234" /></div>
-        <div><label className="text-slate-400 text-xs mb-1 block">Bank Name</label>
-          <Input value={data.bankName || ''} onChange={e => setData({ ...data, bankName: e.target.value })} className="bg-slate-700 text-white border-slate-600" placeholder="State Bank of India" /></div>
-        <div><label className="text-slate-400 text-xs mb-1 block">Branch</label>
-          <Input value={data.bankBranch || ''} onChange={e => setData({ ...data, bankBranch: e.target.value })} className="bg-slate-700 text-white border-slate-600" placeholder="Branch Name" /></div>
-        <div><label className="text-slate-400 text-xs mb-1 block">🔐 Login PIN (4 अंक)</label>
-          <Input type="text" value={data.pin || '1234'} onChange={e => setData({ ...data, pin: e.target.value.replace(/\D/g,'').slice(0,6) })} className="bg-slate-700 text-white border-slate-600" placeholder="1234" maxLength="6" />
-          <p className="text-slate-500 text-xs mt-1">कर्मचारी इस PIN से login करेगा। Default: 1234</p></div>
-      </>}
-    </div>
-  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">

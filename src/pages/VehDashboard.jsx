@@ -6,6 +6,7 @@ import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianG
 import { Upload, Download, Filter, TrendingUp, Calendar, FileText, Share2, Trash2, Edit2, Plus, Eye, EyeOff } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import html2pdf from 'html2pdf.js';
+import { api } from '../utils/apiConfig';
 
 export default function VehDashboard() {
   const [vehicleData, setVehicleData] = useState([]);
@@ -326,6 +327,29 @@ export default function VehDashboard() {
         // Notify other pages
         window.dispatchEvent(new Event('dataSync'));
         
+        // ── Save to MongoDB backend (sync across devices) ──────────
+        (async () => {
+          let saved = 0;
+          for (const c of customerSync) {
+            try {
+              await fetch(api('/api/customers'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  customerName: c.name, fatherName: c.fatherName, phone: c.phone,
+                  aadhar: c.aadhar, pan: c.pan, address: c.address, district: c.district,
+                  dob: c.dob, vehicleModel: c.linkedVehicle?.model,
+                  vehicleColor: c.linkedVehicle?.color, engineNo: c.linkedVehicle?.engineNo,
+                  chassisNo: c.linkedVehicle?.frameNo, registrationNo: c.linkedVehicle?.regNo,
+                  invoiceDate: c.linkedVehicle?.purchaseDate, financeCompany: c.financerName,
+                }),
+              });
+              saved++;
+            } catch(e) {}
+          }
+          console.log(`✅ ${saved}/${customerSync.length} customers saved to MongoDB`);
+        })();
+
         alert('✅ डेटा सफलतापूर्वक लोड हो गया!\n💾 Data save हो गया - अगली बार auto-load होगा!');
       } catch (error) {
         alert('❌ फाइल लोड करने में त्रुटि: ' + error.message);
@@ -334,7 +358,7 @@ export default function VehDashboard() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Load data from localStorage on component mount
+  // Load data from localStorage + MongoDB on component mount
   useEffect(() => {
     const savedData = localStorage.getItem('vehDashboardData');
     const savedModels = localStorage.getItem('vehDashboardModels');
@@ -343,7 +367,6 @@ export default function VehDashboard() {
       try {
         const parsedData = JSON.parse(savedData);
         const parsedModels = JSON.parse(savedModels);
-        
         setVehicleData(parsedData);
         setFilteredData(parsedData);
         setModels(parsedModels);
@@ -351,6 +374,45 @@ export default function VehDashboard() {
       } catch (error) {
         console.log('Data load error:', error);
       }
+    } else {
+      // No localStorage data — try loading from MongoDB (e.g. new device / mobile)
+      (async () => {
+        try {
+          const res = await fetch(api('/api/customers'));
+          if (res.ok) {
+            const dbCustomers = await res.json();
+            if (dbCustomers.length > 0) {
+              const transformed = dbCustomers.map((c, i) => ({
+                id: c._id || i + 1,
+                customerName: c.customerName || '',
+                fatherName: c.fatherName || '',
+                mobileNo: c.phone || '',
+                address: c.address || '',
+                dist: c.district || '',
+                vehicleModel: c.vehicleModel || '',
+                color: c.vehicleColor || '',
+                engineNo: c.engineNo || '',
+                chassisNo: c.chassisNo || '',
+                regNo: c.registrationNo || '',
+                date: c.invoiceDate || '',
+                financerName: c.financeCompany || '',
+                aadharNo: c.aadhar || '',
+                panNo: c.pan || '',
+                dob: c.dob || '',
+              }));
+              setVehicleData(transformed);
+              setFilteredData(transformed);
+              const uniqueModels = [...new Set(transformed.map(d => d.vehicleModel))].filter(Boolean);
+              setModels(uniqueModels);
+              calculateAnalytics(transformed);
+              // Save to localStorage for next time
+              localStorage.setItem('vehDashboardData', JSON.stringify(transformed));
+              localStorage.setItem('vehDashboardModels', JSON.stringify(uniqueModels));
+              console.log(`✅ Loaded ${transformed.length} vehicles from MongoDB`);
+            }
+          }
+        } catch(e) { console.log('MongoDB load failed:', e.message); }
+      })();
     }
   }, []);
 

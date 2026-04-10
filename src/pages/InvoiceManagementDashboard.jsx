@@ -385,8 +385,19 @@ export default function InvoiceManagementDashboard() {
     return () => { window.removeEventListener('storage', fn); clearInterval(intervalRef.current); };
   }, []);
 
-  const loadInvoices = () => {
-    const all = [...getLS('invoices'), ...getLS('generatedInvoices').map(i=>({...i,_s:'g'}))];
+  const loadInvoices = async () => {
+    // Load from localStorage
+    const lsInv = [...getLS('invoices'), ...getLS('generatedInvoices').map(i=>({...i,_s:'g'}))];
+    
+    // Also load from MongoDB backend
+    let dbInv = [];
+    try {
+      const res = await fetch(api('/api/invoices'));
+      if (res.ok) dbInv = await res.json();
+    } catch(e) { console.log('DB offline, using localStorage only'); }
+
+    // Merge: combine both sources, remove duplicates by invoiceNumber
+    const all = [...lsInv, ...dbInv.map(i=>({...i, _s:'db'}))];
     const seen = new Set();
     const unique = all.filter(i => {
       const k = String(i.invoiceNumber||i.id||i._id||Math.random());
@@ -436,6 +447,17 @@ export default function InvoiceManagementDashboard() {
     }
 
     localStorage.setItem('invoices', JSON.stringify([...added, ...existing]));
+
+    // ── Also save to MongoDB backend (so data syncs across devices) ──────────
+    for (const inv of added) {
+      try {
+        await fetch(api('/api/invoices'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(inv),
+        });
+      } catch(e) { console.log('DB save failed for', inv.invoiceNumber, e.message); }
+    }
     
     // ── Sync service data for Reminders ──────────────────────────────────────
     const svcData = getLS('customerServiceData', {});
