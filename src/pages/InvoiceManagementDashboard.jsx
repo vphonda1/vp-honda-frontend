@@ -27,7 +27,7 @@ const extractPDFText = async (file) => {
   }
 
   const data = await res.json();
-  if (!data.success) throw new Error(data.error || 'Parse failed');
+  if (!data.text) throw new Error(data.error || 'No text extracted');
 
   console.log('📄 PDF extracted via backend, length:', data.text.length);
   return data.text;
