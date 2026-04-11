@@ -129,6 +129,19 @@ const parseVPHondaInvoice = (text, filename) => {
   ]);
   const pdfTotal = parseFloat((rawTotal||'0').replace(/,/g,'')) || 0;
 
+  // Fallback: find largest currency amount in text (likely the total)
+  let fallbackTotal = 0;
+  if (pdfTotal === 0) {
+    const allAmounts = [];
+    const amtRe = /[₹Rs.\s]*([\d,]+\.\d{2})/g;
+    let amtM;
+    while ((amtM = amtRe.exec(flat)) !== null) {
+      const v = parseFloat(amtM[1].replace(/,/g,''));
+      if (v > 100 && v < 10000000) allAmounts.push(v);
+    }
+    if (allAmounts.length > 0) fallbackTotal = Math.max(...allAmounts);
+  }
+
   const rawTax = find([
     /Total\s*Tax\s*Amount\s*[:-]?\s*[₹Rs.\s]*([\d,]+\.\d{2})/i,
     /Total\s*Tax\s*[₹Rs.\s]*([\d,]+\.\d{2})/i,
@@ -263,12 +276,13 @@ const parseVPHondaInvoice = (text, filename) => {
   // ── Use PDF's Total Invoice Value & Total Tax Amount (most accurate) ───────
   let subtotal, gstRate, gstAmount, finalTotal;
   
-  if (pdfTotal > 0 && taxAmount > 0) {
+  const effectiveTotal = pdfTotal || fallbackTotal;
+  if (effectiveTotal > 0 && taxAmount > 0) {
     // PDF has both — use directly
     finalTotal = pdfTotal;
     gstAmount  = taxAmount;
     subtotal   = finalTotal - gstAmount;
-  } else if (pdfTotal > 0) {
+  } else if (effectiveTotal > 0) {
     // PDF has total but no tax line — back-calculate from per-item GST
     finalTotal = pdfTotal;
     gstAmount  = itemsGst;

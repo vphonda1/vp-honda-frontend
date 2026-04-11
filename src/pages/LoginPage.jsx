@@ -302,11 +302,7 @@ export default function LoginPage({ onLogin }) {
                 <LogIn size={18}/> {loading?'Logging in...':'Admin Login'}
               </button>
             </form>
-            <div className="mt-4 pt-4 border-t border-gray-100 text-center">
-              <button onClick={quickAdmin} disabled={loading} className="text-orange-600 hover:text-orange-700 text-sm font-semibold">
-                ⚡ Quick Demo Login (Admin)
-              </button>
-            </div>
+
           </div>
         </div>
       </div>

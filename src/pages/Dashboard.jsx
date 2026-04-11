@@ -30,12 +30,16 @@ export default function Dashboard({ user }) {
     } catch{}
 
     const lsInv=getLS('invoices'), genInv=getLS('generatedInvoices'), veh=getLS('vehDashboardData'), old=getLS('oldBikeData'), svc=getLS('customerServiceData',{}), staff=getLS('staffData'), quot=getLS('quotations'), lsC=getLS('sharedCustomerData'), lsP=getLS('partsInventory');
+    // Also fetch old bikes & staff from MongoDB if localStorage empty
+    let apiOld=[]; try { const r=await fetch(api('/api/oldbikes')); if(r.ok) apiOld=await r.json(); } catch{}
+    let apiStaff=[]; try { const r=await fetch(api('/api/staff')); if(r.ok) apiStaff=await r.json(); } catch{}
     const allInv=[...lsInv,...genInv];
     const totalC=Math.max(apiC.length,lsC.length), totalP=Math.max(apiP.length,lsP.length), totalI=allInv.length+apiI.length, totalV=veh.length;
     const lsRev=allInv.reduce((a,i)=>a+(i.totals?.totalAmount||i.amount||0),0);
     const vehRev=veh.reduce((a,v)=>a+(parseFloat(v.price)||0),0);
     const apiRev=apiI.reduce((a,i)=>a+(i.total||0),0);
     const svcE=Object.values(svc), pendSvc=svcE.filter(x=>!x.firstServiceDate||!x.secondServiceDate).length;
+    const finalOld = old.length > 0 ? old : apiOld; const finalStaff = staff.length > 0 ? staff : apiStaff;
 
     const vm={}; veh.forEach(v=>{const m=(v.vehicleModel||v.model||'?').split(' ').slice(0,2).join(' '); vm[m]=(vm[m]||0)+1;});
     const vChart=Object.entries(vm).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([name,value])=>({name,value}));
@@ -44,7 +48,7 @@ export default function Dashboard({ user }) {
     const svcInv=allInv.filter(i=>i.invoiceType==='service'||(i.totals?.totalAmount||0)<50000).length;
     const recent=[...allInv].sort((a,b)=>new Date(b.importedAt||b.invoiceDate||0)-new Date(a.importedAt||a.invoiceDate||0)).slice(0,5);
 
-    setS({totalC,totalP,totalI,totalV,rev:lsRev+apiRev+vehRev,vehRev,svcRev:lsRev,old:old.length,staff:staff.length,quot:quot.length,pendSvc,svcInv,vehInv:allInv.length-svcInv,vChart,mChart,recent,svcEntries:Object.keys(svc).length});
+    setS({totalC,totalP,totalI,totalV,rev:lsRev+apiRev+vehRev,vehRev,svcRev:lsRev,old:finalOld.length,staff:finalStaff.length,quot:quot.length,pendSvc,svcInv,vehInv:allInv.length-svcInv,vChart,mChart,recent,svcEntries:Object.keys(svc).length});
     setLastRefresh(new Date()); setLoading(false);
   };
 

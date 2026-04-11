@@ -290,7 +290,14 @@ export default function VehDashboard() {
         const uniqueModels = [...new Set(transformedData.map(d => d.vehicleModel))].filter(Boolean);
         setModels(uniqueModels);
         
-        // Calculate analytics
+        // Show loading/error for mobile users
+  const MobileLoadingBanner = () => {
+    if (dbLoading) return <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-6 text-center mb-4"><div className="w-8 h-8 border-4 border-yellow-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"/><p className="text-yellow-700 font-bold">⏳ Server से data load हो रहा है...</p><p className="text-yellow-500 text-sm">पहली बार 30-50 sec लग सकते हैं</p></div>;
+    if (dbError && vehicleData.length === 0) return <div className="bg-red-50 border-2 border-red-300 rounded-lg p-6 text-center mb-4"><p className="text-red-700 font-bold text-lg">⚠️ {dbError}</p><Button onClick={()=>window.location.reload()} className="mt-3 bg-red-600 text-white">🔄 Refresh</Button></div>;
+    return null;
+  };
+
+  // Calculate analytics
         calculateAnalytics(transformedData);
         
         // Save to localStorage - shared keys for all pages
@@ -359,6 +366,9 @@ export default function VehDashboard() {
   };
 
   // Load data from localStorage + MongoDB on component mount
+  const [dbLoading, setDbLoading] = useState(false);
+  const [dbError, setDbError] = useState('');
+
   useEffect(() => {
     const savedData = localStorage.getItem('vehDashboardData');
     const savedModels = localStorage.getItem('vehDashboardModels');
@@ -367,54 +377,71 @@ export default function VehDashboard() {
       try {
         const parsedData = JSON.parse(savedData);
         const parsedModels = JSON.parse(savedModels);
-        setVehicleData(parsedData);
-        setFilteredData(parsedData);
-        setModels(parsedModels);
-        calculateAnalytics(parsedData);
+        if (parsedData.length > 0) {
+          setVehicleData(parsedData);
+          setFilteredData(parsedData);
+          setModels(parsedModels);
+          calculateAnalytics(parsedData);
+          return; // localStorage has data — done
+        }
       } catch (error) {
         console.log('Data load error:', error);
       }
-    } else {
-      // No localStorage data — try loading from MongoDB (e.g. new device / mobile)
-      (async () => {
-        try {
-          const res = await fetch(api('/api/customers'));
-          if (res.ok) {
-            const dbCustomers = await res.json();
-            if (dbCustomers.length > 0) {
-              const transformed = dbCustomers.map((c, i) => ({
-                id: c._id || i + 1,
-                customerName: c.customerName || '',
-                fatherName: c.fatherName || '',
-                mobileNo: c.phone || '',
-                address: c.address || '',
-                dist: c.district || '',
-                vehicleModel: c.vehicleModel || '',
-                color: c.vehicleColor || '',
-                engineNo: c.engineNo || '',
-                chassisNo: c.chassisNo || '',
-                regNo: c.registrationNo || '',
-                date: c.invoiceDate || '',
-                financerName: c.financeCompany || '',
-                aadharNo: c.aadhar || '',
-                panNo: c.pan || '',
-                dob: c.dob || '',
-              }));
-              setVehicleData(transformed);
-              setFilteredData(transformed);
-              const uniqueModels = [...new Set(transformed.map(d => d.vehicleModel))].filter(Boolean);
-              setModels(uniqueModels);
-              calculateAnalytics(transformed);
-              // Save to localStorage for next time
-              localStorage.setItem('vehDashboardData', JSON.stringify(transformed));
-              localStorage.setItem('vehDashboardModels', JSON.stringify(uniqueModels));
-              console.log(`✅ Loaded ${transformed.length} vehicles from MongoDB`);
-            }
-          }
-        } catch(e) { console.log('MongoDB load failed:', e.message); }
-      })();
     }
+    // No localStorage data — load from MongoDB (mobile / new device)
+    setDbLoading(true);
+    setDbError('');
+    (async () => {
+      try {
+        const res = await fetch(api('/api/customers'));
+        if (res.ok) {
+          const dbCustomers = await res.json();
+          if (dbCustomers.length > 0) {
+            const transformed = dbCustomers.map((c, i) => ({
+              id: c._id || i + 1,
+              customerName: c.customerName || '',
+              fatherName: c.fatherName || '',
+              mobileNo: c.phone || '',
+              address: c.address || '',
+              dist: c.district || '',
+              vehicleModel: c.vehicleModel || '',
+              color: c.vehicleColor || '',
+              engineNo: c.engineNo || '',
+              chassisNo: c.chassisNo || '',
+              regNo: c.registrationNo || '',
+              date: c.invoiceDate || '',
+              financerName: c.financeCompany || '',
+              aadharNo: c.aadhar || '',
+              panNo: c.pan || '',
+              dob: c.dob || '',
+            }));
+            setVehicleData(transformed);
+            setFilteredData(transformed);
+            const uniqueModels = [...new Set(transformed.map(d => d.vehicleModel))].filter(Boolean);
+            setModels(uniqueModels);
+            calculateAnalytics(transformed);
+            localStorage.setItem('vehDashboardData', JSON.stringify(transformed));
+            localStorage.setItem('vehDashboardModels', JSON.stringify(uniqueModels));
+          } else {
+            setDbError('Database खाली है — Laptop से Excel import करें');
+          }
+        } else {
+          setDbError('Server से data load नहीं हुआ — Refresh करें');
+        }
+      } catch(e) {
+        setDbError('Server connecting... 30 sec wait करें फिर Refresh');
+        console.log('MongoDB load failed:', e.message);
+      }
+      setDbLoading(false);
+    })();
   }, []);
+
+  // Show loading/error for mobile users
+  const MobileLoadingBanner = () => {
+    if (dbLoading) return <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-6 text-center mb-4"><div className="w-8 h-8 border-4 border-yellow-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"/><p className="text-yellow-700 font-bold">⏳ Server से data load हो रहा है...</p><p className="text-yellow-500 text-sm">पहली बार 30-50 sec लग सकते हैं</p></div>;
+    if (dbError && vehicleData.length === 0) return <div className="bg-red-50 border-2 border-red-300 rounded-lg p-6 text-center mb-4"><p className="text-red-700 font-bold text-lg">⚠️ {dbError}</p><Button onClick={()=>window.location.reload()} className="mt-3 bg-red-600 text-white">🔄 Refresh</Button></div>;
+    return null;
+  };
 
   // Calculate analytics
   const calculateAnalytics = (data) => {
@@ -792,6 +819,7 @@ export default function VehDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-900 p-6">
+      <MobileLoadingBanner />
       {/* ── Admin Login Modal (password hidden) ── */}
       {showAdminModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">

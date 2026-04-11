@@ -46,7 +46,24 @@ export default function RemindersPage() {
 
       const invoicesData = [...getLS('invoices'), ...getLS('generatedInvoices'), ...getLS('jobCards')];
       setInvoices(invoicesData);
-      const serviceData = getLS('customerServiceData', {});
+      let serviceData = getLS('customerServiceData', {});
+      // If localStorage empty, build service data from MongoDB customers
+      if (Object.keys(serviceData).length === 0 && allCustomers.length > 0) {
+        allCustomers.forEach(c => {
+          const cid = c._id || c.id || ('c-' + (c.customerName||'').replace(/\s/g,''));
+          if (!serviceData[cid]) serviceData[cid] = {};
+          const s = serviceData[cid];
+          s.customerName = c.customerName || c.name || '';
+          s.phone = c.phone || c.mobileNo || '';
+          s.vehicle = c.vehicleModel || '';
+          s.regNo = c.registrationNo || c.regNo || '';
+          s.firstServiceDate = c.firstServiceDate || '';
+          s.secondServiceDate = c.secondServiceDate || '';
+          s.thirdServiceDate = c.thirdServiceDate || '';
+          s.purchaseDate = c.invoiceDate || c.purchaseDate || c.date || '';
+        });
+        localStorage.setItem('customerServiceData', JSON.stringify(serviceData));
+      }
 
       const all = [];
       let dbg = { totalCustomers: allCustomers.length, totalInvoices: invoicesData.length, withData: Object.keys(serviceData).length, payment: 0, insurance: 0, service: 0 };
