@@ -192,34 +192,55 @@ const parseVPHondaInvoice = (text, filename) => {
   
   // STRATEGY B: pdf-parse format (backend) — text is compressed, no column spacing
   // Example: 108233-2MA-F1LG12710197348352₹ 431.321No,s₹ 431.325₹ 3.04₹ 489.75
+  // Honda part number = 5-6 digits + dash + 2-4 chars + dash + 1-6 chars (e.g. 108233-2MA-F1LG1)
   if (items.length === 0) {
-    const partLineRe = /(\d{5,6}-[A-Z0-9\-]{3,20})/g;
-    let pm;
+    // Split text into segments by finding ₹ amounts pattern per line
+    const allLines = text.split('\n').map(l => l.trim()).filter(Boolean);
     const foundParts = new Set();
-    while ((pm = partLineRe.exec(flat)) !== null) {
-      const partNo = pm[1];
+    for (const line of allLines) {
+      // Match Honda part number at start (strict: max 20 chars total, must have dash-letter)
+      const partM = line.match(/^\d{0,2}\s*(\d{4,6}-[A-Z][A-Z0-9]{1,3}-[A-Z0-9]{1,6}|\d{5,6}-\d{4,6})/);
+      if (!partM) continue;
+      const partNo = partM[1];
       if (foundParts.has(partNo)) continue;
       foundParts.add(partNo);
-      // Find all ₹ amounts after this part number
-      const afterPart = flat.slice(pm.index, pm.index + 200);
+      // Find ALL ₹ amounts in this line
       const amounts = [];
       const amRe = /₹\s*([\d,]+\.\d{2})/g;
       let am;
-      while ((am = amRe.exec(afterPart)) !== null) {
-        amounts.push(parseFloat(am[1].replace(/,/g,'')));
+      while ((am = amRe.exec(line)) !== null) {
+        amounts.push(parseFloat(am[1].replace(/,/g, '')));
       }
-      if (amounts.length >= 2) {
+      // Qty: find single digit before No/Nos (not part of decimal like 431.321No)
+      // Look for pattern: digit + No/Nos where digit is NOT after a dot
+      const qtyM = line.match(/[^.]\b(\d{1,2})\s*(?:No|Nos|Pc|Pcs|Set)/i);
+      const qty = qtyM ? parseInt(qtyM[1]) : 1;
+      if (amounts.length >= 1) {
         const unitPrice = amounts[0];
-        const taxableAmt = amounts[amounts.length - 1];
-        // Find qty — look for 1No or 2Nos pattern
-        const qtyM = afterPart.match(/(\d+)\s*(?:No|Nos|Pc|Pcs|Set)/i);
-        const qty = qtyM ? parseInt(qtyM[1]) : 1;
+        // Last amount = taxable value (after discounts)
+        const taxableAmt = amounts.length >= 3 ? amounts[amounts.length - 1] : amounts[0];
         const desc = findDescription(partNo);
         items.push({
           srNo: items.length + 1, partNo, hsn: '', description: desc,
           mrp: unitPrice, unitPrice, quantity: qty,
           total: taxableAmt, gstRate: 18, gstAmount: +(taxableAmt * 0.18).toFixed(2),
         });
+      }
+    }
+    // Also check for CONSUM / Labour charges line
+    for (const line of allLines) {
+      if (/CONSUM|LABOUR|Labour/i.test(line)) {
+        const amRe2 = /₹\s*([\d,]+\.\d{2})/g;
+        const amts = [];
+        let am2;
+        while ((am2 = amRe2.exec(line)) !== null) amts.push(parseFloat(am2[1].replace(/,/g,'')));
+        if (amts.length > 0) {
+          items.push({
+            srNo: items.length + 1, partNo: 'CONSUM', hsn: '', description: 'CONSUMABLE / LABOUR',
+            mrp: amts[0], unitPrice: amts[0], quantity: 1,
+            total: amts[amts.length - 1], gstRate: 18, gstAmount: +(amts[amts.length-1] * 0.18).toFixed(2),
+          });
+        }
       }
     }
     if (items.length > 0) console.log('📦 Parts extracted via pdf-parse format:', items.length);
@@ -334,6 +355,13 @@ const parseVPHondaInvoice = (text, filename) => {
   
   gstRate = subtotal > 0 ? Math.round(gstAmount / subtotal * 100) : 0;
 
+  // If finalTotal still 0 but items have total, calculate from items
+  if (finalTotal === 0 && itemsTotal > 0) {
+    subtotal = itemsTotal;
+    gstRate = 18;
+    gstAmount = +(itemsTotal * 0.18).toFixed(2);
+    finalTotal = +(itemsTotal + gstAmount).toFixed(2);
+  }
   console.log('📊 Totals:', { itemsTotal, pdfTotal, taxAmount, itemsGst, subtotal, gstRate: gstRate+'%', gstAmount, finalTotal });
 
   // Invoice type — compute before return (no IIFE)
