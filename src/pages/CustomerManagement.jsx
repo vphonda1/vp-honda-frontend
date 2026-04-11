@@ -1311,8 +1311,8 @@ export default function CustomerManagement({ user }) {
                     <td className="px-3 py-2 text-yellow-600 font-bold text-xs">₹{(parseFloat(b.psPrice)||0).toLocaleString('en-IN')}</td>
                     <td className="px-3 py-2 text-xs">{b.buyerName||'—'}<br/><span className="text-green-500">{b.buyerMob||''}</span></td>
                     <td className="px-3 py-2 text-xs text-gray-500">{b.buyerFather||'—'}</td>
-                    <td className="px-3 py-2 text-xs text-gray-500">{b.buyerCustAadhar||'—'}</td>
-                    <td className="px-3 py-2 text-xs text-gray-500">{b.buyerCustAdd||'—'}</td>
+                    <td className="px-3 py-2 text-xs text-gray-500">{b.buyerAadhar||'—'}</td>
+                    <td className="px-3 py-2 text-xs text-gray-500">{b.buyerAdd||'—'}</td>
                     <td className="px-3 py-2 text-green-700 font-bold text-xs">{b.slPrice?'₹'+parseFloat(b.slPrice).toLocaleString('en-IN'):'—'}</td>
                     <td className={`px-3 py-2 font-bold text-xs ${pl>=0?'text-green-600':'text-red-600'}`}>{b.slPrice?(pl>=0?'+':'')+'₹'+pl.toLocaleString('en-IN'):'—'}</td>
                     <td className="px-3 py-2"><span className={`text-xs font-bold px-2 py-0.5 rounded ${b.status==='Sold'?'bg-red-100 text-red-700':'bg-green-100 text-green-700'}`}>{b.status||'Available'}</span></td>
