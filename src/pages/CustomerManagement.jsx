@@ -45,10 +45,12 @@ export default function CustomerManagement({ user }) {
       updated = [...oldBikes, {...obForm, id: Date.now(), createdAt: new Date().toISOString()}];
     }
     setOldBikes(updated); localStorage.setItem('oldBikeData', JSON.stringify(updated));
+    // Sync to MongoDB
+    fetch(api('/api/oldbikes/sync'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({bikes:updated}) }).catch(()=>{});
     window.dispatchEvent(new Event('storage')); setShowOldBikeForm(false); resetObForm();
   };
   const editOldBike = (idx) => { setObForm({...oldBikes[idx]}); setEditingOldBike(idx); setShowOldBikeForm(true); };
-  const deleteOldBike = (idx) => { if (!window.confirm('Delete करें?')) return; const updated = oldBikes.filter((_,i)=>i!==idx); setOldBikes(updated); localStorage.setItem('oldBikeData', JSON.stringify(updated)); window.dispatchEvent(new Event('storage')); };
+  const deleteOldBike = (idx) => { if (!window.confirm('Delete करें?')) return; const updated = oldBikes.filter((_,i)=>i!==idx); setOldBikes(updated); localStorage.setItem('oldBikeData', JSON.stringify(updated)); fetch(api('/api/oldbikes/sync'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bikes:updated})}).catch(()=>{}); window.dispatchEvent(new Event('storage')); };
   const oldBikeFileRef = useRef(null);
   const [obImporting, setObImporting] = useState(false);
   const [obImportResult, setObImportResult] = useState(null);
@@ -147,6 +149,8 @@ export default function CustomerManagement({ user }) {
       // Replace all data (clear old + add new)
       setOldBikes(newBikes);
       localStorage.setItem('oldBikeData', JSON.stringify(newBikes));
+      // Sync to MongoDB
+      fetch(api('/api/oldbikes/sync'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({bikes:newBikes}) }).catch(()=>{});
       window.dispatchEvent(new Event('storage'));
       setObImportResult({ success: imported, sheet: sheetName, columns: cols.join(', ') });
     } catch (err) {
@@ -206,7 +210,21 @@ export default function CustomerManagement({ user }) {
 
   useEffect(() => {
     loadCustomers();
-    try { setOldBikes(JSON.parse(localStorage.getItem('oldBikeData')||'[]')); } catch{}
+    // Load old bikes: localStorage first, MongoDB fallback
+    const loadOldBikes = async () => {
+      try {
+        const ls = JSON.parse(localStorage.getItem('oldBikeData')||'[]');
+        if (ls.length > 0) { setOldBikes(ls); return; }
+      } catch{}
+      try {
+        const res = await fetch(api('/api/oldbikes'));
+        if (res.ok) {
+          const db = await res.json();
+          if (db.length > 0) { setOldBikes(db); localStorage.setItem('oldBikeData', JSON.stringify(db)); }
+        }
+      } catch(e) { console.log('OldBikes MongoDB load failed'); }
+    };
+    loadOldBikes();
   }, []);
 
   // Listen for data sync from other pages
@@ -1293,8 +1311,8 @@ export default function CustomerManagement({ user }) {
                     <td className="px-3 py-2 text-yellow-600 font-bold text-xs">₹{(parseFloat(b.psPrice)||0).toLocaleString('en-IN')}</td>
                     <td className="px-3 py-2 text-xs">{b.buyerName||'—'}<br/><span className="text-green-500">{b.buyerMob||''}</span></td>
                     <td className="px-3 py-2 text-xs text-gray-500">{b.buyerFather||'—'}</td>
-                    <td className="px-3 py-2 text-xs text-gray-500">{b.buyerAadhar||'—'}</td>
-                    <td className="px-3 py-2 text-xs text-gray-500">{b.buyerAddress||'—'}</td>
+                    <td className="px-3 py-2 text-xs text-gray-500">{b.buyerCustAadhar||'—'}</td>
+                    <td className="px-3 py-2 text-xs text-gray-500">{b.buyerCustAdd||'—'}</td>
                     <td className="px-3 py-2 text-green-700 font-bold text-xs">{b.slPrice?'₹'+parseFloat(b.slPrice).toLocaleString('en-IN'):'—'}</td>
                     <td className={`px-3 py-2 font-bold text-xs ${pl>=0?'text-green-600':'text-red-600'}`}>{b.slPrice?(pl>=0?'+':'')+'₹'+pl.toLocaleString('en-IN'):'—'}</td>
                     <td className="px-3 py-2"><span className={`text-xs font-bold px-2 py-0.5 rounded ${b.status==='Sold'?'bg-red-100 text-red-700':'bg-green-100 text-green-700'}`}>{b.status||'Available'}</span></td>
@@ -1377,7 +1395,7 @@ export default function CustomerManagement({ user }) {
                       <div><label className="text-xs font-bold text-gray-600">Buyer Name</label><input value={obForm.buyerName} onChange={e=>setObForm(f=>({...f,buyerName:e.target.value}))} className="w-full border-2 rounded-lg px-3 py-2 text-sm focus:border-green-500 outline-none" placeholder="किसको बेची"/></div>
                        <div><label className="text-xs font-bold text-gray-600">Buyer Father</label><input value={obForm.buyerFather} onChange={e=>setObForm(f=>({...f,buyerFather:e.target.value}))} className="w-full border-2 rounded-lg px-3 py-2 text-sm focus:border-green-500 outline-none" placeholder="Buyer के पिता"/></div>
                        <div><label className="text-xs font-bold text-gray-600">Buyer Mobile</label><input value={obForm.buyerMob} onChange={e=>setObForm(f=>({...f,buyerMob:e.target.value.replace(/\D/g,'').slice(0,10)}))} className="w-full border-2 rounded-lg px-3 py-2 text-sm focus:border-green-500 outline-none" placeholder="Buyer mobile"/></div>
-                       <div><label className="text-xs font-bold text-gray-600">Buyer Aadhar No</label><input value={obForm.buyerAadhar} onChange={e=>setObForm(f=>({...f,buyerAadhar:e.target.value.replace(/\D/g,'').slice(0,12)}))} className="w-full border-2 rounded-lg px-3 py-2 text-sm focus:border-green-500 outline-none" placeholder="Buyer Aadhar"/></div>
+                       <div><label className="text-xs font-bold text-gray-600">Buyer Aadhar</label><input value={obForm.buyerAadhar} onChange={e=>setObForm(f=>({...f,buyerAadhar:e.target.value.replace(/\D/g,'').slice(0,12)}))} className="w-full border-2 rounded-lg px-3 py-2 text-sm focus:border-green-500 outline-none" placeholder="Buyer Aadhar"/></div>
                        <div className="md:col-span-2"><label className="text-xs font-bold text-gray-600">Buyer Address</label><input value={obForm.buyerAdd} onChange={e=>setObForm(f=>({...f,buyerAdd:e.target.value}))} className="w-full border-2 rounded-lg px-3 py-2 text-sm focus:border-green-500 outline-none" placeholder="Buyer का पता"/></div>
                       
                       <div><label className="text-xs font-bold text-gray-600">Status</label><select value={obForm.status} onChange={e=>setObForm(f=>({...f,status:e.target.value}))} className="w-full border-2 rounded-lg px-3 py-2 text-sm focus:border-green-500 outline-none bg-white"><option value="Available">🟢 Available (अभी पड़ी है)</option><option value="Sold">🔴 Sold (बेच दी)</option></select></div>

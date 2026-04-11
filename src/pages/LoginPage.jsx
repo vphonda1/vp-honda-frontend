@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { AlertCircle, Eye, EyeOff, Shield, Users, LogIn, Lock } from 'lucide-react';
+import { AlertCircle, Eye, EyeOff, Shield, Users, LogIn, Lock, Key } from 'lucide-react';
+import { api } from '../utils/apiConfig';
 
 // ════════════════════════════════════════════════════════════════════════════
 // LOGOUT UTILITY — App.jsx में import करके use करें:
@@ -76,37 +77,44 @@ export default function LoginPage({ onLogin }) {
 
   // ── Load data + Auto-restore session ──────────────────────────────────────
   useEffect(() => {
-    // Load staff list
-    try {
-      const s = localStorage.getItem('staffData');
-      if (s) setStaffList(JSON.parse(s));
-    } catch {}
+    // Load staff list from localStorage first, then MongoDB as fallback
+    const loadStaff = async () => {
+      try {
+        const s = localStorage.getItem('staffData');
+        if (s) {
+          const parsed = JSON.parse(s);
+          if (parsed.length > 0) { setStaffList(parsed); return; }
+        }
+      } catch {}
+      // localStorage empty → try MongoDB
+      try {
+        const res = await fetch(api('/api/staff'));
+        if (res.ok) {
+          const dbStaff = await res.json();
+          if (dbStaff.length > 0) {
+            setStaffList(dbStaff);
+            localStorage.setItem('staffData', JSON.stringify(dbStaff));
+            console.log(`✅ ${dbStaff.length} staff loaded from server`);
+          }
+        }
+      } catch(e) { console.log('Staff server load failed:', e.message); }
+    };
+    loadStaff();
 
     // Auto-restore session ONLY if session exists AND was not manually logged out
-    // doLogout() removes 'vpSession', so if it's gone we stay on login page
     try {
       const raw = localStorage.getItem('vpSession');
-      if (!raw) return; // No session — stay on login page ✅
-
+      if (!raw) return;
       const parsed = JSON.parse(raw);
       if (!parsed || !parsed.role) return;
-
       if (parsed.role === 'staff') {
-        // Verify staff still exists in staffData
         const staffData = JSON.parse(localStorage.getItem('staffData') || '[]');
         const found = staffData.find(s => String(s.id) === String(parsed.staffId));
-        if (found) {
-          onLogin({ ...parsed });
-        } else {
-          // Staff deleted — clear invalid session
-          doLogout();
-        }
+        if (found) { onLogin({ ...parsed }); } else { doLogout(); }
       } else if (parsed.role === 'admin') {
         onLogin(parsed);
       }
-    } catch {
-      doLogout(); // Corrupt session — clear it
-    }
+    } catch { doLogout(); }
   }, []); // eslint-disable-line
 
   // ── Save session and call onLogin ─────────────────────────────────────────

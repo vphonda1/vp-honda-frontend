@@ -8,6 +8,7 @@ import {
   Edit, Lock, Unlock, Eye, EyeOff, Shield, Star
 } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
+import { api } from '../utils/apiConfig';
 
 const ADMIN_PASSWORD = 'vphonda@123';
 const MONTHS = ['April','May','June','July','August','September','October','November','December','January','February','March'];
@@ -136,7 +137,14 @@ export default function StaffManagementPage() {
     } catch {}
   };
 
-  const saveData = (list) => { try { localStorage.setItem('staffData', JSON.stringify(list)); } catch {} };
+  const saveData = (list) => {
+    try { localStorage.setItem('staffData', JSON.stringify(list)); } catch {}
+    // Sync to MongoDB (so staff can login from any device)
+    fetch(api('/api/staff/sync'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ staffList: list }),
+    }).catch(e => console.log('Staff sync failed:', e.message));
+  };
   const saveAttendance = (rec) => { try { localStorage.setItem('staffAttendance', JSON.stringify(rec)); } catch {} };
   const savePayments = (pay) => { try { localStorage.setItem('staffPayments', JSON.stringify(pay)); } catch {} };
   const saveNotes = (n) => { try { localStorage.setItem('staffNotes', JSON.stringify(n)); } catch {} };
