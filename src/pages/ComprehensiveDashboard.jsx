@@ -51,7 +51,11 @@ export default function ComprehensiveDashboard() {
   const loadAllData = async () => {
     try {
       // Load invoices
-      const savedInvoices = JSON.parse(localStorage.getItem('invoices')) || [];
+      let savedInvoices = JSON.parse(localStorage.getItem('invoices')) || [];
+      // MongoDB fallback
+      if (savedInvoices.length === 0) {
+        try { const r=await fetch(api('/api/invoices')); if(r.ok) savedInvoices=await r.json(); } catch{}
+      }
       setInvoiceData(savedInvoices);
 
       // Load customers
@@ -77,7 +81,10 @@ export default function ComprehensiveDashboard() {
       }
 
       // Load new customers
-      const newCust = JSON.parse(localStorage.getItem('newCustomers')) || [];
+      let newCust = JSON.parse(localStorage.getItem('newCustomers')) || [];
+      if (newCust.length === 0) {
+        try { const r=await fetch(api('/api/customers')); if(r.ok) newCust=(await r.json()).filter(c=>c.isNew); } catch{}
+      }
       setNewCustomerData(newCust);
 
       // ✅ LOAD FROM IMPORTED FUNCTIONS

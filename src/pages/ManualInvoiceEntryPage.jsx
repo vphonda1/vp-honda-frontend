@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Plus, Trash2, Save, X } from 'lucide-react';
 import { EventBus, EVENTS } from '../utils/EventBus';
 import { syncInvoiceWithInventory } from '../utils/InventorySyncManager';
+import { api } from '../utils/apiConfig';
 
 export default function ManualInvoiceEntryPage() {
   const navigate = useNavigate();
@@ -103,6 +104,8 @@ export default function ManualInvoiceEntryPage() {
       const invoices = JSON.parse(localStorage.getItem('invoices')) || [];
       invoices.push(invoice);
       localStorage.setItem('invoices', JSON.stringify(invoices));
+    // Sync to MongoDB
+    fetch(api('/api/invoices'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(newInvoice) }).catch(()=>{});
 
       // Sync inventory
       syncInvoiceWithInventory(invoice);

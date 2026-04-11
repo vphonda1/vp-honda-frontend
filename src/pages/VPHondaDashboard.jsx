@@ -5,7 +5,7 @@
 // ✅ Year / Month / Day filter
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { API_BASE } from '../utils/apiConfig';
+import { API_BASE, api } from '../utils/apiConfig';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, AreaChart, Area, LineChart, Line, Legend, ReferenceLine
@@ -186,16 +186,28 @@ export default function VPHondaDashboard() {
   const [lsOldBikes, setLsOldBikes] = useState([]);
   const [lsServiceData, setLsServiceData] = useState({});
 
-  const loadLocalData = useCallback(() => {
-    setLsInvoices(getLS('invoices'));
-    setLsGenInvoices(getLS('generatedInvoices'));
-    setLsVehData(getLS('vehDashboardData'));
-    setLsCustomers(getLS('sharedCustomerData'));
-    setLsParts(getLS('partsInventory'));
-    setLsStaff(getLS('staffData'));
-    setLsQuotations(getLS('quotations'));
-    setLsOldBikes(getLS('oldBikeData'));
-    try { setLsServiceData(JSON.parse(localStorage.getItem('customerServiceData')||'null')||{}); } catch{ setLsServiceData({}); }
+  const loadLocalData = useCallback(async () => {
+    // Load from localStorage first
+    let inv=getLS('invoices'), genInv=getLS('generatedInvoices'), veh=getLS('vehDashboardData');
+    let cust=getLS('sharedCustomerData'), parts=getLS('partsInventory'), staff=getLS('staffData');
+    let quot=getLS('quotations'), old=getLS('oldBikeData');
+    let svc={}; try { svc=JSON.parse(localStorage.getItem('customerServiceData')||'null')||{}; } catch{}
+
+    // MongoDB fallback for empty datasets
+    try {
+      const doFetch = async (url) => { try { const r=await fetch(api(url)); return r.ok?await r.json():[]; } catch{ return []; } };
+      if (cust.length===0) cust = await doFetch('/api/customers');
+      if (inv.length===0) inv = await doFetch('/api/invoices');
+      if (parts.length===0) parts = await doFetch('/api/parts');
+      if (staff.length===0) staff = await doFetch('/api/staff');
+      if (quot.length===0) quot = await doFetch('/api/quotations');
+      if (old.length===0) old = await doFetch('/api/oldbikes');
+      if (veh.length===0 && cust.length>0) veh = cust.map(c=>({vehicleModel:c.vehicleModel,regNo:c.registrationNo,date:c.invoiceDate,customerName:c.customerName}));
+    } catch(e) { console.log('VP Dashboard MongoDB fallback failed'); }
+
+    setLsInvoices(inv); setLsGenInvoices(genInv); setLsVehData(veh);
+    setLsCustomers(cust); setLsParts(parts); setLsStaff(staff);
+    setLsQuotations(quot); setLsOldBikes(old); setLsServiceData(svc);
   }, []);
 
   useEffect(() => {
