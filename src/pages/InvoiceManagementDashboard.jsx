@@ -187,9 +187,43 @@ const parseVPHondaInvoice = (text, filename) => {
     return partNo; // fallback to part number
   };
 
-  // PRIMARY STRATEGY: Match VP Honda table rows
-  // Pattern: SrNo PartNo HSN/NA MRP MRPdisc ₹ UnitPrice Qty UoM ₹ TotalAmt Disc% ₹ DiscAmt ₹ TaxableAmt
+  // PRIMARY STRATEGY: Match VP Honda table rows (browser pdfjs-dist format)
   const rowPat = /\b(\d{1,2})\s+([\w\-()]{3,25})\s+(\d{4,10}|NA)\s+(\d{1,6})\s+(\d{1,3})\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+(\d+)\s+(?:No|Nos|Pc|Pcs|Set)[,]?\w*\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+(\d{1,3})\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+[₹Rs.\s]*([\d,]+\.\d{2})/g;
+  
+  // STRATEGY B: pdf-parse format (backend) — text is compressed, no column spacing
+  // Example: 108233-2MA-F1LG12710197348352₹ 431.321No,s₹ 431.325₹ 3.04₹ 489.75
+  if (items.length === 0) {
+    const partLineRe = /(\d{5,6}-[A-Z0-9\-]{3,20})/g;
+    let pm;
+    const foundParts = new Set();
+    while ((pm = partLineRe.exec(flat)) !== null) {
+      const partNo = pm[1];
+      if (foundParts.has(partNo)) continue;
+      foundParts.add(partNo);
+      // Find all ₹ amounts after this part number
+      const afterPart = flat.slice(pm.index, pm.index + 200);
+      const amounts = [];
+      const amRe = /₹\s*([\d,]+\.\d{2})/g;
+      let am;
+      while ((am = amRe.exec(afterPart)) !== null) {
+        amounts.push(parseFloat(am[1].replace(/,/g,'')));
+      }
+      if (amounts.length >= 2) {
+        const unitPrice = amounts[0];
+        const taxableAmt = amounts[amounts.length - 1];
+        // Find qty — look for 1No or 2Nos pattern
+        const qtyM = afterPart.match(/(\d+)\s*(?:No|Nos|Pc|Pcs|Set)/i);
+        const qty = qtyM ? parseInt(qtyM[1]) : 1;
+        const desc = findDescription(partNo);
+        items.push({
+          srNo: items.length + 1, partNo, hsn: '', description: desc,
+          mrp: unitPrice, unitPrice, quantity: qty,
+          total: taxableAmt, gstRate: 18, gstAmount: +(taxableAmt * 0.18).toFixed(2),
+        });
+      }
+    }
+    if (items.length > 0) console.log('📦 Parts extracted via pdf-parse format:', items.length);
+  }
   
   let m;
   while ((m = rowPat.exec(flat)) !== null) {
