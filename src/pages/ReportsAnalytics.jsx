@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { api } from '../utils/apiConfig';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -67,39 +68,33 @@ export default function ReportsAnalytics({ user }) {
   const intervalRef = useRef(null);
 
   // ── Core data loader — reads ALL localStorage sources ────────────────────
-  const loadAllData = useCallback(() => {
-    // 1. Invoices / Job Cards
-    const invoices = [
-      ...getLS('generatedInvoices'),
-      ...getLS('jobCards'),
-      ...getLS('invoices'),
-    ].filter(Boolean);
+  const loadAllData = useCallback(async () => {
+    // Load from localStorage first
+    let invoices = [...getLS('generatedInvoices'), ...getLS('jobCards'), ...getLS('invoices')].filter(Boolean);
+    let parts = getLS('partsData', getLS('parts', []));
+    let customers = [...getLS('sharedCustomerData'), ...getLS('customerData'), ...getLS('customers')].filter(Boolean);
+    let vehicles = [...getLS('sharedVehicleData'), ...getLS('vehDashboardData'), ...getLS('vehicles')].filter(Boolean);
+    let quotations = getLS('quotations');
+    let staffList = getLS('staffData');
+    const attendance = getLS('staffAttendance', {});
+    const payments = getLS('staffPayments', {});
+    const incentives = getLS('staffIncentives', {});
 
-    // 2. Parts
-    const parts = getLS('partsData', getLS('parts', []));
-
-    // 3. Customers
-    const customers = [
-      ...getLS('sharedCustomerData'),
-      ...getLS('customerData'),
-      ...getLS('customers'),
-    ].filter(Boolean);
-
-    // 4. Vehicles
-    const vehicles = [
-      ...getLS('sharedVehicleData'),
-      ...getLS('vehDashboardData'),
-      ...getLS('vehicles'),
-    ].filter(Boolean);
-
-    // 5. Quotations
-    const quotations = getLS('quotations');
-
-    // 6. Staff
-    const staffList       = getLS('staffData');
-    const attendance      = getLS('staffAttendance', {});
-    const payments        = getLS('staffPayments', {});
-    const incentives      = getLS('staffIncentives', {});
+    // MongoDB fallback for empty data
+    try {
+      const [apiC, apiP, apiI, apiQ, apiS] = await Promise.all([
+        customers.length === 0 ? fetch(api('/api/customers')).then(r=>r.ok?r.json():[]).catch(()=>[]) : Promise.resolve([]),
+        parts.length === 0 ? fetch(api('/api/parts')).then(r=>r.ok?r.json():[]).catch(()=>[]) : Promise.resolve([]),
+        invoices.length === 0 ? fetch(api('/api/invoices')).then(r=>r.ok?r.json():[]).catch(()=>[]) : Promise.resolve([]),
+        quotations.length === 0 ? fetch(api('/api/quotations')).then(r=>r.ok?r.json():[]).catch(()=>[]) : Promise.resolve([]),
+        staffList.length === 0 ? fetch(api('/api/staff')).then(r=>r.ok?r.json():[]).catch(()=>[]) : Promise.resolve([]),
+      ]);
+      if (apiC.length > 0) { customers = apiC; vehicles = apiC.map(c => ({ vehicleModel: c.vehicleModel, regNo: c.registrationNo, date: c.invoiceDate })); }
+      if (apiP.length > 0) parts = apiP;
+      if (apiI.length > 0) invoices = apiI;
+      if (apiQ.length > 0) quotations = apiQ;
+      if (apiS.length > 0) staffList = apiS;
+    } catch(e) { console.log('Reports MongoDB fallback failed:', e.message); }
 
     // ── Invoice Analytics ──────────────────────────────────────────────────
     const monthlyRevenue = Array(12).fill(0).map((_, i) => ({ month: MONTHS_SHORT[i], revenue: 0, count: 0, label: i }));

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, Trash2, Edit, Download, Send, Save, Phone } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
+import { api } from '../utils/apiConfig';
 
 
 export default function QuotationPage({ user }) {
@@ -120,7 +121,7 @@ export default function QuotationPage({ user }) {
 
   useEffect(() => { loadQuotations(); }, []);
 
-  const loadQuotations = () => {
+  const loadQuotations = async () => {
     try {
       const saved = localStorage.getItem('quotations');
       if (saved) {
@@ -141,6 +142,11 @@ export default function QuotationPage({ user }) {
 
   const saveQuotations = (data) => {
     try { localStorage.setItem('quotations', JSON.stringify(data)); } catch (e) { console.error('Error:', e); }
+    // Sync to MongoDB
+    fetch(api('/api/quotations/sync'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quotations: data }),
+    }).catch(e => console.log('Quotation sync failed:', e.message));
   };
 
   const generateQuotationNo = () => 'ENQ-' + new Date().getFullYear() + '-' + String(quotations.length + 1).padStart(4, '0');
