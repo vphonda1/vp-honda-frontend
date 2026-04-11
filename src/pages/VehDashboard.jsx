@@ -445,11 +445,13 @@ export default function VehDashboard() {
 
   // Calculate analytics
   const calculateAnalytics = (data) => {
+    if (!data || data.length === 0) return;
     // Monthly analytics
     const monthlyData = {};
     data.forEach(item => {
       if (item.date) {
         const dateObj = new Date(item.date);
+        if (!dateObj || isNaN(dateObj.getTime())) continue;
         const monthYear = `${dateObj.toLocaleString('en-IN', { month: 'short' })}-${dateObj.getFullYear()}`;
         monthlyData[monthYear] = (monthlyData[monthYear] || 0) + 1;
       }
@@ -634,7 +636,7 @@ export default function VehDashboard() {
     const invoiceTotal = Math.round(invoiceSubTotal);
     const roundOff = Math.round((invoiceTotal - invoiceSubTotal) * 100) / 100;
 
-    const fmt = (v) => v.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+    const fmt = (v) => (v||0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
 
     const invoiceHTML = `
       <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 950px; margin: 0 auto; background: white; color: #000; font-size: 12px; line-height: 1.5;">
@@ -862,7 +864,7 @@ export default function VehDashboard() {
                 <div key={i} className="flex justify-between py-0.5"><span className="text-slate-400 text-sm">{k}</span><span className="text-white text-sm font-bold">{v||'—'}</span></div>
               ))}
               {(viewOldBike.slPrice>0 && viewOldBike.psPrice>0) && (
-                <div className="mt-2 p-2 rounded bg-slate-700"><span className="text-slate-400 text-xs">Profit/Loss: </span><span className={`font-bold text-sm ${viewOldBike.slPrice>=viewOldBike.psPrice?'text-green-400':'text-red-400'}`}>₹{(viewOldBike.slPrice-viewOldBike.psPrice).toLocaleString('en-IN')}</span></div>
+                <div className="mt-2 p-2 rounded bg-slate-700"><span className="text-slate-400 text-xs">Profit/Loss: </span><span className={`font-bold text-sm ${viewOldBike.slPrice>=viewOldBike.psPrice?'text-green-400':'text-red-400'}`}>₹{((viewOldBike.slPrice||0)-(viewOldBike.psPrice||0)).toLocaleString('en-IN')}</span></div>
               )}
             </div>
             <div className="p-4"><Button onClick={()=>setViewOldBike(null)} className="w-full bg-slate-600 text-white">Close</Button></div>
@@ -986,7 +988,7 @@ export default function VehDashboard() {
                     <option value="">सभी Months</option>
                     {[1,2,3,4,5,6,7,8,9,10,11,12].map(m => (
                       <option key={m} value={String(m).padStart(2, '0')}>
-                        {new Date(1-m , 2024).toLocaleString('en-IN', { month: 'long' })}
+                        {new Date(2024, m-1).toLocaleString('en-IN', { month: 'long' })}
                       </option>
                     ))}
                   </select>
@@ -1115,7 +1117,7 @@ export default function VehDashboard() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#444" />
                     <XAxis dataKey="model" stroke="#999" angle={-45} textAnchor="end" height={80} />
                     <YAxis stroke="#999" />
-                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: 'none' }} formatter={(value) => `₹${value.toLocaleString()}`} />
+                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: 'none' }} formatter={(value) => `₹${(value||0).toLocaleString()}`} />
                     <Bar dataKey="avgPrice" fill="#28a745" name="Avg Price" radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1148,7 +1150,7 @@ export default function VehDashboard() {
                         <td className="px-4 py-3">{vehicle.vehicleModel}</td>
                         <td className="px-4 py-3">{vehicle.variant}</td>
                         <td className="px-4 py-3">{vehicle.date ? new Date(vehicle.date).toLocaleDateString('en-IN') : 'N/A'}</td>
-                        <td className="px-4 py-3 text-right font-semibold">₹{vehicle.price.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-right font-semibold">₹{(vehicle.price||0).toLocaleString()}</td>
                         <td className="px-4 py-3 text-center flex gap-1 justify-center">
                           {isAdmin && (
                             <Button
@@ -1344,7 +1346,7 @@ export default function VehDashboard() {
                     <td className="px-3 py-2">{inv.invoiceNo}</td>
                     <td className="px-3 py-2 font-bold">{inv.customerName}</td>
                     <td className="px-3 py-2">{inv.vehicleModel}</td>
-                    <td className="px-3 py-2 text-right">₹{inv.amount.toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
+                    <td className="px-3 py-2 text-right">₹{(inv.amount||0).toLocaleString('en-IN', {minimumFractionDigits:2})}</td>
                     <td className="px-3 py-2">{inv.date}</td>
                     {isAdmin && <td className="px-3 py-2 text-center"><button onClick={() => handleDeleteInvoice(inv.id)} className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-xs">🗑</button></td>}
                   </tr>
@@ -1523,7 +1525,7 @@ export default function VehDashboard() {
                         <td className="px-3 py-2 text-slate-400 text-xs font-mono">{b.regNo||'—'}</td>
                         <td className="px-3 py-2 text-yellow-400 text-xs font-bold">₹{(b.psPrice||0).toLocaleString('en-IN')}</td>
                         <td className="px-3 py-2 text-green-300 text-xs">{b.buyerName||<span className="text-slate-600">—</span>}</td>
-                        <td className="px-3 py-2 text-green-400 text-xs font-bold">{b.slPrice ? '₹'+b.slPrice.toLocaleString('en-IN') : '—'}</td>
+                        <td className="px-3 py-2 text-green-400 text-xs font-bold">{b.slPrice ? '₹'+(b.slPrice||0).toLocaleString('en-IN') : '—'}</td>
                         <td className="px-3 py-2">
                           <span className={`text-xs font-bold px-2 py-0.5 rounded ${b.status==='Sold'?'bg-red-900 text-red-300':b.status==='Reserved'?'bg-yellow-900 text-yellow-300':'bg-green-900 text-green-300'}`}>{b.status||'Available'}</span>
                         </td>
