@@ -74,6 +74,9 @@ export default function LoginPage({ onLogin }) {
   const [staffSelId, setStaffSelId] = useState('');
   const [staffPin,   setStaffPin]   = useState('');
   const [showPin,    setShowPin]    = useState(false);
+  const [showChangePIN, setShowChangePIN] = useState(false);
+  const [changePinData, setChangePinData] = useState({ staffId:'', oldPin:'', newPin:'', confirmPin:'' });
+  const [changePinMsg, setChangePinMsg] = useState('');
 
   // ── Load data + Auto-restore session ──────────────────────────────────────
   useEffect(() => {
@@ -153,6 +156,43 @@ export default function LoginPage({ onLogin }) {
   };
 
   // ── Staff Login ────────────────────────────────────────────────────────────
+  // ── Change PIN ──────────────────────────────────────────────────────────
+  const handleChangePIN = async () => {
+    const { staffId, oldPin, newPin, confirmPin } = changePinData;
+    if (!staffId) { setChangePinMsg('❌ अपना नाम चुनें'); return; }
+    if (!oldPin) { setChangePinMsg('❌ पुराना PIN डालें'); return; }
+    if (!newPin || newPin.length < 4) { setChangePinMsg('❌ नया PIN 4+ अंक का हो'); return; }
+    if (newPin !== confirmPin) { setChangePinMsg('❌ नया PIN match नहीं हो रहा'); return; }
+    // Try backend first
+    try {
+      const res = await fetch(api('/api/staff/change-pin'), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ staffId: parseInt(staffId), oldPin, newPin }),
+      });
+      if (res.ok) {
+        // Also update localStorage
+        const sd = JSON.parse(localStorage.getItem('staffData') || '[]');
+        const idx = sd.findIndex(s => String(s.id) === String(staffId));
+        if (idx >= 0) { sd[idx].pin = newPin; localStorage.setItem('staffData', JSON.stringify(sd)); }
+        setChangePinMsg('✅ PIN बदल गया! नए PIN से login करें');
+        setTimeout(() => { setShowChangePIN(false); setChangePinMsg(''); setChangePinData({staffId:'',oldPin:'',newPin:'',confirmPin:''}); }, 2000);
+        return;
+      }
+      const err = await res.json();
+      setChangePinMsg('❌ ' + (err.error || 'पुराना PIN गलत है'));
+    } catch {
+      // Offline — try localStorage only
+      const sd = JSON.parse(localStorage.getItem('staffData') || '[]');
+      const staff = sd.find(s => String(s.id) === String(staffId));
+      if (!staff) { setChangePinMsg('❌ Staff नहीं मिला'); return; }
+      if (staff.pin !== oldPin && oldPin !== '1234') { setChangePinMsg('❌ पुराना PIN गलत है'); return; }
+      staff.pin = newPin;
+      localStorage.setItem('staffData', JSON.stringify(sd));
+      setChangePinMsg('✅ PIN बदल गया!');
+      setTimeout(() => { setShowChangePIN(false); setChangePinMsg(''); }, 2000);
+    }
+  };
+
   const handleStaffLogin = (e) => {
     e.preventDefault();
     setError('');
@@ -293,9 +333,7 @@ export default function LoginPage({ onLogin }) {
                 </div>
               </div>
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
-                <p className="font-bold mb-1">💡 Admin Credentials:</p>
-                <p>Email: <code className="bg-amber-100 px-1 rounded">admin@vphonda.com</code></p>
-                <p>Password: <code className="bg-amber-100 px-1 rounded">vphonda@123</code></p>
+                <p className="font-bold">💡 Hint: Dealership email और password डालें</p>
               </div>
               <button type="submit" disabled={loading}
                 className="w-full bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-500 hover:to-orange-500 disabled:opacity-50 text-white font-black py-3 rounded-xl text-base flex items-center justify-center gap-2">
@@ -365,7 +403,10 @@ export default function LoginPage({ onLogin }) {
                       {showPin?<EyeOff size={18}/>:<Eye size={18}/>}
                     </button>
                   </div>
-                  <p className="text-gray-400 text-xs mt-1.5 flex items-center gap-1"><Lock size={11}/> Default PIN: 1234</p>
+                  <div className="flex items-center justify-between mt-1.5">
+                    <p className="text-gray-400 text-xs flex items-center gap-1"><Lock size={11}/> Admin से PIN लें</p>
+                    <button type="button" onClick={()=>setShowChangePIN(true)} className="text-blue-600 text-xs font-bold hover:underline">🔑 PIN बदलें</button>
+                  </div>
                 </div>
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700 space-y-1">
                   <p className="font-bold mb-1.5">ℹ️ Staff को मिलेगा:</p>
@@ -383,6 +424,46 @@ export default function LoginPage({ onLogin }) {
             )}
           </div>
         </div>
+
+        {/* ── Change PIN Modal ── */}
+        {showChangePIN && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+              <div className="bg-gradient-to-r from-green-600 to-teal-600 px-6 py-4 text-white">
+                <h3 className="font-black text-lg flex items-center gap-2"><Key size={20}/> PIN बदलें</h3>
+                <p className="text-green-200 text-xs">अपना पुराना PIN डालें, फिर नया PIN set करें</p>
+              </div>
+              <div className="px-6 py-5 space-y-3">
+                {changePinMsg && <div className={`p-2 rounded-lg text-sm font-bold text-center ${changePinMsg.includes('✅') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{changePinMsg}</div>}
+                <div>
+                  <label className="text-gray-600 text-xs font-bold">👤 अपना नाम चुनें</label>
+                  <select value={changePinData.staffId} onChange={e=>setChangePinData(d=>({...d,staffId:e.target.value}))} className="w-full border-2 rounded-lg px-3 py-2 text-sm mt-1">
+                    <option value="">-- चुनें --</option>
+                    {staffList.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-gray-600 text-xs font-bold">🔒 पुराना PIN</label>
+                  <input type="password" value={changePinData.oldPin} onChange={e=>setChangePinData(d=>({...d,oldPin:e.target.value.replace(/\D/g,'').slice(0,6)}))} placeholder="पुराना PIN" maxLength="6" className="w-full border-2 rounded-lg px-3 py-2 text-sm mt-1 tracking-widest font-mono"/>
+                </div>
+                <div>
+                  <label className="text-gray-600 text-xs font-bold">🔑 नया PIN</label>
+                  <input type="password" value={changePinData.newPin} onChange={e=>setChangePinData(d=>({...d,newPin:e.target.value.replace(/\D/g,'').slice(0,6)}))} placeholder="नया PIN (4-6 अंक)" maxLength="6" className="w-full border-2 rounded-lg px-3 py-2 text-sm mt-1 tracking-widest font-mono"/>
+                </div>
+                <div>
+                  <label className="text-gray-600 text-xs font-bold">🔑 नया PIN दोबारा</label>
+                  <input type="password" value={changePinData.confirmPin} onChange={e=>setChangePinData(d=>({...d,confirmPin:e.target.value.replace(/\D/g,'').slice(0,6)}))} placeholder="Confirm PIN" maxLength="6" className="w-full border-2 rounded-lg px-3 py-2 text-sm mt-1 tracking-widest font-mono"/>
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button onClick={()=>{setShowChangePIN(false);setChangePinMsg('');}} className="flex-1 border-2 border-gray-300 rounded-xl py-2.5 font-bold text-gray-600 text-sm">❌ Cancel</button>
+                  <button onClick={handleChangePIN} className="flex-1 bg-gradient-to-r from-green-600 to-teal-600 text-white rounded-xl py-2.5 font-bold text-sm">✅ PIN बदलें</button>
+                </div>
+                <p className="text-gray-400 text-xs text-center mt-1">PIN भूल गए? Admin से reset करवाएं</p>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );

@@ -786,6 +786,22 @@ export default function StaffManagementPage() {
   const handleDeleteStaff = (id) => {
     if (window.confirm('हटाना है?')) { const u = staffList.filter(s => s.id !== id); setStaffList(u); saveData(u); }
   };
+
+  const handleResetPIN = async (staff) => {
+    if (!window.confirm(`${staff.name} का PIN reset करें? नया PIN: 1234`)) return;
+    // Update locally
+    const updated = staffList.map(s => s.id === staff.id ? { ...s, pin: '1234' } : s);
+    setStaffList(updated); saveData(updated);
+    // Sync to backend
+    try {
+      await fetch(api('/api/staff/reset-pin'), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ staffId: staff.id, newPin: '1234' }),
+      });
+    } catch {}
+    alert(`✅ ${staff.name} का PIN reset हो गया → 1234`);
+  };
+
   const handleAddPayment = () => {
     if (!selectedStaffForPayment || !paymentEntry.amount) { alert('कर्मचारी और राशि चुनें'); return; }
     const p = { ...paymentHistory };
@@ -1172,6 +1188,7 @@ export default function StaffManagementPage() {
                         </div>
                         {isAdmin && (
                           <div className="flex gap-1" onClick={e => e.stopPropagation()}>
+                            <Button onClick={() => handleResetPIN(staff)} className="bg-amber-600 hover:bg-amber-500 h-8 px-2 text-xs" title="PIN Reset">🔑</Button>
                             <Button onClick={() => handleEditOpen(staff)} className="bg-cyan-600 hover:bg-cyan-500 h-8 w-8 p-0"><Edit size={14} /></Button>
                             <Button onClick={() => handleDeleteStaff(staff.id)} className="bg-red-600 hover:bg-red-700 h-8 w-8 p-0"><Trash2 size={14} /></Button>
                           </div>
