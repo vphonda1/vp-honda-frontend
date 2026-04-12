@@ -451,7 +451,7 @@ export default function VehDashboard() {
     data.forEach(item => {
       if (item.date) {
         const dateObj = new Date(item.date);
-        if (!dateObj || isNaN(dateObj.getTime())) continue;
+        if (!dateObj || isNaN(dateObj.getTime())) return;
         const monthYear = `${dateObj.toLocaleString('en-IN', { month: 'short' })}-${dateObj.getFullYear()}`;
         monthlyData[monthYear] = (monthlyData[monthYear] || 0) + 1;
       }
