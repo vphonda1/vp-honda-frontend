@@ -135,8 +135,7 @@ const parseVPHondaInvoice = (text, filename) => {
 
   const rawTax = find([
     /Total\s*Tax\s*Amount\s*[:-]?\s*[₹Rs.\s]*([\d,]+\.\d{2})/i,
-    /Total\s*Tax[^₹]*[₹]\s*([\d,]+\.\d{2})/i,
-    /Tax\s*Amount\s*[:-]?\s*[₹Rs.\s]*([\d,]+\.\d{2})/i,
+    
   ]);
   const taxAmount = parseFloat((rawTax||'0').replace(/,/g,'')) || 0;
 
@@ -347,7 +346,7 @@ const parseVPHondaInvoice = (text, filename) => {
   for (const item of items) {
     const hsnVal = String(item.hsn || '').trim().toUpperCase();
     const pn = String(item.partNo || '').toUpperCase();
-    if (hsnVal === 'NA' || hsnVal === '' || pn === 'CONSUM' || pn.startsWith('P05')) {
+    if (hsnVal === 'NA' || pn === 'CONSUM' || pn.startsWith('P05')) {
       // CONSUM and NA HSN items = 0% GST
       item.gstRate = 0;
       item.gstAmount = 0;
@@ -565,7 +564,7 @@ export default function InvoiceManagementDashboard() {
         const r = await fetch(api('/api/invoices'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(inv),
+          body: JSON.stringify({...inv, customerId: undefined, _id: undefined}),
         });
         if (r.ok) dbSaved++;
         else console.log('DB save error:', r.status, await r.text().catch(()=>''));
