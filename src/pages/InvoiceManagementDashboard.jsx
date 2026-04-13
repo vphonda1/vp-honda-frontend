@@ -131,18 +131,7 @@ const parseVPHondaInvoice = (text, filename) => {
   ]);
   const pdfTotal = parseFloat((rawTotal||'0').replace(/,/g,'')) || 0;
 
-  // Fallback: find largest currency amount in text (likely the total)
-  let fallbackTotal = 0;
-  if (pdfTotal === 0) {
-    const allAmounts = [];
-    const amtRe = /[₹Rs.\s]*([\d,]+\.\d{2})/g;
-    let amtM;
-    while ((amtM = amtRe.exec(flat)) !== null) {
-      const v = parseFloat(amtM[1].replace(/,/g,''));
-      if (v > 100 && v < 10000000) allAmounts.push(v);
-    }
-    if (allAmounts.length > 0) fallbackTotal = Math.max(...allAmounts);
-  }
+  // fallbackTotal removed — unreliable
 
   const rawTax = find([
     /Total\s*Tax\s*Amount\s*[:-]?\s*[₹Rs.\s]*([\d,]+\.\d{2})/i,
@@ -359,9 +348,11 @@ const parseVPHondaInvoice = (text, filename) => {
     const hsnVal = String(item.hsn || '').trim().toUpperCase();
     const pn = String(item.partNo || '').toUpperCase();
     if (hsnVal === 'NA' || hsnVal === '' || pn === 'CONSUM' || pn.startsWith('P05')) {
+      // CONSUM and NA HSN items = 0% GST
       item.gstRate = 0;
       item.gstAmount = 0;
     } else {
+      // Standard parts = 18% GST (9% SGST + 9% CGST)
       item.gstRate = 18;
       item.gstAmount = Math.round(item.total * 18 / 100 * 100) / 100;
     }
@@ -373,7 +364,7 @@ const parseVPHondaInvoice = (text, filename) => {
   // ── Use PDF's Total Invoice Value & Total Tax Amount (most accurate) ───────
   let subtotal, gstRate, gstAmount, finalTotal;
   
-  const effectiveTotal = pdfTotal || fallbackTotal;
+  const effectiveTotal = pdfTotal;
   if (effectiveTotal > 0 && taxAmount > 0) {
     // PDF has both — use directly
     finalTotal = pdfTotal;
@@ -397,30 +388,16 @@ const parseVPHondaInvoice = (text, filename) => {
   
   gstRate = subtotal > 0 ? Math.round(gstAmount / subtotal * 100) : 0;
 
-  // If finalTotal still 0 but items exist, calculate from items + GST
+  // If finalTotal still 0 but items exist, calculate correctly
   if (finalTotal === 0 && itemsTotal > 0) {
     subtotal = itemsTotal;
-    // Check TAX SUMMARY for actual GST (9% SGST + 9% CGST = 18%)
-    gstRate = 18;
-    gstAmount = +(itemsTotal * 0.18).toFixed(2);
-    finalTotal = +(itemsTotal + gstAmount).toFixed(2);
+    // Calculate GST from individual items (some 18%, some 0%)
+    gstAmount = items.reduce((sum, item) => sum + (item.gstAmount || 0), 0);
+    gstAmount = +gstAmount.toFixed(2);
+    finalTotal = +(subtotal + gstAmount).toFixed(2);
+    gstRate = subtotal > 0 ? Math.round(gstAmount / subtotal * 100) : 0;
   }
-  // Use "Total Invoice Value" from PDF if found (most accurate)
-  if (fallbackTotal > 0 && fallbackTotal > 100) {
-    // "Total Invoice Value" already includes GST — use as final
-    finalTotal = fallbackTotal;
-    // Subtotal = sum of taxable amounts from items
-    if (itemsTotal > 0) {
-      subtotal = itemsTotal;
-      gstAmount = +(finalTotal - subtotal).toFixed(2);
-      if (gstAmount < 0) gstAmount = 0;
-      gstRate = subtotal > 0 ? Math.round((gstAmount / subtotal) * 100) : 18;
-    } else {
-      subtotal = +(finalTotal / 1.18).toFixed(2);
-      gstAmount = +(finalTotal - subtotal).toFixed(2);
-      gstRate = 18;
-    }
-  }
+
   console.log('📊 Totals:', { itemsTotal, pdfTotal, taxAmount, itemsGst, subtotal, gstRate: gstRate+'%', gstAmount, finalTotal });
 
   // Invoice type — compute before return (no IIFE)
@@ -581,16 +558,20 @@ export default function InvoiceManagementDashboard() {
 
     localStorage.setItem('invoices', JSON.stringify([...added, ...existing]));
 
-    // ── Also save to MongoDB backend (so data syncs across devices) ──────────
+    // ── Save to MongoDB backend (cross-device sync) ──────────────────────────
+    let dbSaved = 0;
     for (const inv of added) {
       try {
-        await fetch(api('/api/invoices'), {
+        const r = await fetch(api('/api/invoices'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(inv),
         });
-      } catch(e) { console.log('DB save failed for', inv.invoiceNumber, e.message); }
+        if (r.ok) dbSaved++;
+        else console.log('DB save error:', r.status, await r.text().catch(()=>''));
+      } catch(e) { console.log('DB offline for', inv.invoiceNumber); }
     }
+    console.log(`✅ ${dbSaved}/${added.length} invoices saved to MongoDB`);
     
     // ── Sync service data for Reminders ──────────────────────────────────────
     const svcData = getLS('customerServiceData', {});
