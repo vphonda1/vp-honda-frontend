@@ -19,16 +19,6 @@ export default function Dashboard({ user }) {
   useEffect(() => { loadAll(); const t=setInterval(loadAll,30000); const fn=()=>loadAll(); window.addEventListener('storage',fn); return()=>{clearInterval(t);window.removeEventListener('storage',fn);}; }, []);
 
   const loadAll = async () => {
-    let apiC=[], apiP=[], apiI=[];
-    try {
-      const [c,p,i] = await Promise.all([
-        fetch(api('/api/customers')).catch(()=>({ok:false})),
-        fetch(api('/api/parts')).catch(()=>({ok:false})),
-        fetch(api('/api/invoices')).catch(()=>({ok:false})),
-      ]);
-      if(c.ok) apiC=await c.json(); if(p.ok) apiP=await p.json(); if(i.ok) apiI=await i.json();
-    } catch{}
-
     // MongoDB PRIMARY — always fetch fresh
     const doFetch = async (url, lsKey, fb=[]) => {
       try { const r=await fetch(api(url)); if(r.ok){const d=await r.json(); if(d&&(Array.isArray(d)?d.length>0:true)){if(lsKey)localStorage.setItem(lsKey,JSON.stringify(d)); return d;}} } catch{}
@@ -43,7 +33,7 @@ export default function Dashboard({ user }) {
     const apiStaff = await doFetch('/api/staff','staffData');
     const lsInv=apiI, genInv=getLS('generatedInvoices'), veh=apiC.length>0?apiC:getLS('vehDashboardData'), old=apiOld, svc=getLS('customerServiceData',{}), staff=apiStaff, quot=await doFetch('/api/quotations','quotations'), lsC=apiC, lsP=apiP;
     const allInv=[...lsInv,...genInv];
-    const totalC=Math.max(apiC.length,lsC.length), totalP=Math.max(apiP.length,lsP.length), totalI=allInv.length+apiI.length, totalV=veh.length;
+    const totalC=Math.max(apiC.length,lsC.length), totalP=Math.max(apiP.length,lsP.length), totalI=allInv.length, totalV=veh.length;
     const lsRev=allInv.reduce((a,i)=>a+(i.totals?.totalAmount||i.amount||0),0);
     const vehRev=veh.reduce((a,v)=>a+(parseFloat(v.price)||0),0);
     const apiRev=apiI.reduce((a,i)=>a+(i.total||0),0);
