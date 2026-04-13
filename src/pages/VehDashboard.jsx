@@ -340,29 +340,27 @@ export default function VehDashboard() {
         // Notify other pages
         window.dispatchEvent(new Event('dataSync'));
         
-        // ── Save to MongoDB backend (sync across devices) ──────────
+        // ── Sync ALL to MongoDB (delete old + insert fresh — no duplicates)
         (async () => {
-          let saved = 0;
-          for (const c of customerSync) {
-            try {
-              await fetch(api('/api/customers'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  customerName: c.name, fatherName: c.fatherName, phone: c.phone,
-                  aadhar: c.aadhar, pan: c.pan, address: c.address, district: c.district,
-                  pinCode: c.pinCode, dob: c.dob, vehicleModel: c.linkedVehicle?.model,
-                  variant: c.variant, vehicleColor: c.linkedVehicle?.color,
-                  engineNo: c.linkedVehicle?.engineNo, chassisNo: c.linkedVehicle?.frameNo,
-                  registrationNo: c.linkedVehicle?.regNo, keyNo: c.keyNo, batteryNo: c.batteryNo,
-                  invoiceDate: c.linkedVehicle?.purchaseDate, financeCompany: c.financerName,
-                  price: c.price, insurance: c.insurance, rto: c.rto,
-                }),
-              });
-              saved++;
-            } catch(e) {}
-          }
-          console.log(`✅ ${saved}/${customerSync.length} customers saved to MongoDB`);
+          try {
+            const syncData = customerSync.map(c => ({
+              customerName: c.name, fatherName: c.fatherName, phone: c.phone,
+              aadhar: c.aadhar, pan: c.pan, address: c.address, district: c.district,
+              pinCode: c.pinCode, dob: c.dob, vehicleModel: c.linkedVehicle?.model,
+              variant: c.variant, vehicleColor: c.linkedVehicle?.color,
+              engineNo: c.linkedVehicle?.engineNo, chassisNo: c.linkedVehicle?.frameNo,
+              registrationNo: c.linkedVehicle?.regNo, keyNo: c.keyNo, batteryNo: c.batteryNo,
+              invoiceDate: c.linkedVehicle?.purchaseDate, financeCompany: c.financerName,
+              price: c.price, insurance: c.insurance, rto: c.rto,
+            }));
+            const r = await fetch(api('/api/customers/sync'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ customers: syncData }),
+            });
+            const result = await r.json();
+            console.log('✅ MongoDB sync:', result.count, 'customers replaced');
+          } catch(e) { console.log('MongoDB sync failed:', e.message); }
         })();
 
         alert('✅ डेटा सफलतापूर्वक लोड हो गया!\n💾 Data save हो गया - अगली बार auto-load होगा!');
