@@ -194,6 +194,8 @@ const parseVPHondaInvoice = (text, filename) => {
       '15412-KRM-840','17220-KRM-840','06455-K44-D01','06435-K44-D01',
       '91307-KRM-841','94109-14000','22401-K0N-D01','23100-K0N-D01',
       '15412-K0N-D01842','5412-K0N-D01','15412-K0N-D01',
+      '32213850-784007020','17220-K0N-D00','06455-KYJ-940',
+      '42711-K0N-D01','23100-K0N-D01','22401-K0N-D01',
     ];
     
     const allLines = text.split('\n').map(l => l.trim()).filter(Boolean);
@@ -224,27 +226,24 @@ const parseVPHondaInvoice = (text, filename) => {
         }
       }
       
-      // Method 2: Smart extraction — Honda format: 5digits-2to4alphanum-1to6alphanum
+      // Method 2: Smart extraction — Honda parts: various lengths
       if (!partNo) {
-        // Remove leading SrNo: the line starts with 1-2 digit SrNo merged with 5-digit part start
-        // So "108233-..." = SrNo 1 + Part 08233-..., "215412-..." = SrNo 2 + Part 15412-...
         let cleaned = beforeFirstRupee;
-        // Find the first dash
         const dashIdx = cleaned.indexOf('-');
-        if (dashIdx >= 4 && dashIdx <= 7) {
-          // Digits before first dash: could be SrNo(1-2) + PartStart(5)
+        if (dashIdx >= 4) {
           const digitsBeforeDash = cleaned.slice(0, dashIdx);
-          if (digitsBeforeDash.length >= 6) {
-            // SrNo is 1 digit, part starts at index 1
-            cleaned = cleaned.slice(1);
-          } else if (digitsBeforeDash.length >= 7) {
-            // SrNo is 2 digits
-            cleaned = cleaned.slice(2);
+          if (/^\d+$/.test(digitsBeforeDash)) {
+            if (digitsBeforeDash.length >= 6) cleaned = cleaned.slice(1);
+            if (digitsBeforeDash.length >= 10) cleaned = cleaned.slice(1);
           }
-          // Now extract part: everything up to where HSN begins (7-8 consecutive digits after last segment)
-          // Pattern: DDDDD-XXX-XXXX followed by DDDDDDD (HSN)
-          const partMatch = cleaned.match(/^(\d{4,5}-[A-Z0-9]{1,4}-[A-Z0-9]{1,6}|\d{5}-\d{4,5})/);
-          if (partMatch) partNo = partMatch[1];
+          const partMatch = cleaned.match(/^(\d{4,8}-[A-Z0-9]{1,4}-[A-Z0-9]{1,6}|\d{4,8}-\d{4,9})/);
+          if (partMatch) {
+            partNo = partMatch[1];
+            if (partNo.length > 20) {
+              const seg = partNo.split('-');
+              if (seg.length === 2 && seg[1].length > 9) { seg[1] = seg[1].slice(0,9); partNo = seg.join('-'); }
+            }
+          }
         }
       }
       
