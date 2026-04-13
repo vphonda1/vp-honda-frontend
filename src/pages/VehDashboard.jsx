@@ -346,21 +346,28 @@ export default function VehDashboard() {
             const syncData = customerSync.map(c => ({
               customerName: c.name, fatherName: c.fatherName, phone: c.phone,
               aadhar: c.aadhar, pan: c.pan, address: c.address, district: c.district,
-              pinCode: c.pinCode, dob: c.dob, vehicleModel: c.linkedVehicle?.model,
-              variant: c.variant, vehicleColor: c.linkedVehicle?.color,
+              pinCode: c.pinCode || '', dob: c.dob, vehicleModel: c.linkedVehicle?.model,
+              variant: c.variant || '', vehicleColor: c.linkedVehicle?.color,
               engineNo: c.linkedVehicle?.engineNo, chassisNo: c.linkedVehicle?.frameNo,
-              registrationNo: c.linkedVehicle?.regNo, keyNo: c.keyNo, batteryNo: c.batteryNo,
+              registrationNo: c.linkedVehicle?.regNo, keyNo: c.keyNo || '', batteryNo: c.batteryNo || '',
               invoiceDate: c.linkedVehicle?.purchaseDate, financeCompany: c.financerName,
-              price: c.price, insurance: c.insurance, rto: c.rto,
+              price: c.price || 0, insurance: c.insurance || 0, rto: c.rto || 0,
             }));
+            console.log('📤 Syncing', syncData.length, 'customers to MongoDB...');
+            console.log('📤 Sample:', syncData[0]?.customerName, syncData[0]?.vehicleModel, syncData[0]?.price);
             const r = await fetch(api('/api/customers/sync'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ customers: syncData }),
             });
-            const result = await r.json();
-            console.log('✅ MongoDB sync:', result.count, 'customers replaced');
-          } catch(e) { console.log('MongoDB sync failed:', e.message); }
+            if (r.ok) {
+              const result = await r.json();
+              console.log('✅ MongoDB sync SUCCESS:', result.count, 'customers replaced');
+            } else {
+              const errText = await r.text();
+              console.error('❌ MongoDB sync FAILED:', r.status, errText);
+            }
+          } catch(e) { console.error('❌ MongoDB sync ERROR:', e.message); }
         })();
 
         alert('✅ डेटा सफलतापूर्वक लोड हो गया!\n💾 Data save हो गया - अगली बार auto-load होगा!');
@@ -388,6 +395,22 @@ export default function VehDashboard() {
         if (res.ok) {
           const dbCustomers = await res.json();
           if (dbCustomers.length > 0) {
+            // Validate: if first record has no customerName, MongoDB has old/bad data — use localStorage
+            const firstValid = dbCustomers.find(c => (c.customerName || c.name || '').trim());
+            if (!firstValid) {
+              console.log('⚠️ MongoDB data has blank names — using localStorage');
+              try {
+                const sd = localStorage.getItem('vehDashboardData');
+                const sm = localStorage.getItem('vehDashboardModels');
+                if (sd && sm) {
+                  const pd = JSON.parse(sd), pm = JSON.parse(sm);
+                  if (pd.length > 0 && pd[0].customerName) { setVehicleData(pd); setFilteredData(pd); setModels(pm); calculateAnalytics(pd); setDbLoading(false); return; }
+                }
+              } catch{}
+              setDbError('MongoDB data blank — Excel re-import करें');
+              setDbLoading(false);
+              return;
+            }
             const transformed = dbCustomers.map((c, i) => ({
               id: c._id || i + 1,
               customerName: c.customerName || c.name || '',
