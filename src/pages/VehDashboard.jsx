@@ -386,7 +386,28 @@ export default function VehDashboard() {
     const savedData = localStorage.getItem('vehDashboardData');
     const savedModels = localStorage.getItem('vehDashboardModels');
     
-    // Always try MongoDB first (cross-device sync)
+    // SMART LOAD: localStorage first (reliable), MongoDB for new devices
+    // Step 1: Check localStorage
+    const savedData = localStorage.getItem('vehDashboardData');
+    const savedModels = localStorage.getItem('vehDashboardModels');
+    
+    if (savedData && savedModels) {
+      try {
+        const pd = JSON.parse(savedData);
+        const pm = JSON.parse(savedModels);
+        if (pd.length > 0 && pd[0].customerName) {
+          // localStorage has valid data — use it
+          setVehicleData(pd);
+          setFilteredData(pd);
+          setModels(pm);
+          calculateAnalytics(pd);
+          setDbLoading(false);
+          return;
+        }
+      } catch(e) { console.log('localStorage parse error'); }
+    }
+    
+    // Step 2: localStorage empty/invalid — fetch from MongoDB (mobile/new device)
     setDbLoading(true);
     setDbError('');
     (async () => {
@@ -395,19 +416,10 @@ export default function VehDashboard() {
         if (res.ok) {
           const dbCustomers = await res.json();
           if (dbCustomers.length > 0) {
-            // Validate: if first record has no customerName, MongoDB has old/bad data — use localStorage
-            const firstValid = dbCustomers.find(c => (c.customerName || c.name || '').trim());
-            if (!firstValid) {
-              console.log('⚠️ MongoDB data has blank names — using localStorage');
-              try {
-                const sd = localStorage.getItem('vehDashboardData');
-                const sm = localStorage.getItem('vehDashboardModels');
-                if (sd && sm) {
-                  const pd = JSON.parse(sd), pm = JSON.parse(sm);
-                  if (pd.length > 0 && pd[0].customerName) { setVehicleData(pd); setFilteredData(pd); setModels(pm); calculateAnalytics(pd); setDbLoading(false); return; }
-                }
-              } catch{}
-              setDbError('MongoDB data blank — Excel re-import करें');
+            // Validate: check if data has customerName
+            const hasNames = dbCustomers.some(c => (c.customerName || c.name || '').trim());
+            if (!hasNames) {
+              setDbError('MongoDB data blank — Laptop से Excel import करें');
               setDbLoading(false);
               return;
             }
@@ -444,23 +456,11 @@ export default function VehDashboard() {
             localStorage.setItem('vehDashboardData', JSON.stringify(transformed));
             localStorage.setItem('vehDashboardModels', JSON.stringify(uniqueModels));
           } else {
-            setDbError('Database खाली है — Laptop से Excel import करें');
+            setDbError('कोई data नहीं — Excel import करें');
           }
-        } else {
-          setDbError('Server से data load नहीं हुआ — Refresh करें');
         }
       } catch(e) {
-        console.log('MongoDB offline, trying localStorage cache');
-        // Fallback to localStorage
-        try {
-          const sd = localStorage.getItem('vehDashboardData');
-          const sm = localStorage.getItem('vehDashboardModels');
-          if (sd && sm) {
-            const pd = JSON.parse(sd), pm = JSON.parse(sm);
-            if (pd.length > 0) { setVehicleData(pd); setFilteredData(pd); setModels(pm); calculateAnalytics(pd); setDbLoading(false); return; }
-          }
-        } catch{}
-        setDbError('Server connecting... 30 sec wait करें फिर Refresh');
+        setDbError('Server connecting... 30 sec wait करें');
       }
       setDbLoading(false);
     })();
