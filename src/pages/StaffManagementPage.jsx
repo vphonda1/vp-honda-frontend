@@ -125,7 +125,14 @@ export default function StaffManagementPage() {
   useEffect(() => { loadData(); }, []);
 
   const loadData = () => {
-    try { const s = localStorage.getItem('staffData'); if (s) setStaffList(JSON.parse(s)); } catch {}
+    // MongoDB PRIMARY — always fetch fresh staff data
+    (async () => {
+      try {
+        const res = await fetch(api('/api/staff'));
+        if (res.ok) { const db = await res.json(); if (db.length > 0) { setStaffList(db); localStorage.setItem('staffData', JSON.stringify(db)); return; } }
+      } catch {}
+      try { const s = localStorage.getItem('staffData'); if (s) setStaffList(JSON.parse(s)); } catch {}
+    })()
     try { const a = localStorage.getItem('staffAttendance'); if (a) setAttendanceRecords(JSON.parse(a)); } catch {}
     try { const p = localStorage.getItem('staffPayments'); if (p) setPaymentHistory(JSON.parse(p)); } catch {}
     try { const n = localStorage.getItem('staffNotes'); if (n) setManualNotes(JSON.parse(n)); } catch {}

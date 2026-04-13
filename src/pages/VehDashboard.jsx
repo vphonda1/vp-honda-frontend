@@ -373,22 +373,7 @@ export default function VehDashboard() {
     const savedData = localStorage.getItem('vehDashboardData');
     const savedModels = localStorage.getItem('vehDashboardModels');
     
-    if (savedData && savedModels) {
-      try {
-        const parsedData = JSON.parse(savedData);
-        const parsedModels = JSON.parse(savedModels);
-        if (parsedData.length > 0) {
-          setVehicleData(parsedData);
-          setFilteredData(parsedData);
-          setModels(parsedModels);
-          calculateAnalytics(parsedData);
-          return; // localStorage has data — done
-        }
-      } catch (error) {
-        console.log('Data load error:', error);
-      }
-    }
-    // No localStorage data — load from MongoDB (mobile / new device)
+    // Always try MongoDB first (cross-device sync)
     setDbLoading(true);
     setDbError('');
     (async () => {
@@ -429,8 +414,17 @@ export default function VehDashboard() {
           setDbError('Server से data load नहीं हुआ — Refresh करें');
         }
       } catch(e) {
+        console.log('MongoDB offline, trying localStorage cache');
+        // Fallback to localStorage
+        try {
+          const sd = localStorage.getItem('vehDashboardData');
+          const sm = localStorage.getItem('vehDashboardModels');
+          if (sd && sm) {
+            const pd = JSON.parse(sd), pm = JSON.parse(sm);
+            if (pd.length > 0) { setVehicleData(pd); setFilteredData(pd); setModels(pm); calculateAnalytics(pd); setDbLoading(false); return; }
+          }
+        } catch{}
         setDbError('Server connecting... 30 sec wait करें फिर Refresh');
-        console.log('MongoDB load failed:', e.message);
       }
       setDbLoading(false);
     })();
@@ -451,7 +445,7 @@ export default function VehDashboard() {
     data.forEach(item => {
       if (item.date) {
         const dateObj = new Date(item.date);
-        if (!dateObj || isNaN(dateObj.getTime())) continue;
+        if (!dateObj || isNaN(dateObj.getTime())) return;
         const monthYear = `${dateObj.toLocaleString('en-IN', { month: 'short' })}-${dateObj.getFullYear()}`;
         monthlyData[monthYear] = (monthlyData[monthYear] || 0) + 1;
       }

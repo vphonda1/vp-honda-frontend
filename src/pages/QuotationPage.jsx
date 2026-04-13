@@ -122,6 +122,27 @@ export default function QuotationPage({ user }) {
   useEffect(() => { loadQuotations(); }, []);
 
   const loadQuotations = async () => {
+    // MongoDB PRIMARY — always fetch fresh
+    try {
+      const res = await fetch(api('/api/quotations'));
+      if (res.ok) {
+        const db = await res.json();
+        if (db.length > 0) {
+          const migrated = db.map(q => ({
+            ...q,
+            cash: q.cash || {},
+            finance: q.finance || {},
+            dd: q.dd || {},
+            accessories: q.accessories || [],
+            followUpDates: q.followUpDates || []
+          }));
+          setQuotations(migrated);
+          localStorage.setItem('quotations', JSON.stringify(migrated));
+          return;
+        }
+      }
+    } catch(e) { console.log('Quotations DB offline, using cache'); }
+    // Fallback: localStorage
     try {
       const saved = localStorage.getItem('quotations');
       if (saved) {
@@ -135,18 +156,13 @@ export default function QuotationPage({ user }) {
           followUpDates: q.followUpDates || []
         }));
         setQuotations(migrated);
-        localStorage.setItem('quotations', JSON.stringify(migrated));
       }
     } catch (e) { console.error('Error:', e); }
   };
 
   const saveQuotations = (data) => {
     try { localStorage.setItem('quotations', JSON.stringify(data)); } catch (e) { console.error('Error:', e); }
-    // Sync to MongoDB
-    fetch(api('/api/quotations/sync'), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quotations: data }),
-    }).catch(e => console.log('Quotation sync failed:', e.message));
+    fetch(api('/api/quotations/sync'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({quotations:data}) }).catch(()=>{});
   };
 
   const generateQuotationNo = () => 'ENQ-' + new Date().getFullYear() + '-' + String(quotations.length + 1).padStart(4, '0');

@@ -187,23 +187,22 @@ export default function VPHondaDashboard() {
   const [lsServiceData, setLsServiceData] = useState({});
 
   const loadLocalData = useCallback(async () => {
-    // Load from localStorage first
-    let inv=getLS('invoices'), genInv=getLS('generatedInvoices'), veh=getLS('vehDashboardData');
-    let cust=getLS('sharedCustomerData'), parts=getLS('partsInventory'), staff=getLS('staffData');
-    let quot=getLS('quotations'), old=getLS('oldBikeData');
+    // MongoDB PRIMARY — always fetch fresh data
+    const doFetch = async (url, lsKey, fb=[]) => {
+      try { const r=await fetch(api(url)); if(r.ok){const d=await r.json(); if(d.length>0){if(lsKey)localStorage.setItem(lsKey,JSON.stringify(d)); return d;}} } catch{}
+      return getLS(lsKey, fb); // fallback to cache
+    };
+    let [cust, inv, parts, staff, quot, old] = await Promise.all([
+      doFetch('/api/customers','sharedCustomerData'),
+      doFetch('/api/invoices','invoices'),
+      doFetch('/api/parts','partsInventory'),
+      doFetch('/api/staff','staffData'),
+      doFetch('/api/quotations','quotations'),
+      doFetch('/api/oldbikes','oldBikeData'),
+    ]);
+    let genInv = getLS('generatedInvoices');
+    let veh = cust.length>0 ? cust.map(c=>({vehicleModel:c.vehicleModel,regNo:c.registrationNo,date:c.invoiceDate,customerName:c.customerName})) : getLS('vehDashboardData');
     let svc={}; try { svc=JSON.parse(localStorage.getItem('customerServiceData')||'null')||{}; } catch{}
-
-    // MongoDB fallback for empty datasets
-    try {
-      const doFetch = async (url) => { try { const r=await fetch(api(url)); return r.ok?await r.json():[]; } catch{ return []; } };
-      if (cust.length===0) cust = await doFetch('/api/customers');
-      if (inv.length===0) inv = await doFetch('/api/invoices');
-      if (parts.length===0) parts = await doFetch('/api/parts');
-      if (staff.length===0) staff = await doFetch('/api/staff');
-      if (quot.length===0) quot = await doFetch('/api/quotations');
-      if (old.length===0) old = await doFetch('/api/oldbikes');
-      if (veh.length===0 && cust.length>0) veh = cust.map(c=>({vehicleModel:c.vehicleModel,regNo:c.registrationNo,date:c.invoiceDate,customerName:c.customerName}));
-    } catch(e) { console.log('VP Dashboard MongoDB fallback failed'); }
 
     setLsInvoices(inv); setLsGenInvoices(genInv); setLsVehData(veh);
     setLsCustomers(cust); setLsParts(parts); setLsStaff(staff);

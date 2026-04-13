@@ -80,21 +80,21 @@ export default function ReportsAnalytics({ user }) {
     const payments = getLS('staffPayments', {});
     const incentives = getLS('staffIncentives', {});
 
-    // MongoDB fallback for empty data
+    // MongoDB PRIMARY — always fetch fresh data
     try {
       const [apiC, apiP, apiI, apiQ, apiS] = await Promise.all([
-        customers.length === 0 ? fetch(api('/api/customers')).then(r=>r.ok?r.json():[]).catch(()=>[]) : Promise.resolve([]),
-        parts.length === 0 ? fetch(api('/api/parts')).then(r=>r.ok?r.json():[]).catch(()=>[]) : Promise.resolve([]),
-        invoices.length === 0 ? fetch(api('/api/invoices')).then(r=>r.ok?r.json():[]).catch(()=>[]) : Promise.resolve([]),
-        quotations.length === 0 ? fetch(api('/api/quotations')).then(r=>r.ok?r.json():[]).catch(()=>[]) : Promise.resolve([]),
-        staffList.length === 0 ? fetch(api('/api/staff')).then(r=>r.ok?r.json():[]).catch(()=>[]) : Promise.resolve([]),
+        fetch(api('/api/customers')).then(r=>r.ok?r.json():[]).catch(()=>[]),
+        fetch(api('/api/parts')).then(r=>r.ok?r.json():[]).catch(()=>[]),
+        fetch(api('/api/invoices')).then(r=>r.ok?r.json():[]).catch(()=>[]),
+        fetch(api('/api/quotations')).then(r=>r.ok?r.json():[]).catch(()=>[]),
+        fetch(api('/api/staff')).then(r=>r.ok?r.json():[]).catch(()=>[]),
       ]);
       if (apiC.length > 0) { customers = apiC; vehicles = apiC.map(c => ({ vehicleModel: c.vehicleModel, regNo: c.registrationNo, date: c.invoiceDate })); }
       if (apiP.length > 0) parts = apiP;
-      if (apiI.length > 0) invoices = apiI;
+      if (apiI.length > 0) invoices = [...apiI, ...invoices];
       if (apiQ.length > 0) quotations = apiQ;
       if (apiS.length > 0) staffList = apiS;
-    } catch(e) { console.log('Reports MongoDB fallback failed:', e.message); }
+    } catch(e) { console.log('Reports MongoDB failed, using cache:', e.message); }
 
     // ── Invoice Analytics ──────────────────────────────────────────────────
     const monthlyRevenue = Array(12).fill(0).map((_, i) => ({ month: MONTHS_SHORT[i], revenue: 0, count: 0, label: i }));

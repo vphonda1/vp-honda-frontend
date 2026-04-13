@@ -82,14 +82,7 @@ export default function LoginPage({ onLogin }) {
   useEffect(() => {
     // Load staff list from localStorage first, then MongoDB as fallback
     const loadStaff = async () => {
-      try {
-        const s = localStorage.getItem('staffData');
-        if (s) {
-          const parsed = JSON.parse(s);
-          if (parsed.length > 0) { setStaffList(parsed); return; }
-        }
-      } catch {}
-      // localStorage empty → try MongoDB
+      // MongoDB PRIMARY — always fetch fresh staff list
       try {
         const res = await fetch(api('/api/staff'));
         if (res.ok) {
@@ -97,10 +90,15 @@ export default function LoginPage({ onLogin }) {
           if (dbStaff.length > 0) {
             setStaffList(dbStaff);
             localStorage.setItem('staffData', JSON.stringify(dbStaff));
-            console.log(`✅ ${dbStaff.length} staff loaded from server`);
+            return;
           }
         }
-      } catch(e) { console.log('Staff server load failed:', e.message); }
+      } catch(e) { console.log('Server offline, using cache'); }
+      // Fallback: localStorage cache
+      try {
+        const s = localStorage.getItem('staffData');
+        if (s) { const parsed = JSON.parse(s); if (parsed.length > 0) setStaffList(parsed); }
+      } catch {}
     };
     loadStaff();
 

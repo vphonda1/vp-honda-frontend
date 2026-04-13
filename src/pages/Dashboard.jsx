@@ -29,10 +29,19 @@ export default function Dashboard({ user }) {
       if(c.ok) apiC=await c.json(); if(p.ok) apiP=await p.json(); if(i.ok) apiI=await i.json();
     } catch{}
 
-    const lsInv=getLS('invoices'), genInv=getLS('generatedInvoices'), veh=getLS('vehDashboardData'), old=getLS('oldBikeData'), svc=getLS('customerServiceData',{}), staff=getLS('staffData'), quot=getLS('quotations'), lsC=getLS('sharedCustomerData'), lsP=getLS('partsInventory');
-    // Also fetch old bikes & staff from MongoDB if localStorage empty
-    let apiOld=[]; try { const r=await fetch(api('/api/oldbikes')); if(r.ok) apiOld=await r.json(); } catch{}
-    let apiStaff=[]; try { const r=await fetch(api('/api/staff')); if(r.ok) apiStaff=await r.json(); } catch{}
+    // MongoDB PRIMARY — always fetch fresh
+    const doFetch = async (url, lsKey, fb=[]) => {
+      try { const r=await fetch(api(url)); if(r.ok){const d=await r.json(); if(d&&(Array.isArray(d)?d.length>0:true)){if(lsKey)localStorage.setItem(lsKey,JSON.stringify(d)); return d;}} } catch{}
+      return getLS(lsKey, fb);
+    };
+    const [apiC, apiP, apiI] = await Promise.all([
+      doFetch('/api/customers','sharedCustomerData'),
+      doFetch('/api/parts','partsInventory'),
+      doFetch('/api/invoices','invoices'),
+    ]);
+    const apiOld = await doFetch('/api/oldbikes','oldBikeData');
+    const apiStaff = await doFetch('/api/staff','staffData');
+    const lsInv=apiI, genInv=getLS('generatedInvoices'), veh=apiC.length>0?apiC:getLS('vehDashboardData'), old=apiOld, svc=getLS('customerServiceData',{}), staff=apiStaff, quot=await doFetch('/api/quotations','quotations'), lsC=apiC, lsP=apiP;
     const allInv=[...lsInv,...genInv];
     const totalC=Math.max(apiC.length,lsC.length), totalP=Math.max(apiP.length,lsP.length), totalI=allInv.length+apiI.length, totalV=veh.length;
     const lsRev=allInv.reduce((a,i)=>a+(i.totals?.totalAmount||i.amount||0),0);

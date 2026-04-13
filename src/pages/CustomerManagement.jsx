@@ -212,17 +212,16 @@ export default function CustomerManagement({ user }) {
     loadCustomers();
     // Load old bikes: localStorage first, MongoDB fallback
     const loadOldBikes = async () => {
-      try {
-        const ls = JSON.parse(localStorage.getItem('oldBikeData')||'[]');
-        if (ls.length > 0) { setOldBikes(ls); return; }
-      } catch{}
+      // MongoDB PRIMARY
       try {
         const res = await fetch(api('/api/oldbikes'));
         if (res.ok) {
           const db = await res.json();
-          if (db.length > 0) { setOldBikes(db); localStorage.setItem('oldBikeData', JSON.stringify(db)); }
+          if (db.length > 0) { setOldBikes(db); localStorage.setItem('oldBikeData', JSON.stringify(db)); return; }
         }
-      } catch(e) { console.log('OldBikes MongoDB load failed'); }
+      } catch(e) { console.log('OldBikes offline, using cache'); }
+      // Fallback: localStorage
+      try { const ls = JSON.parse(localStorage.getItem('oldBikeData')||'[]'); if (ls.length > 0) setOldBikes(ls); } catch{}
     };
     loadOldBikes();
   }, []);

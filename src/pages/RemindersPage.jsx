@@ -39,7 +39,7 @@ export default function RemindersPage() {
   const loadReminders = async () => {
     try {
       let allCustomers = [];
-      try { const res = await fetch(api('/api/customers')); if (res.ok) allCustomers = await res.json(); } catch {}
+      try { const res = await fetch(api('/api/customers')); if (res.ok) { allCustomers = await res.json(); localStorage.setItem('sharedCustomerData', JSON.stringify(allCustomers)); } } catch { allCustomers = JSON.parse(localStorage.getItem('sharedCustomerData')||'[]'); }
       const lsC = [...getLS('sharedCustomerData'), ...getLS('customerData'), ...getLS('customers')];
       const seen = new Set(allCustomers.map(c => c._id));
       lsC.forEach(c => { if (!seen.has(c._id)) { allCustomers.push(c); seen.add(c._id); } });

@@ -521,18 +521,16 @@ export default function InvoiceManagementDashboard() {
   }, []);
 
   const loadInvoices = async () => {
-    // Load from localStorage
-    const lsInv = [...getLS('invoices'), ...getLS('generatedInvoices').map(i=>({...i,_s:'g'}))];
-    
-    // Also load from MongoDB backend
+    // MongoDB PRIMARY — fetch fresh data first
     let dbInv = [];
     try {
       const res = await fetch(api('/api/invoices'));
       if (res.ok) dbInv = await res.json();
     } catch(e) { console.log('DB offline, using localStorage only'); }
-
-    // Merge: combine both sources, remove duplicates by invoiceNumber
-    const all = [...lsInv, ...dbInv.map(i=>({...i, _s:'db'}))];
+    
+    // Merge with localStorage (generated invoices may only be local)
+    const lsInv = [...getLS('invoices'), ...getLS('generatedInvoices').map(i=>({...i,_s:'g'}))];
+    const all = [...dbInv.map(i=>({...i, _s:'db'})), ...lsInv];
     const seen = new Set();
     const unique = all.filter(i => {
       const k = String(i.invoiceNumber||i.id||i._id||Math.random());
