@@ -342,7 +342,7 @@ export default function VehDashboard() {
         
         // ── Sync ALL to MongoDB (delete old + insert fresh — no duplicates)
         // Wait for sync to complete before showing alert
-        await (async () => {
+        (async () => {
           try {
             const syncData = customerSync.map(c => ({
               customerName: c.name, fatherName: c.fatherName, phone: c.phone,
