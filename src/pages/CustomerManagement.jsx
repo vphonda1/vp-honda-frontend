@@ -238,28 +238,32 @@ export default function CustomerManagement({ user }) {
   }, []);
 
   const loadCustomers = async () => {
+    // localStorage FIRST (same data as VehDashboard imports)
+    const shared = localStorage.getItem('sharedCustomerData');
+    if (shared) {
+      try {
+        const parsed = JSON.parse(shared);
+        if (parsed.length > 0 && (parsed[0].name || parsed[0].customerName)) {
+          setCustomers(parsed);
+          return;
+        }
+      } catch {}
+    }
+    // localStorage empty — try MongoDB (new device / mobile)
     try {
       const response = await fetch(api('/api/customers'));
       const data = await response.json();
       if (data && data.length > 0) {
-        setCustomers(data);
-      } else {
-        // Fallback: load from shared localStorage
-        const shared = localStorage.getItem('sharedCustomerData');
-        if (shared) setCustomers(JSON.parse(shared));
+        const valid = data.filter(c => (c.customerName || c.name || '').trim());
+        if (valid.length > 0) {
+          setCustomers(valid);
+          localStorage.setItem('sharedCustomerData', JSON.stringify(valid));
+        }
       }
     } catch (error) {
-      console.error('Error loading from API, trying localStorage:', error);
-      // Fallback: load from shared localStorage
-      const shared = localStorage.getItem('sharedCustomerData');
-      if (shared) {
-        setCustomers(JSON.parse(shared));
-      } else {
-        setCustomers([]);
-      }
+      console.log('Customer load failed:', error.message);
     }
-    setLoading(false);
-  };
+  }
 
   // ✅ EXCEL IMPORT - cost_deti sheet se customers import karo
   const handleExcelImport = async (e) => {

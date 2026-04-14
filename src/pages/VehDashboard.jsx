@@ -198,7 +198,7 @@ export default function VehDashboard() {
   });
 
   // Load Excel file
-  const handleFileUpload = (e) => {
+  const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
@@ -341,7 +341,8 @@ export default function VehDashboard() {
         window.dispatchEvent(new Event('dataSync'));
         
         // ── Sync ALL to MongoDB (delete old + insert fresh — no duplicates)
-        (async () => {
+        // Wait for sync to complete before showing alert
+        await (async () => {
           try {
             const syncData = customerSync.map(c => ({
               customerName: c.name, fatherName: c.fatherName, phone: c.phone,
@@ -386,78 +387,55 @@ export default function VehDashboard() {
     const savedData = localStorage.getItem('vehDashboardData');
     const savedModels = localStorage.getItem('vehDashboardModels');
     
-    // SMART LOAD: localStorage first (reliable), MongoDB for new devices
-    // Step 1: Check localStorage
+    // ═══ LOAD LOGIC ═══
+    // Laptop: localStorage ONLY (never overwrite from MongoDB)
+    // Mobile: MongoDB ONLY (when localStorage empty)
     const savedData = localStorage.getItem('vehDashboardData');
     const savedModels = localStorage.getItem('vehDashboardModels');
     
-    if (savedData && savedModels) {
+    if (savedData) {
+      // localStorage has data — USE IT. Never touch MongoDB for reading.
       try {
         const pd = JSON.parse(savedData);
-        const pm = JSON.parse(savedModels);
-        if (pd.length > 0 && pd[0].customerName) {
-          // localStorage has valid data — use it
+        const pm = JSON.parse(savedModels || '[]');
+        if (pd.length > 0) {
           setVehicleData(pd);
           setFilteredData(pd);
-          setModels(pm);
+          setModels(pm.length > 0 ? pm : [...new Set(pd.map(d => d.vehicleModel))].filter(Boolean));
           calculateAnalytics(pd);
-          setDbLoading(false);
-          return;
+          return; // DONE — no MongoDB needed
         }
-      } catch(e) { console.log('localStorage parse error'); }
+      } catch(e) {}
     }
     
-    // Step 2: localStorage empty/invalid — fetch from MongoDB (mobile/new device)
+    // localStorage EMPTY — this is a new device (mobile) — load from MongoDB
     setDbLoading(true);
-    setDbError('');
     (async () => {
       try {
         const res = await fetch(api('/api/customers'));
-        if (res.ok) {
-          const dbCustomers = await res.json();
-          if (dbCustomers.length > 0) {
-            // Validate: check if data has customerName
-            const hasNames = dbCustomers.some(c => (c.customerName || c.name || '').trim());
-            if (!hasNames) {
-              setDbError('MongoDB data blank — Laptop से Excel import करें');
-              setDbLoading(false);
-              return;
-            }
-            const transformed = dbCustomers.map((c, i) => ({
-              id: c._id || i + 1,
-              customerName: c.customerName || c.name || '',
-              fatherName: c.fatherName || '',
-              mobileNo: c.phone || c.mobileNo || '',
-              address: c.address || '',
-              dist: c.district || c.dist || '',
-              pinCode: c.pinCode || '',
-              vehicleModel: c.vehicleModel || '',
-              variant: c.variant || '',
-              color: c.vehicleColor || c.color || '',
-              engineNo: c.engineNo || '',
-              chassisNo: c.chassisNo || '',
-              regNo: c.registrationNo || c.regNo || '',
-              keyNo: c.keyNo || '',
-              batteryNo: c.batteryNo || '',
-              date: c.invoiceDate || c.date || '',
-              financerName: c.financeCompany || c.financerName || '',
-              aadharNo: c.aadhar || c.aadharNo || '',
-              panNo: c.pan || c.panNo || '',
-              dob: c.dob || '',
-              price: parseFloat(c.price) || 0,
-              insurance: parseFloat(c.insurance) || 0,
-              rto: parseFloat(c.rto) || 0,
-            }));
-            setVehicleData(transformed);
-            setFilteredData(transformed);
-            const uniqueModels = [...new Set(transformed.map(d => d.vehicleModel))].filter(Boolean);
-            setModels(uniqueModels);
-            calculateAnalytics(transformed);
-            localStorage.setItem('vehDashboardData', JSON.stringify(transformed));
-            localStorage.setItem('vehDashboardModels', JSON.stringify(uniqueModels));
-          } else {
-            setDbError('कोई data नहीं — Excel import करें');
-          }
+        if (!res.ok) throw new Error('Server error');
+        const db = await res.json();
+        const valid = db.filter(c => (c.customerName || c.name || '').trim());
+        if (valid.length > 0) {
+          const transformed = valid.map((c, i) => ({
+            id: c._id || i+1, customerName: c.customerName||c.name||'',
+            fatherName: c.fatherName||'', mobileNo: c.phone||c.mobileNo||'',
+            address: c.address||'', dist: c.district||c.dist||'',
+            pinCode: c.pinCode||'', vehicleModel: c.vehicleModel||'',
+            variant: c.variant||'', color: c.vehicleColor||c.color||'',
+            engineNo: c.engineNo||'', chassisNo: c.chassisNo||'',
+            regNo: c.registrationNo||c.regNo||'', keyNo: c.keyNo||'',
+            date: c.invoiceDate||c.date||'', financerName: c.financeCompany||c.financerName||'',
+            aadharNo: c.aadhar||c.aadharNo||'', panNo: c.pan||c.panNo||'',
+            dob: c.dob||'', price: parseFloat(c.price)||0,
+          }));
+          setVehicleData(transformed); setFilteredData(transformed);
+          const models = [...new Set(transformed.map(d=>d.vehicleModel))].filter(Boolean);
+          setModels(models); calculateAnalytics(transformed);
+          localStorage.setItem('vehDashboardData', JSON.stringify(transformed));
+          localStorage.setItem('vehDashboardModels', JSON.stringify(models));
+        } else {
+          setDbError('Data नहीं मिला — Laptop से Excel import करें');
         }
       } catch(e) {
         setDbError('Server connecting... 30 sec wait करें');
