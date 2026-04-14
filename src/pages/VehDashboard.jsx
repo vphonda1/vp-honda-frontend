@@ -384,9 +384,7 @@ export default function VehDashboard() {
   const [dbError, setDbError] = useState('');
 
   useEffect(() => {
-    const savedData = localStorage.getItem('vehDashboardData');
-    const savedModels = localStorage.getItem('vehDashboardModels');
-    
+       
     // ═══ LOAD LOGIC ═══
     // Laptop: localStorage ONLY (never overwrite from MongoDB)
     // Mobile: MongoDB ONLY (when localStorage empty)
