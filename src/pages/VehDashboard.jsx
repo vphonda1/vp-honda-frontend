@@ -382,9 +382,7 @@ export default function VehDashboard() {
   // Load data from localStorage + MongoDB on component mount
   const [dbLoading, setDbLoading] = useState(false);
   const [dbError, setDbError] = useState('');
-
-  useEffect(() => {
-       
+      
     // ═══ LOAD LOGIC ═══
     // Laptop: localStorage ONLY (never overwrite from MongoDB)
     // Mobile: MongoDB ONLY (when localStorage empty)
