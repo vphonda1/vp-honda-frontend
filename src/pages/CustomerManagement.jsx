@@ -169,103 +169,161 @@ export default function CustomerManagement({ user }) {
 
   // ── Excel Import (cost_detl) ──────────────────────────────────────────────
   const handleExcelImport = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setImporting(true);
-    setImportResult(null);
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-      const sheetName = workbook.SheetNames.find(
-        name => name.toLowerCase().replace(/[_\s]/g, '') === 'costdetl' ||
-                name.toLowerCase().includes('cost') ||
-                name.toLowerCase().includes('customer')
-      );
-      if (!sheetName) throw new Error(`"cost_detl" sheet not found. Available: ${workbook.SheetNames.join(', ')}`);
-      const sheet = workbook.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', cellDates: true });
-      if (!rows.length) throw new Error('No data in sheet');
-
-      const get = (row, keys) => {
-        for (const k of keys) {
-          const found = Object.keys(row).find(rk => rk.trim().toLowerCase().replace(/\s+/g,' ') === k.trim().toLowerCase().replace(/\s+/g,' '));
-          if (found && row[found] !== '' && row[found] !== null && row[found] !== undefined) return row[found];
-        }
-        return '';
-      };
-
-      const parseUTCDate = (val) => {
-        if (!val || val === '') return '';
-        try {
-          let d;
-          if (val instanceof Date) d = val;
-          else if (typeof val === 'number') d = new Date((val - 25569) * 86400000);
-          else d = new Date(val);
-          if (isNaN(d.getTime())) return '';
-          const yr = d.getUTCFullYear();
-          if (yr < 1900 || yr > 2100) return '';
-          return `${yr}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
-        } catch { return ''; }
-      };
-
-      let added = 0;
-      const newCustomers = [];
-      for (const row of rows) {
-        const name = String(get(row, ['Cost Name', 'name', 'customer name', 'cust name'])).trim().toUpperCase();
-        if (!name || name === 'COST NAME' || name === 'NAME') continue;
-        const phone = String(get(row, ['Mob No', 'mob no', 'Mobile No', 'phone', 'mobile', 'contact'])).trim();
-        const aadhar = String(get(row, ['Aadhar No', 'aadhar no', 'aadhar', 'aadhaar'])).trim();
-        const regNo = String(get(row, ['Veh Reg No', 'veh reg no', 'reg no', 'regno'])).trim().toUpperCase();
-        const purchaseDate = parseUTCDate(get(row, ['Date', 'date', 'sale date', 'selling date']));
-        const dobStr = parseUTCDate(get(row, ['DOB', 'dob', 'date of birth']));
-        const vehiclePrice = parseFloat(get(row, ['Price', 'price'])) || 0;
-        const vehName = String(get(row, ['Veh ', 'Veh', 'veh', 'Vehicle', 'vehicle name'])).trim();
-        const batteryNo = String(get(row, ['Bty No', 'Bty No ', 'bty no', 'BtyNo', 'Battery No', 'battery no', 'battery'])).trim();
-
-        const customerData = {
-          name,
-          fatherName: String(get(row, ['Father', 'father', 'father name', 's/o', 'w/o'])).trim().toUpperCase(),
-          phone,
-          aadhar,
-          pan: String(get(row, ['PAN No', 'pan no', 'pan'])).trim().toUpperCase(),
-          address: String(get(row, ['Add', 'add', 'address', 'addr'])).trim(),
-          district: String(get(row, ['Dist', 'dist', 'district', 'city'])).trim().toUpperCase(),
-          pinCode: String(get(row, ['Pin Code', 'pin code', 'pincode', 'pin'])).trim(),
-          state: 'M.P.',
-          dob: dobStr || null,
-          financerName: String(get(row, ['Fin/ Cash', 'Fin/Cash', 'bank'])).trim().replace(/^0$/, ''),
-          vehiclePrice,
-          linkedVehicle: {
-            name: vehName || 'N/A',
-            regNo,
-            chassisNo: String(get(row, ['Chassis No', 'chassis no', 'chassisno', 'frame no'])).trim().toUpperCase(),
-            frameNo: String(get(row, ['Chassis No', 'chassis no', 'chassisno', 'frame no'])).trim().toUpperCase(),
-            engineNo: String(get(row, ['Ingine No', 'ingine no', 'engine no', 'engineno'])).trim().toUpperCase(),
-            color: String(get(row, ['Colour', 'colour', 'color'])).trim().toUpperCase(),
-            model: String(get(row, ['Varit ', 'Varit', 'varit', 'variant', 'cc'])).trim(),
-            keyNo: String(get(row, ['Key No', 'key no', 'keyno'])).trim(),
-            batteryNo,
-            price: vehiclePrice,
-            purchaseDate,
-            warranty: 'YES'
-          }
-        };
-        newCustomers.push(customerData);
-        added++;
+  const file = e.target.files[0];
+  if (!file) return;
+  setImporting(true);
+  setImportResult(null);
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    
+    // पहली sheet ढूंढो जिसमें डाटा हो
+    let sheetName = workbook.SheetNames.find(
+      name => name.toLowerCase().replace(/[_\s]/g, '') === 'costdetl' ||
+              name.toLowerCase().includes('cost') ||
+              name.toLowerCase().includes('customer')
+    );
+    if (!sheetName) sheetName = workbook.SheetNames[0];
+    
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', cellDates: true });
+    if (!rows.length) throw new Error('No data in sheet: ' + sheetName);
+    
+    // 🔍 सभी कॉलम नेम्स कंसोल में दिखाएँ (Debugging के लिए)
+    const columnNames = Object.keys(rows[0]);
+    console.log('📋 Excel Columns found:', columnNames);
+    
+    // 🎯 Fuzzy match helper
+    const matchColumn = (possibleNames) => {
+      for (const name of possibleNames) {
+        const found = columnNames.find(col => 
+          col.trim().toLowerCase().replace(/[^a-z0-9]/g, '') === name.toLowerCase().replace(/[^a-z0-9]/g, '')
+        );
+        if (found) return found;
       }
-
-      const sortedNew = sortByNewest(newCustomers);
-      setCustomers(sortedNew);
-      localStorage.setItem('sharedCustomerData', JSON.stringify(sortedNew));
-      await syncCustomersToMongo(sortedNew);
-      setImportResult({ sheetName, added, skipped: 0, errors: 0 });
-    } catch (err) {
-      alert('Import failed: ' + err.message);
-      setImportResult({ error: err.message });
+      return null;
+    };
+    
+    // अलग-अलग कॉलम नेम्स की संभावनाएँ
+    const nameCol = matchColumn(['Cost Name', 'Customer Name', 'Name', 'Cust Name', 'cost name']);
+    const fatherCol = matchColumn(['Father', 'Father Name', 'S/O', 'W/O']);
+    const phoneCol = matchColumn(['Mob No', 'Mobile No', 'Phone', 'Contact', 'Mob']);
+    const aadharCol = matchColumn(['Aadhar No', 'Aadhar', 'Aadhaar']);
+    const addressCol = matchColumn(['Add', 'Address', 'Addr']);
+    const districtCol = matchColumn(['Dist', 'District', 'City']);
+    const pinCol = matchColumn(['Pin Code', 'Pincode', 'PIN']);
+    const vehicleCol = matchColumn(['Veh', 'Vehicle', 'Model Name', 'Veh Name']);
+    const variantCol = matchColumn(['Varit', 'Variant', 'CC', 'Engine CC']);
+    const colorCol = matchColumn(['Colour', 'Color']);
+    const engineCol = matchColumn(['Ingine No', 'Engine No', 'Engine']);
+    const chassisCol = matchColumn(['Chassis No', 'Frame No', 'Chassis']);
+    const regNoCol = matchColumn(['Veh Reg No', 'Reg No', 'Registration']);
+    const priceCol = matchColumn(['Price', 'Amount', 'Selling Price']);
+    const dateCol = matchColumn(['Date', 'Sale Date', 'Invoice Date']);
+    const dobCol = matchColumn(['DOB', 'Date of Birth']);
+    const financeCol = matchColumn(['Fin/ Cash', 'Financer', 'Finance', 'Bank']);
+    const batteryCol = matchColumn(['Bty No', 'Battery No', 'Battery']);
+    const keyCol = matchColumn(['Key No', 'Key']);
+    
+    console.log('✅ Mapped columns:', {
+      nameCol, phoneCol, vehicleCol, variantCol, priceCol, dateCol, regNoCol
+    });
+    
+    const parseDate = (val) => {
+      if (!val) return '';
+      if (val instanceof Date) return val.toISOString().split('T')[0];
+      if (typeof val === 'number') {
+        const d = new Date((val - 25569) * 86400000);
+        return d.toISOString().split('T')[0];
+      }
+      const str = String(val).trim();
+      const parts = str.split(/[\/\-\.]/);
+      if (parts.length === 3) {
+        let d = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+        if (!isNaN(d)) return d.toISOString().split('T')[0];
+        d = new Date(`${parts[2]}-${parts[0]}-${parts[1]}`);
+        if (!isNaN(d)) return d.toISOString().split('T')[0];
+      }
+      return '';
+    };
+    
+    let added = 0;
+    const newCustomers = [];
+    
+    for (const row of rows) {
+      const name = nameCol ? String(row[nameCol] || '').trim() : '';
+      if (!name) continue; // नाम न हो तो स्किप
+      
+      const phone = phoneCol ? String(row[phoneCol] || '').trim() : '';
+      const aadhar = aadharCol ? String(row[aadharCol] || '').trim() : '';
+      const vehicle = vehicleCol ? String(row[vehicleCol] || '').trim() : '';
+      const variant = variantCol ? String(row[variantCol] || '').trim() : '';
+      const price = priceCol ? parseFloat(row[priceCol]) || 0 : 0;
+      const date = parseDate(row[dateCol]);
+      const regNo = regNoCol ? String(row[regNoCol] || '').trim().toUpperCase() : '';
+      const engine = engineCol ? String(row[engineCol] || '').trim().toUpperCase() : '';
+      const chassis = chassisCol ? String(row[chassisCol] || '').trim().toUpperCase() : '';
+      const color = colorCol ? String(row[colorCol] || '').trim() : '';
+      const father = fatherCol ? String(row[fatherCol] || '').trim() : '';
+      const address = addressCol ? String(row[addressCol] || '').trim() : '';
+      const district = districtCol ? String(row[districtCol] || '').trim() : '';
+      const pin = pinCol ? String(row[pinCol] || '').trim() : '';
+      const dob = parseDate(row[dobCol]);
+      const finance = financeCol ? String(row[financeCol] || '').trim() : '';
+      const battery = batteryCol ? String(row[batteryCol] || '').trim() : '';
+      const keyNo = keyCol ? String(row[keyCol] || '').trim() : '';
+      
+      const customerData = {
+        name,
+        fatherName: father,
+        phone,
+        aadhar,
+        pan: '',
+        address,
+        district,
+        pinCode: pin,
+        state: 'M.P.',
+        dob,
+        financerName: finance,
+        vehiclePrice: price,
+        linkedVehicle: {
+          name: vehicle,
+          regNo,
+          chassisNo: chassis,
+          frameNo: chassis,
+          engineNo: engine,
+          color,
+          model: variant,
+          keyNo,
+          batteryNo: battery,
+          price,
+          purchaseDate: date,
+          warranty: 'YES'
+        }
+      };
+      newCustomers.push(customerData);
+      added++;
     }
-    setImporting(false);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
+    
+    if (newCustomers.length === 0) throw new Error('कोई valid customer नहीं मिला। कृपया Excel की column names चेक करें।');
+    
+    // नए डाटा को sort करके सेव करें
+    const sortedNew = sortByNewest(newCustomers);
+    setCustomers(sortedNew);
+    localStorage.setItem('sharedCustomerData', JSON.stringify(sortedNew));
+    await syncCustomersToMongo(sortedNew);
+    
+    setImportResult({ sheetName, added, skipped: 0, errors: 0, columnNames: columnNames.join(', ') });
+    alert(`✅ ${added} customers imported successfully!\nColumns detected: ${columnNames.join(', ')}`);
+    
+  } catch (err) {
+    console.error(err);
+    alert('❌ Import failed: ' + err.message);
+    setImportResult({ error: err.message });
+  }
+  setImporting(false);
+  if (fileInputRef.current) fileInputRef.current.value = '';
+};
 
   const resetForm = () => {
     setFormData({
