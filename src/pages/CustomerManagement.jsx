@@ -632,9 +632,9 @@ export default function CustomerManagement({ user }) {
 
   const stats = useMemo(() => {
     const total = customers.length;
-    const withVehicle = customers.filter(c 
-     const vname =  c.linkedVehicle?.name || c.VehicleModel || ' ';
-     return vname && vname ! == 'N/A' && vname !== ' ';
+    const withVehicle = customers.filter(c => {
+      const vname =  c.linkedVehicle?.name || c.VehicleModel || ' ';
+      return vname && vname ! == 'N/A' && vname !== ' ';
    }).length;
     const financeCustomers = customers.filter(c => {
       const f = String(c.financerName || '').trim();
