@@ -20,7 +20,7 @@ export default function VehDashboard() {
   const [selectedYear, setSelectedYear] = useState('');
   const [selectedMonth, setSelectedMonth] = useState('');
   
-  // Analytics data
+  // Analytics
   const [monthlyAnalytics, setMonthlyAnalytics] = useState([]);
   const [modelAnalytics, setModelAnalytics] = useState([]);
   const [variantAnalytics, setVariantAnalytics] = useState([]);
@@ -46,11 +46,8 @@ export default function VehDashboard() {
   const [showOldBikeForm, setShowOldBikeForm] = useState(false);
   const [editOldBikeId, setEditOldBikeId] = useState(null);
   const [oldBikeForm, setOldBikeForm] = useState({
-    // Seller (जिसने गाड़ी दी)
     custName:'', custFather:'', custAdd:'', custMob:'',
-    // Vehicle & Owner
     owner:'', ownerFather:'', veh:'', mdl:'', regNo:'', psPrice:0, purchaseDate:'',
-    // Buyer (जिसको बेची)
     buyerName:'', buyerFather:'', buyerAdd:'', buyerMob:'', buyerAadhar:'', slPrice:0, slDate:'',
     status:'Available', notes:''
   });
@@ -64,18 +61,152 @@ export default function VehDashboard() {
     dob:'', vehicleModel:'', variant:'', color:'', engineNo:'', chassisNo:'',
     keyNo:'', batteryNo:'', financerName:'', price:0
   });
+  const [dbLoading, setDbLoading] = useState(false);
+  const [dbError, setDbError] = useState('');
 
+  // ── Helper: Sync to MongoDB ────────────────────────────────────────────────
+  const syncToMongoDB = async (data) => {
+    try {
+      const syncData = data.map(v => ({
+        customerName: v.customerName, fatherName: v.fatherName, phone: v.mobileNo,
+        aadhar: v.aadharNo || '', pan: v.panNo || '', address: v.address,
+        district: v.dist, pinCode: v.pinCode || '', dob: v.dob || '',
+        vehicleModel: v.vehicleModel, variant: v.variant || '',
+        vehicleColor: v.color, engineNo: v.engineNo, chassisNo: v.chassisNo,
+        registrationNo: v.regNo, keyNo: v.keyNo || '', batteryNo: v.batteryNo || '',
+        invoiceDate: v.date, financeCompany: v.financerName,
+        price: v.price || 0, insurance: v.insurance || 0, rto: v.rto || 0,
+      }));
+      const res = await fetch(api('/api/customers/sync'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customers: syncData }),
+      });
+      if (res.ok) console.log('✅ MongoDB sync OK');
+      else console.error('❌ MongoDB sync failed', await res.text());
+    } catch (err) { console.error('Sync error:', err); }
+  };
+
+  // ── Load data (localStorage + MongoDB fallback) ───────────────────────────
+  useEffect(() => {
+    const loadData = async () => {
+      const savedData = localStorage.getItem('vehDashboardData');
+      const savedModels = localStorage.getItem('vehDashboardModels');
+      
+      if (savedData) {
+        try {
+          const pd = JSON.parse(savedData);
+          const pm = JSON.parse(savedModels || '[]');
+          if (pd.length) {
+            setVehicleData(pd);
+            setFilteredData(pd);
+            setModels(pm.length ? pm : [...new Set(pd.map(d => d.vehicleModel))].filter(Boolean));
+            calculateAnalytics(pd);
+            return;
+          }
+        } catch(e) {}
+      }
+      
+      // Fallback to MongoDB
+      setDbLoading(true);
+      try {
+        const res = await fetch(api('/api/customers'));
+        if (!res.ok) throw new Error('Server error');
+        const db = await res.json();
+        const valid = db.filter(c => (c.customerName || c.name || '').trim());
+        if (valid.length) {
+          const transformed = valid.map((c, i) => ({
+            id: c._id || i+1,
+            customerName: c.customerName || c.name || '',
+            fatherName: c.fatherName || '',
+            mobileNo: c.phone || c.mobileNo || '',
+            address: c.address || '',
+            dist: c.district || c.dist || '',
+            pinCode: c.pinCode || '',
+            vehicleModel: c.vehicleModel || '',
+            variant: c.variant || '',
+            color: c.vehicleColor || c.color || '',
+            engineNo: c.engineNo || '',
+            chassisNo: c.chassisNo || '',
+            regNo: c.registrationNo || c.regNo || '',
+            keyNo: c.keyNo || '',
+            date: c.invoiceDate || c.date || '',
+            financerName: c.financeCompany || c.financerName || '',
+            aadharNo: c.aadhar || c.aadharNo || '',
+            panNo: c.pan || c.panNo || '',
+            dob: c.dob || '',
+            price: parseFloat(c.price) || 0,
+          }));
+          setVehicleData(transformed);
+          setFilteredData(transformed);
+          const modelsArr = [...new Set(transformed.map(d => d.vehicleModel))].filter(Boolean);
+          setModels(modelsArr);
+          calculateAnalytics(transformed);
+          localStorage.setItem('vehDashboardData', JSON.stringify(transformed));
+          localStorage.setItem('vehDashboardModels', JSON.stringify(modelsArr));
+        } else {
+          setDbError('Data नहीं मिला — Laptop से Excel import करें');
+        }
+      } catch(e) {
+        setDbError('Server connecting... 30 sec wait करें');
+      }
+      setDbLoading(false);
+    };
+    loadData();
+  }, []);
+
+  // ── Sync to localStorage & MongoDB whenever vehicleData changes ───────────
+  useEffect(() => {
+    if (vehicleData.length) {
+      localStorage.setItem('vehDashboardData', JSON.stringify(vehicleData));
+      syncToMongoDB(vehicleData);
+      // Update sharedCustomerData for other pages
+      const customerSync = vehicleData.map(v => ({
+        _id: v.id,
+        name: v.customerName,
+        fatherName: v.fatherName,
+        phone: v.mobileNo,
+        aadhar: v.aadharNo || '',
+        pan: v.panNo || '',
+        address: v.address,
+        district: v.dist,
+        pinCode: v.pinCode || '',
+        state: 'M.P.',
+        dob: v.dob || '',
+        financerName: v.financerName || '',
+        variant: v.variant || '',
+        price: v.price || 0,
+        insurance: v.insurance || 0,
+        rto: v.rto || 0,
+        keyNo: v.keyNo || '',
+        batteryNo: v.batteryNo || '',
+        linkedVehicle: {
+          name: v.vehicleModel + ' ' + (v.variant || ''),
+          regNo: v.regNo || '',
+          frameNo: v.chassisNo || '',
+          engineNo: v.engineNo || '',
+          color: v.color || '',
+          model: v.vehicleModel || '',
+          keyNo: v.keyNo || '',
+          purchaseDate: v.date || '',
+          warranty: 'YES'
+        }
+      }));
+      localStorage.setItem('sharedCustomerData', JSON.stringify(customerSync));
+      window.dispatchEvent(new Event('dataSync'));
+    }
+  }, [vehicleData]);
+
+  // ── Admin ─────────────────────────────────────────────────────────────────
   const handleAdminLogin = () => setShowAdminModal(true);
   const doAdminLogin = () => {
     if (adminPass === 'vphonda@123') { setIsAdmin(true); setShowAdminModal(false); setAdminPass(''); }
     else { alert('❌ Wrong password!'); setAdminPass(''); }
   };
 
-  // ── Old Bike handlers ─────────────────────────────────────────────────────
+  // ── Old Bike handlers (unchanged, keep as is) ─────────────────────────────
   const resetOldBikeForm = () => { setOldBikeForm({...emptyOldBikeForm}); setEditOldBikeId(null); };
   const saveOldBike = () => {
     if (!oldBikeForm.custName || !oldBikeForm.veh) { alert('Customer Name और Vehicle भरें'); return; }
-    // Auto status: if buyer exists → Sold
     const autoStatus = oldBikeForm.buyerName ? 'Sold' : (oldBikeForm.status || 'Available');
     let updated;
     if (editOldBikeId) {
@@ -96,51 +227,31 @@ export default function VehDashboard() {
     window.dispatchEvent(new Event('storage'));
   };
 
-  // Excel import — exact OLD BIKE sheet columns
   const handleOldBikeImport = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     const wb = XLSX.read(await file.arrayBuffer(), { type:'array', cellDates:true });
     const sn = wb.SheetNames.find(n => /old.?bike/i.test(n));
     if (!sn) { alert('❌ OLD BIKE sheet नहीं मिली! Available: ' + wb.SheetNames.join(', ')); e.target.value=''; return; }
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval:'', header:1 });
-    // Skip header row
     let added = 0;
     const updated = [...oldBikes];
     const fmtDate = (v) => { if(!v) return ''; try { const d = v instanceof Date ? v : new Date(v); if(isNaN(d)) return ''; return d.toISOString().split('T')[0]; } catch{return '';} };
-
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i];
-      if (!r[0] && !r[1]) continue; // skip empty rows
+      if (!r[0] && !r[1]) continue;
       const custName = String(r[1]||'').trim();
       if (!custName) continue;
-
       updated.push({
         id: Date.now() + added,
-        // A-E: जिसने गाड़ी दी (Seller/Customer)
-        custName:     custName,
-        custFather:   String(r[2]||'').trim(),
-        custAdd:      String(r[3]||'').trim(),
-        custMob:      String(r[4]||'').trim(),
-        // F-G: Owner (RC पर जिसका नाम)
-        owner:        String(r[5]||'').trim(),
-        ownerFather:  String(r[6]||'').trim(),
-        // H-L: Vehicle details
-        veh:          String(r[7]||'').trim(),
-        mdl:          String(r[8]||'').trim(),
-        regNo:        String(r[9]||'').trim(),
-        psPrice:      parseFloat(r[10]) || 0,
-        purchaseDate: fmtDate(r[11]),
-        // M-S: जिसको बेची (Buyer)
-        buyerName:    String(r[12]||'').trim(),
-        buyerFather:  String(r[13]||'').trim(),
-        buyerAdd:     String(r[14]||'').trim(),
-        buyerMob:     String(r[15]||'').trim(),
-        buyerAadhar:  String(r[16]||'').trim(),
-        slPrice:      parseFloat(r[17]) || 0,
-        slDate:       fmtDate(r[18]),
-        // Auto status
-        status:       String(r[12]||'').trim() ? 'Sold' : 'Available',
-        addedAt:      new Date().toISOString(),
+        custName, custFather: String(r[2]||'').trim(), custAdd: String(r[3]||'').trim(), custMob: String(r[4]||'').trim(),
+        owner: String(r[5]||'').trim(), ownerFather: String(r[6]||'').trim(),
+        veh: String(r[7]||'').trim(), mdl: String(r[8]||'').trim(), regNo: String(r[9]||'').trim(),
+        psPrice: parseFloat(r[10]) || 0, purchaseDate: fmtDate(r[11]),
+        buyerName: String(r[12]||'').trim(), buyerFather: String(r[13]||'').trim(),
+        buyerAdd: String(r[14]||'').trim(), buyerMob: String(r[15]||'').trim(),
+        buyerAadhar: String(r[16]||'').trim(), slPrice: parseFloat(r[17]) || 0, slDate: fmtDate(r[18]),
+        status: String(r[12]||'').trim() ? 'Sold' : 'Available',
+        addedAt: new Date().toISOString(),
       });
       added++;
     }
@@ -163,53 +274,36 @@ export default function VehDashboard() {
     if (!window.confirm('Delete this record?')) return;
     const updated = vehicleData.filter(v => v.id !== vehicleId);
     setVehicleData(updated);
-    localStorage.setItem('vehDashboardData', JSON.stringify(updated));
   };
 
   const handleAddNewCustomer = () => {
     const nc = {...newCustomer, id: Date.now(), date: new Date().toISOString().split('T')[0]};
     const updated = [...vehicleData, nc];
     setVehicleData(updated);
-    localStorage.setItem('vehDashboardData', JSON.stringify(updated));
     setShowAddCustomer(false);
     setNewCustomer({customerName:'',fatherName:'',mobileNo:'',address:'',dist:'',pinCode:'',dob:'',vehicleModel:'',variant:'',color:'',engineNo:'',chassisNo:'',keyNo:'',batteryNo:'',financerName:'',price:0});
     alert('✅ Customer added!');
   };
+
   const [invoiceData, setInvoiceData] = useState({
-    customerName: '',
-    fatherName: '',
-    mobileNo: '',
-    address: '',
-    dist: '',
-    pinCode: '',
-    vehicleModel: '',
-    color: '',
-    variant: '',
-    engineNo: '',
-    chassisNo: '',
-    keyNo: '',
-    batteryNo: '',
-    financerName: '',
-    dob: '',
-    price: 0,
+    customerName: '', fatherName: '', mobileNo: '', address: '', dist: '', pinCode: '',
+    vehicleModel: '', color: '', variant: '', engineNo: '', chassisNo: '',
+    keyNo: '', batteryNo: '', financerName: '', dob: '', price: 0,
     invoiceDate: new Date().toISOString().split('T')[0],
-    gstin: '23BCYPD9538B1ZG',
-    pan: 'BCYPD9538B'
+    gstin: '23BCYPD9538B1ZG', pan: 'BCYPD9538B'
   });
 
-  // Load Excel file
+  // ── Excel Import (cost_detl) ──────────────────────────────────────────────
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const workbook = XLSX.read(event.target.result, { cellDates: true });
         const worksheet = workbook.Sheets['cost_detl'];
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
         
-        // Read Rate_List sheet for prices
         const rateSheet = workbook.Sheets['Rate_List'];
         const priceMap = {};
         if (rateSheet) {
@@ -217,9 +311,9 @@ export default function VehDashboard() {
           for (let i = 0; i < rateData.length; i++) {
             const row = rateData[i];
             if (!row) continue;
-            const model = row[1]; // Column B
-            const exShowroom = parseFloat(row[4]); // Column E
-            const taxRate = parseFloat(row[15]); // Column P
+            const model = row[1];
+            const exShowroom = parseFloat(row[4]);
+            const taxRate = parseFloat(row[15]);
             if (model && typeof model === 'string' && model.length > 3 && exShowroom > 0) {
               priceMap[model.trim().toUpperCase()] = { exShowroom, taxRate: taxRate || 0 };
             }
@@ -228,34 +322,27 @@ export default function VehDashboard() {
           localStorage.setItem('sharedRatePrices', JSON.stringify(priceMap));
         }
         
-        // Excel date serial number to readable date
         const parseExcelDate = (val) => {
           if (!val) return '';
           let d;
-          if (val instanceof Date) {
-            d = val;
-          } else if (typeof val === 'number') {
-            d = new Date(Math.round((val - 25569) * 86400 * 1000) + 43200000);
-          } else {
+          if (val instanceof Date) d = val;
+          else if (typeof val === 'number') d = new Date(Math.round((val - 25569) * 86400 * 1000) + 43200000);
+          else {
             const str = String(val).trim();
             const parts = str.split(/[\/\-\.]/);
             if (parts.length === 3) {
-              const a = parseInt(parts[0]), b = parseInt(parts[1]), c = parseInt(parts[2]);
-              if (c > 100) { d = new Date(c, b - 1, a); }
-              else if (a > 100) { d = new Date(a, b - 1, c); }
-              else { d = new Date(str); }
-            } else { d = new Date(str); }
+              let a = parseInt(parts[0]), b = parseInt(parts[1]), c = parseInt(parts[2]);
+              if (c > 100) d = new Date(c, b-1, a);
+              else if (a > 100) d = new Date(a, b-1, c);
+              else d = new Date(str);
+            } else d = new Date(str);
           }
           if (!d || isNaN(d.getTime())) return '';
-          const dd = String(d.getUTCDate()).padStart(2,'0');
-          const mm = String(d.getUTCMonth()+1).padStart(2,'0');
-          const yyyy = d.getUTCFullYear();
-          return `${yyyy}-${mm}-${dd}`;
+          return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
         };
 
-        // Transform data
         const transformedData = jsonData
-          .filter(row => row['Cost Name']) // Filter empty rows
+          .filter(row => row['Cost Name'])
           .map((row, idx) => ({
             id: idx,
             customerName: row['Cost Name'] || '',
@@ -282,95 +369,19 @@ export default function VehDashboard() {
             insurance: parseFloat(row['Insurance']) || 0,
             rto: parseFloat(row['RTO']) || 0
           }));
-
+        
         setVehicleData(transformedData);
         setFilteredData(transformedData);
-        
-        // Extract unique models and variants
         const uniqueModels = [...new Set(transformedData.map(d => d.vehicleModel))].filter(Boolean);
         setModels(uniqueModels);
-        
-        // Show loading/error for mobile users
-  const MobileLoadingBanner = () => {
-    if (dbLoading) return <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-6 text-center mb-4"><div className="w-8 h-8 border-4 border-yellow-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"/><p className="text-yellow-700 font-bold">⏳ Server से data load हो रहा है...</p><p className="text-yellow-500 text-sm">पहली बार 30-50 sec लग सकते हैं</p></div>;
-    if (dbError && vehicleData.length === 0) return <div className="bg-red-50 border-2 border-red-300 rounded-lg p-6 text-center mb-4"><p className="text-red-700 font-bold text-lg">⚠️ {dbError}</p><Button onClick={()=>window.location.reload()} className="mt-3 bg-red-600 text-white">🔄 Refresh</Button></div>;
-    return null;
-  };
-
-  // Calculate analytics
         calculateAnalytics(transformedData);
         
-        // Save to localStorage - shared keys for all pages
         localStorage.setItem('vehDashboardData', JSON.stringify(transformedData));
         localStorage.setItem('vehDashboardModels', JSON.stringify(uniqueModels));
-        // Sync to shared customer data for other pages
-        const customerSync = transformedData.map(v => ({
-          _id: v.id,
-          name: v.customerName,
-          fatherName: v.fatherName,
-          phone: v.mobileNo,
-          aadhar: v.aadharNo || '',
-          pan: v.panNo || '',
-          address: v.address,
-          district: v.dist,
-          pinCode: v.pinCode || '',
-          state: 'M.P.',
-          dob: v.dob || '',
-          financerName: v.financerName || '',
-          variant: v.variant || '',
-          price: v.price || 0,
-          insurance: v.insurance || 0,
-          rto: v.rto || 0,
-          keyNo: v.keyNo || '',
-          batteryNo: v.batteryNo || '',
-          linkedVehicle: {
-            name: v.vehicleModel + ' ' + (v.variant || ''),
-            regNo: v.regNo || '',
-            frameNo: v.chassisNo || '',
-            engineNo: v.engineNo || '',
-            color: v.color || '',
-            model: v.vehicleModel || '',
-            keyNo: v.keyNo || '',
-            purchaseDate: v.date || '',
-            warranty: 'YES'
-          }
-        }));
-        localStorage.setItem('sharedCustomerData', JSON.stringify(customerSync));
-        localStorage.setItem('sharedVehicleData', JSON.stringify(transformedData));
-        // Notify other pages
-        window.dispatchEvent(new Event('dataSync'));
         
-        // ── Sync ALL to MongoDB (delete old + insert fresh — no duplicates)
-        // Wait for sync to complete before showing alert
-        await (async () => {
-          try {
-            const syncData = customerSync.map(c => ({
-              customerName: c.name, fatherName: c.fatherName, phone: c.phone,
-              aadhar: c.aadhar, pan: c.pan, address: c.address, district: c.district,
-              pinCode: c.pinCode || '', dob: c.dob, vehicleModel: c.linkedVehicle?.model,
-              variant: c.variant || '', vehicleColor: c.linkedVehicle?.color,
-              engineNo: c.linkedVehicle?.engineNo, chassisNo: c.linkedVehicle?.frameNo,
-              registrationNo: c.linkedVehicle?.regNo, keyNo: c.keyNo || '', batteryNo: c.batteryNo || '',
-              invoiceDate: c.linkedVehicle?.purchaseDate, financeCompany: c.financerName,
-              price: c.price || 0, insurance: c.insurance || 0, rto: c.rto || 0,
-            }));
-            console.log('📤 Syncing', syncData.length, 'customers to MongoDB...');
-            console.log('📤 Sample:', syncData[0]?.customerName, syncData[0]?.vehicleModel, syncData[0]?.price);
-            const r = await fetch(api('/api/customers/sync'), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ customers: syncData }),
-            });
-            if (r.ok) {
-              const result = await r.json();
-              console.log('✅ MongoDB sync SUCCESS:', result.count, 'customers replaced');
-            } else {
-              const errText = await r.text();
-              console.error('❌ MongoDB sync FAILED:', r.status, errText);
-            }
-          } catch(e) { console.error('❌ MongoDB sync ERROR:', e.message); }
-        })();
-
+        // Sync to MongoDB
+        await syncToMongoDB(transformedData);
+        
         alert('✅ डेटा सफलतापूर्वक लोड हो गया!\n💾 Data save हो गया - अगली बार auto-load होगा!');
       } catch (error) {
         alert('❌ फाइल लोड करने में त्रुटि: ' + error.message);
@@ -379,80 +390,8 @@ export default function VehDashboard() {
     reader.readAsArrayBuffer(file);
   };
 
-  // Load data from localStorage + MongoDB on component mount
-  const [dbLoading, setDbLoading] = useState(false);
-  const [dbError, setDbError] = useState('');
-
-  useEffect(() => {
-        
-    // ═══ LOAD LOGIC ═══
-    // Laptop: localStorage ONLY (never overwrite from MongoDB)
-    // Mobile: MongoDB ONLY (when localStorage empty)
-    const savedData = localStorage.getItem('vehDashboardData');
-    const savedModels = localStorage.getItem('vehDashboardModels');
-    
-    if (savedData) {
-      // localStorage has data — USE IT. Never touch MongoDB for reading.
-      try {
-        const pd = JSON.parse(savedData);
-        const pm = JSON.parse(savedModels || '[]');
-        if (pd.length > 0) {
-          setVehicleData(pd);
-          setFilteredData(pd);
-          setModels(pm.length > 0 ? pm : [...new Set(pd.map(d => d.vehicleModel))].filter(Boolean));
-          calculateAnalytics(pd);
-          return; // DONE — no MongoDB needed
-        }
-      } catch(e) {}
-    }
-    
-    // localStorage EMPTY — this is a new device (mobile) — load from MongoDB
-    setDbLoading(true);
-    (async () => {
-      try {
-        const res = await fetch(api('/api/customers'));
-        if (!res.ok) throw new Error('Server error');
-        const db = await res.json();
-        const valid = db.filter(c => (c.customerName || c.name || '').trim());
-        if (valid.length > 0) {
-          const transformed = valid.map((c, i) => ({
-            id: c._id || i+1, customerName: c.customerName||c.name||'',
-            fatherName: c.fatherName||'', mobileNo: c.phone||c.mobileNo||'',
-            address: c.address||'', dist: c.district||c.dist||'',
-            pinCode: c.pinCode||'', vehicleModel: c.vehicleModel||'',
-            variant: c.variant||'', color: c.vehicleColor||c.color||'',
-            engineNo: c.engineNo||'', chassisNo: c.chassisNo||'',
-            regNo: c.registrationNo||c.regNo||'', keyNo: c.keyNo||'',
-            date: c.invoiceDate||c.date||'', financerName: c.financeCompany||c.financerName||'',
-            aadharNo: c.aadhar||c.aadharNo||'', panNo: c.pan||c.panNo||'',
-            dob: c.dob||'', price: parseFloat(c.price)||0,
-          }));
-          setVehicleData(transformed); setFilteredData(transformed);
-          const models = [...new Set(transformed.map(d=>d.vehicleModel))].filter(Boolean);
-          setModels(models); calculateAnalytics(transformed);
-          localStorage.setItem('vehDashboardData', JSON.stringify(transformed));
-          localStorage.setItem('vehDashboardModels', JSON.stringify(models));
-        } else {
-          setDbError('Data नहीं मिला — Laptop से Excel import करें');
-        }
-      } catch(e) {
-        setDbError('Server connecting... 30 sec wait करें');
-      }
-      setDbLoading(false);
-    })();
-  }, []);
-
-  // Show loading/error for mobile users
-  const MobileLoadingBanner = () => {
-    if (dbLoading) return <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-6 text-center mb-4"><div className="w-8 h-8 border-4 border-yellow-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"/><p className="text-yellow-700 font-bold">⏳ Server से data load हो रहा है...</p><p className="text-yellow-500 text-sm">पहली बार 30-50 sec लग सकते हैं</p></div>;
-    if (dbError && vehicleData.length === 0) return <div className="bg-red-50 border-2 border-red-300 rounded-lg p-6 text-center mb-4"><p className="text-red-700 font-bold text-lg">⚠️ {dbError}</p><Button onClick={()=>window.location.reload()} className="mt-3 bg-red-600 text-white">🔄 Refresh</Button></div>;
-    return null;
-  };
-
-  // Calculate analytics
   const calculateAnalytics = (data) => {
     if (!data || data.length === 0) return;
-    // Monthly analytics
     const monthlyData = {};
     data.forEach(item => {
       if (item.date) {
@@ -462,103 +401,43 @@ export default function VehDashboard() {
         monthlyData[monthYear] = (monthlyData[monthYear] || 0) + 1;
       }
     });
-    
-    const monthlyChart = Object.entries(monthlyData)
-      .map(([month, count]) => ({ month, count }))
-      .sort((a, b) => new Date(a.month) - new Date(b.month));
-    
+    const monthlyChart = Object.entries(monthlyData).map(([month, count]) => ({ month, count })).sort((a,b) => new Date(a.month) - new Date(b.month));
     setMonthlyAnalytics(monthlyChart);
-
-    // Model analytics
     const modelData = {};
-    data.forEach(item => {
-      if (item.vehicleModel) {
-        modelData[item.vehicleModel] = (modelData[item.vehicleModel] || 0) + 1;
-      }
-    });
-    
-    const modelChart = Object.entries(modelData)
-      .map(([model, count]) => ({ model, count }))
-      .sort((a, b) => b.count - a.count);
-    
+    data.forEach(item => { if (item.vehicleModel) modelData[item.vehicleModel] = (modelData[item.vehicleModel] || 0) + 1; });
+    const modelChart = Object.entries(modelData).map(([model, count]) => ({ model, count })).sort((a,b) => b.count - a.count);
     setModelAnalytics(modelChart);
-
-    // Variant analytics
     const variantData = {};
-    data.forEach(item => {
-      if (item.variant) {
-        variantData[item.variant] = (variantData[item.variant] || 0) + 1;
-      }
-    });
-    
-    const variantChart = Object.entries(variantData)
-      .map(([variant, count]) => ({ variant, count }))
-      .sort((a, b) => b.count - a.count);
-    
+    data.forEach(item => { if (item.variant) variantData[item.variant] = (variantData[item.variant] || 0) + 1; });
+    const variantChart = Object.entries(variantData).map(([variant, count]) => ({ variant, count })).sort((a,b) => b.count - a.count);
     setVariantAnalytics(variantChart);
   };
 
-  // Apply filters
   useEffect(() => {
     let filtered = vehicleData;
-
-    if (selectedModel) {
-      filtered = filtered.filter(d => d.vehicleModel === selectedModel);
-    }
-
-    if (selectedVariant) {
-      filtered = filtered.filter(d => d.variant === selectedVariant);
-    }
-
-    if (selectedYear) {
-      filtered = filtered.filter(d => {
-        if (d.date) {
-          const year = new Date(d.date).getFullYear().toString();
-          return year === selectedYear;
-        }
-        return false;
-      });
-    }
-
-    if (selectedMonth) {
-      filtered = filtered.filter(d => {
-        if (d.date) {
-          const month = (new Date(d.date).getMonth() + 1).toString().padStart(2, '0');
-          return month === selectedMonth;
-        }
-        return false;
-      });
-    }
-
+    if (selectedModel) filtered = filtered.filter(d => d.vehicleModel === selectedModel);
+    if (selectedVariant) filtered = filtered.filter(d => d.variant === selectedVariant);
+    if (selectedYear) filtered = filtered.filter(d => d.date && new Date(d.date).getFullYear().toString() === selectedYear);
+    if (selectedMonth) filtered = filtered.filter(d => d.date && (new Date(d.date).getMonth()+1).toString().padStart(2,'0') === selectedMonth);
     setFilteredData(filtered);
     calculateAnalytics(filtered);
     setCurrentPage(1);
   }, [selectedModel, selectedVariant, selectedYear, selectedMonth, vehicleData]);
 
-  // Get unique variants for selected model
   const getVariantsForModel = () => {
     if (!selectedModel) return [];
     return [...new Set(vehicleData.filter(d => d.vehicleModel === selectedModel).map(d => d.variant))];
   };
-
-  // Get unique years
   const getYears = () => {
     const years = new Set();
-    vehicleData.forEach(d => {
-      if (d.date) {
-        years.add(new Date(d.date).getFullYear().toString());
-      }
-    });
+    vehicleData.forEach(d => { if (d.date) years.add(new Date(d.date).getFullYear().toString()); });
     return Array.from(years).sort().reverse();
   };
 
   const handleGenerateInvoice = (vehicle) => {
     setSelectedVehicle(vehicle);
-    // Auto-lookup price from Rate_List
-    const variantKey = (vehicle.variant || '').trim().toUpperCase();
     const modelKey = (vehicle.vehicleModel || '').trim().toUpperCase();
     let autoPrice = vehicle.price;
-    // Try matching model name with Rate_List
     for (const [key, val] of Object.entries(ratePrices)) {
       if (modelKey && key.includes(modelKey.split(' ')[0]) && key.includes(modelKey.split(' ').pop())) {
         autoPrice = val.exShowroom || val;
@@ -566,74 +445,50 @@ export default function VehDashboard() {
       }
     }
     if (ratePrices[modelKey]) autoPrice = ratePrices[modelKey].exShowroom || ratePrices[modelKey];
-    if (ratePrices[variantKey]) autoPrice = ratePrices[variantKey].exShowroom || ratePrices[variantKey];
-    
     setInvoiceData({
-      customerName: vehicle.customerName,
-      fatherName: vehicle.fatherName,
-      mobileNo: vehicle.mobileNo,
-      address: vehicle.address,
-      dist: vehicle.dist,
-      pinCode: vehicle.pinCode,
-      vehicleModel: vehicle.vehicleModel,
-      color: vehicle.color,
-      variant: vehicle.variant,
-      engineNo: vehicle.engineNo,
-      chassisNo: vehicle.chassisNo,
-      keyNo: vehicle.keyNo,
-      batteryNo: vehicle.batteryNo || '',
-      price: autoPrice,
-      dob: vehicle.dob || '',
-      financerName: vehicle.financerName || '',
-      invoiceDate: new Date().toISOString().split('T')[0],
-      gstin: '23BCYPD9538B1ZG',
-      pan: 'BCYPD9538B'
+      customerName: vehicle.customerName, fatherName: vehicle.fatherName, mobileNo: vehicle.mobileNo,
+      address: vehicle.address, dist: vehicle.dist, pinCode: vehicle.pinCode,
+      vehicleModel: vehicle.vehicleModel, color: vehicle.color, variant: vehicle.variant,
+      engineNo: vehicle.engineNo, chassisNo: vehicle.chassisNo, keyNo: vehicle.keyNo,
+      batteryNo: vehicle.batteryNo || '', price: autoPrice, dob: vehicle.dob || '',
+      financerName: vehicle.financerName || '', invoiceDate: new Date().toISOString().split('T')[0],
+      gstin: '23BCYPD9538B1ZG', pan: 'BCYPD9538B'
     });
     setShowInvoiceModal(true);
   };
 
-  // Edit vehicle details
   const handleEditVehicle = (vehicle) => {
     setEditVehicle({...vehicle});
     setShowEditModal(true);
   };
-
   const saveEditVehicle = () => {
     const updated = vehicleData.map(v => v.id === editVehicle.id ? editVehicle : v);
     setVehicleData(updated);
-    localStorage.setItem('vehDashboardData', JSON.stringify(updated));
     setShowEditModal(false);
     alert('✅ Updated!');
   };
 
-  // Generate Invoice PDF with Professional Layout
+  const amountToWords = (num) => {
+    const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+    const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+    if (num === 0) return 'Zero';
+    const n = Math.floor(num);
+    const b100 = (x) => x < 20 ? ones[x] : tens[Math.floor(x/10)] + (x%10 ? ' '+ones[x%10] : '');
+    const b1000 = (x) => x < 100 ? b100(x) : ones[Math.floor(x/100)] + ' Hundred' + (x%100 ? ' '+b100(x%100) : '');
+    let w = '';
+    const lk = Math.floor(n/100000);
+    if (lk > 0) w += b100(lk) + ' Lakh ';
+    const th = Math.floor((n%100000)/1000);
+    if (th > 0) w += b100(th) + ' Thousand ';
+    const r = n%1000;
+    if (r > 0) w += b1000(r);
+    return w.trim() + ' Only';
+  };
+
   const generateInvoicePDF = () => {
     const nextNum = generatedInvoices.length + 1;
     const invoiceNo = `SMH/${new Date(invoiceData.invoiceDate).getFullYear()}-${String(new Date(invoiceData.invoiceDate).getMonth() + 1).padStart(2, '0')} ${String(nextNum).padStart(3, '0')}`;
     const invoiceDate = invoiceData.invoiceDate;
-    
-    // Convert amount to words
-    const amountToWords = (num) => {
-      const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
-                     'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen',
-                     'Seventeen', 'Eighteen', 'Nineteen'];
-      const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
-      if (num === 0) return 'Zero';
-      const n = Math.floor(num);
-      const b100 = (x) => x < 20 ? ones[x] : tens[Math.floor(x/10)] + (x%10 ? ' '+ones[x%10] : '');
-      const b1000 = (x) => x < 100 ? b100(x) : ones[Math.floor(x/100)] + ' Hundred' + (x%100 ? ' '+b100(x%100) : '');
-      let w = '';
-      const lk = Math.floor(n/100000);
-      if (lk > 0) w += b100(lk) + ' Lakh ';
-      const th = Math.floor((n%100000)/1000);
-      if (th > 0) w += b100(th) + ' Thousand ';
-      const r = n%1000;
-      if (r > 0) w += b1000(r);
-      return w.trim() + ' Only';
-    };
-
-    // Correct calculations - ONLY TAX on Ex-Showroom Price
-    // Amount entered = Ex-Showroom Price (including GST). Reverse calculate taxable.
     const enteredAmount = parseFloat(invoiceData.price) || 0;
     const taxablePrice = Math.round((enteredAmount / 1.18) * 100) / 100;
     const sgst = Math.round((taxablePrice * 0.09) * 100) / 100;
@@ -641,13 +496,10 @@ export default function VehDashboard() {
     const invoiceSubTotal = taxablePrice + sgst + cgst;
     const invoiceTotal = Math.round(invoiceSubTotal);
     const roundOff = Math.round((invoiceTotal - invoiceSubTotal) * 100) / 100;
-
     const fmt = (v) => (v||0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
 
     const invoiceHTML = `
       <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 950px; margin: 0 auto; background: white; color: #000; font-size: 12px; line-height: 1.5;">
-        
-        <!-- HEADER -->
         <div style="margin-bottom: 10px; border-bottom: 2px solid #000; padding-bottom: 8px;">
           <div style="font-weight: bold; font-size: 14px;">V P HONDA</div>
           <div>NARSINGHGARH ROAD, NEAR BRIDGE, PARWALIYA SADAK</div>
@@ -657,14 +509,10 @@ export default function VehDashboard() {
           <div>GSTIN No : 23BCYPD9538B1ZG</div>
           <div style="margin-top: 4px;">PAN No: - BCYPD9538B</div>
         </div>
-
-        <!-- TAX INVOICE TITLE -->
         <div style="text-align: center; margin-bottom: 10px;">
           <span style="font-weight: bold; font-size: 15px; text-decoration: underline;">TAX INVOICE</span>
         </div>
         <hr style="border: 1px solid #000; margin-bottom: 8px;">
-
-        <!-- TWO COLUMN: Customer LEFT, Invoice Info RIGHT -->
         <table style="width: 100%; margin-bottom: 10px; font-size: 12px; border: none;" cellpadding="0" cellspacing="0">
           <tr>
             <td style="width: 58%; vertical-align: top; padding: 0; border: none;">
@@ -687,8 +535,6 @@ export default function VehDashboard() {
             </td>
           </tr>
         </table>
-
-        <!-- VEHICLE TABLE -->
         <table style="width: 100%; margin-bottom: 5px; font-size: 11px; border-collapse: collapse;">
           <tr style="font-weight: bold;">
             <td style="padding: 5px; border: 1px solid #000; width: 5%; text-align: center;">S No</td>
@@ -699,7 +545,7 @@ export default function VehDashboard() {
             <td style="padding: 5px; border: 1px solid #000; width: 17%;">Chassis No</td>
             <td style="padding: 5px; border: 1px solid #000; width: 14%;">Engine No</td>
             <td style="padding: 5px; border: 1px solid #000; width: 16%; text-align: right;">Amount</td>
-          </tr>
+           </tr>
           <tr>
             <td style="padding: 5px; border: 1px solid #000; text-align: center;">1</td>
             <td style="padding: 5px; border: 1px solid #000;">${invoiceData.vehicleModel}</td>
@@ -711,48 +557,18 @@ export default function VehDashboard() {
             <td style="padding: 5px; border: 1px solid #000; text-align: right;">₹ ${fmt(taxablePrice)}</td>
           </tr>
         </table>
-
-        <!-- PRICING TABLE -->
         <table style="width: 100%; margin-bottom: 5px; font-size: 12px; border-collapse: collapse;">
-          <tr>
-            <td style="padding: 4px; border: 1px solid #000; font-weight: bold; width: 70%;">Taxable Price</td>
-            <td style="padding: 4px; border: 1px solid #000; text-align: right; width: 30%;">₹ ${fmt(taxablePrice)}</td>
-          </tr>
-          <tr>
-            <td style="padding: 4px; border: 1px solid #000;">SGST @ 9%</td>
-            <td style="padding: 4px; border: 1px solid #000; text-align: right;">₹ ${fmt(sgst)}</td>
-          </tr>
-          <tr>
-            <td style="padding: 4px; border: 1px solid #000;">CGST @ 9%</td>
-            <td style="padding: 4px; border: 1px solid #000; text-align: right;">₹ ${fmt(cgst)}</td>
-          </tr>
-          <tr>
-            <td style="padding: 4px; border: 1px solid #000; font-weight: bold;">Invoice Sub Total</td>
-            <td style="padding: 4px; border: 1px solid #000; text-align: right;">₹ ${fmt(invoiceSubTotal)}</td>
-          </tr>
-          <tr>
-            <td style="padding: 4px; border: 1px solid #000;">(Round Off)</td>
-            <td style="padding: 4px; border: 1px solid #000; text-align: right;">₹ ${fmt(roundOff)}</td>
-          </tr>
-          <tr>
-            <td style="padding: 4px; border: 1px solid #000; font-weight: bold;">Invoice Total</td>
-            <td style="padding: 4px; border: 1px solid #000; text-align: right; font-weight: bold;">₹ ${fmt(invoiceTotal)}</td>
-          </tr>
+          <tr><td style="padding: 4px; border: 1px solid #000; font-weight: bold; width: 70%;">Taxable Price</td><td style="padding: 4px; border: 1px solid #000; text-align: right; width: 30%;">₹ ${fmt(taxablePrice)}</td></tr>
+          <tr><td style="padding: 4px; border: 1px solid #000;">SGST @ 9%</td><td style="padding: 4px; border: 1px solid #000; text-align: right;">₹ ${fmt(sgst)}</td></tr>
+          <tr><td style="padding: 4px; border: 1px solid #000;">CGST @ 9%</td><td style="padding: 4px; border: 1px solid #000; text-align: right;">₹ ${fmt(cgst)}</td></tr>
+          <tr><td style="padding: 4px; border: 1px solid #000; font-weight: bold;">Invoice Sub Total</td><td style="padding: 4px; border: 1px solid #000; text-align: right;">₹ ${fmt(invoiceSubTotal)}</td></tr>
+          <tr><td style="padding: 4px; border: 1px solid #000;">(Round Off)</td><td style="padding: 4px; border: 1px solid #000; text-align: right;">₹ ${fmt(roundOff)}</td></tr>
+          <tr><td style="padding: 4px; border: 1px solid #000; font-weight: bold;">Invoice Total</td><td style="padding: 4px; border: 1px solid #000; text-align: right; font-weight: bold;">₹ ${fmt(invoiceTotal)}</td></tr>
         </table>
-
-        <!-- AMOUNT & REMARKS -->
         <table style="width: 100%; margin-bottom: 5px; font-size: 12px; border-collapse: collapse;">
-          <tr>
-            <td style="padding: 4px; border: 1px solid #000; font-weight: bold; width: 22%;">Amount in Words</td>
-            <td style="padding: 4px; border: 1px solid #000;">: ${amountToWords(invoiceTotal)}</td>
-          </tr>
-          <tr>
-            <td style="padding: 4px; border: 1px solid #000; font-weight: bold;">Remarks</td>
-            <td style="padding: 4px; border: 1px solid #000;">:</td>
-          </tr>
+          <tr><td style="padding: 4px; border: 1px solid #000; font-weight: bold; width: 22%;">Amount in Words</td><td style="padding: 4px; border: 1px solid #000;">: ${amountToWords(invoiceTotal)}</td></tr>
+          <tr><td style="padding: 4px; border: 1px solid #000; font-weight: bold;">Remarks</td><td style="padding: 4px; border: 1px solid #000;">:</td></tr>
         </table>
-
-        <!-- BATTERY / BOOK / KEY / CC / YEAR -->
         <table style="width: 100%; margin-bottom: 8px; font-size: 12px; border-collapse: collapse;">
           <tr style="font-weight: bold;">
             <td style="padding: 4px; border: 1px solid #000; width: 20%;">Battery No. #</td>
@@ -769,8 +585,6 @@ export default function VehDashboard() {
             <td style="padding: 4px; border: 1px solid #000;">${new Date(invoiceDate).getFullYear()}</td>
           </tr>
         </table>
-
-        <!-- TERMS -->
         <div style="font-size: 8px; margin-bottom: 4px; line-height: 1.2;">
           <div style="font-weight: bold;">Terms &amp; conditions-</div>
           <div>1. E &amp; O.E. 2. Goods once sold will not be returned or exchanged under any circumstances.</div>
@@ -782,8 +596,6 @@ export default function VehDashboard() {
           <div>8. Registration and insurance will be done at the owner's risk and liability.</div>
           <div>9. I have understood all the conditions about Colour, Model and Manufacturing Date.</div>
         </div>
-
-        <!-- SIGNATURES -->
         <table style="width: 100%; margin-top: 15px; font-size: 12px; border: none;" cellpadding="0" cellspacing="0">
           <tr>
             <td style="width: 50%; vertical-align: bottom; padding-top: 20px; border: none;"><strong>Customer Signature</strong></td>
@@ -793,34 +605,28 @@ export default function VehDashboard() {
             </td>
           </tr>
         </table>
-
         <div style="text-align: center; margin-top: 15px; font-weight: bold; font-size: 13px;">THANKS. VISIT AGAIN</div>
-
       </div>
     `;
-
-    const opt = {
+     const opt = {
       margin: [8, 8, 8, 8],
       filename: 'Invoice_' + invoiceData.customerName + '_' + invoiceDate + '.pdf',
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true },
       jsPDF: { orientation: 'portrait', unit: 'mm', format: 'a4' }
     };
-
     html2pdf().set(opt).from(invoiceHTML).save();
-    // Track generated invoice
-    const newInvoice = {
-      invoiceNo: invoiceNo,
-      customerName: invoiceData.customerName,
-      vehicleModel: invoiceData.vehicleModel,
-      amount: invoiceTotal,
-      date: invoiceDate,
-      id: Date.now()
-    };
+    const newInvoice = { invoiceNo, customerName: invoiceData.customerName, vehicleModel: invoiceData.vehicleModel, amount: invoiceTotal, date: invoiceDate, id: Date.now() };
     const updatedInvoices = [...generatedInvoices, newInvoice];
     setGeneratedInvoices(updatedInvoices);
     localStorage.setItem('generatedInvoices', JSON.stringify(updatedInvoices));
     setShowInvoiceModal(false);
+  };
+
+  const MobileLoadingBanner = () => {
+    if (dbLoading) return <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-6 text-center mb-4"><div className="w-8 h-8 border-4 border-yellow-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"/><p className="text-yellow-700 font-bold">⏳ Server से data load हो रहा है...</p><p className="text-yellow-500 text-sm">पहली बार 30-50 sec लग सकते हैं</p></div>;
+    if (dbError && vehicleData.length === 0) return <div className="bg-red-50 border-2 border-red-300 rounded-lg p-6 text-center mb-4"><p className="text-red-700 font-bold text-lg">⚠️ {dbError}</p><Button onClick={()=>window.location.reload()} className="mt-3 bg-red-600 text-white">🔄 Refresh</Button></div>;
+    return null;
   };
 
   const COLORS = ['#1e3c72', '#2a5298', '#007bff', '#28a745', '#dc3545', '#ffc107', '#17a2b8'];
@@ -905,8 +711,7 @@ export default function VehDashboard() {
           ))}
         </div>
       </div>
-
-      {/* ═══ VEHICLES TAB (all existing content) ═══ */}
+       {/* ═══ VEHICLES TAB (all existing content) ═══ */}
       {vdActiveTab === 'vehicles' && (<>
 
       {/* File Upload */}
@@ -1499,7 +1304,7 @@ export default function VehDashboard() {
                   <Input type="date" placeholder="Sell Date" value={oldBikeForm.slDate} onChange={e=>setOldBikeForm({...oldBikeForm,slDate:e.target.value})} className="bg-slate-700 border-slate-500 text-white text-sm"/>
                   <Input placeholder="Notes" value={oldBikeForm.notes} onChange={e=>setOldBikeForm({...oldBikeForm,notes:e.target.value})} className="bg-slate-700 border-slate-500 text-white text-sm"/>
                 </div>
-                <div className="flex gap-3 mt-2">
+               <div className="flex gap-3 mt-2">
                   <Button onClick={saveOldBike} className="bg-green-600 hover:bg-green-700 text-white font-bold">{editOldBikeId ? 'Update' : 'Save'}</Button>
                   <Button onClick={()=>{setShowOldBikeForm(false);resetOldBikeForm();}} className="bg-slate-600 hover:bg-slate-700 text-white">Cancel</Button>
                 </div>
@@ -1571,3 +1376,4 @@ export default function VehDashboard() {
     </div>
   );
 }
+       
