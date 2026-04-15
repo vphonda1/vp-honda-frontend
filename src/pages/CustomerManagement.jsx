@@ -722,12 +722,36 @@ export default function CustomerManagement({ user }) {
               </Card>
             ))}
           </div>
-          <Card className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300">
-            <CardContent className="p-4">
-              <p className="text-green-600 text-sm font-bold">💰 Total Vehicle Sales Revenue</p>
-              <p className="text-green-800 font-black text-3xl mt-1">₹{stats.totalRevenue.toLocaleString('en-IN')}</p>
-            </CardContent>
-          </Card>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+           <Card className="bg-blue-50 border-2 border-blue-300">
+             <CardContent className="p-4 text-center">
+               <p className="text-blue-600 text-xs font-bold">💰 Total Sales (New Vehicles)</p>
+               <p className="text-blue-800 font-black text-2xl mt-1">₹{stats.totalRevenue.toLocaleString('en-IN')}</p>
+             </CardContent>
+           </Card>
+           <Card className="bg-orange-50 border-2 border-orange-300">
+             <CardContent className="p-4 text-center">
+               <p className="text-orange-600 text-xs font-bold">🛒 Total Purchase Cost</p>
+               <p className="text-orange-800 font-black text-2xl mt-1">₹0</p>
+               <p className="text-orange-400 text-xs">(अभी उपलब्ध नहीं)</p>
+             </CardContent>
+           </Card>
+           <Card className="bg-purple-50 border-2 border-purple-300">
+             <CardContent className="p-4 text-center">
+               <p className="text-purple-600 text-xs font-bold">📊 Total Revenue</p>
+               <p className="text-purple-800 font-black text-2xl mt-1">₹{stats.totalRevenue.toLocaleString('en-IN')}</p>
+             </CardContent>
+           </Card>
+           <Card className={`border-2 ${stats.totalRevenue > 0 ? 'bg-green-50 border-green-300' : 'bg-red-50 border-red-300'}`}>
+             <CardContent className="p-4 text-center">
+               <p className="text-gray-600 text-xs font-bold">📈 Profit / Loss</p>
+               <p className={`font-black text-2xl mt-1 ${stats.totalRevenue > 0 ? 'text-green-700' : 'text-red-700'}`}>
+                 ₹{stats.totalRevenue.toLocaleString('en-IN')}
+               </p>
+             <p className="text-gray-400 text-xs">(Sales - Purchase)</p>
+             </CardContent>
+           </Card>
+         </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card className="border-2"><CardHeader className="py-3 bg-blue-50"><CardTitle className="text-base">🏍️ Vehicle Distribution</CardTitle></CardHeader><CardContent>{stats.vehicleData.length?<ResponsiveContainer width="100%" height={250}><PieChart><Pie data={stats.vehicleData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({name,value})=>`${name}: ${value}`}><Cell fill="#3b82f6"/><Cell fill="#ef4444"/><Cell fill="#10b981"/><Cell fill="#f59e0b"/></Pie><Tooltip/></PieChart></ResponsiveContainer>:<p className="text-gray-400 text-center py-10">No data</p>}</CardContent></Card>
             <Card className="border-2"><CardHeader className="py-3 bg-orange-50"><CardTitle className="text-base">🏦 Finance Company — सबसे ज्यादा किसने Finance किया</CardTitle></CardHeader><CardContent>{stats.financeCompanyData.length?<ResponsiveContainer width="100%" height={250}><BarChart data={stats.financeCompanyData} layout="vertical"><CartesianGrid strokeDasharray="3 3"/><XAxis type="number"/><YAxis dataKey="name" type="category" width={120} tick={{fontSize:9}}/><Tooltip/><Bar dataKey="value" fill="#f59e0b" radius={[0,4,4,0]}/></BarChart></ResponsiveContainer>:<p className="text-gray-400 text-center py-10">No finance data</p>}</CardContent></Card>
