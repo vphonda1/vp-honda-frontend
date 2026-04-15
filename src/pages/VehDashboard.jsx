@@ -379,9 +379,43 @@ export default function VehDashboard() {
         localStorage.setItem('vehDashboardData', JSON.stringify(transformedData));
         localStorage.setItem('vehDashboardModels', JSON.stringify(uniqueModels));
         
+<<<<<<< HEAD
         // Sync to MongoDB
         await syncToMongoDB(transformedData);
         
+=======
+        // ── Sync ALL to MongoDB (delete old + insert fresh — no duplicates)
+        // Wait for sync to complete before showing alert
+        (async () => {
+          try {
+            const syncData = customerSync.map(c => ({
+              customerName: c.name, fatherName: c.fatherName, phone: c.phone,
+              aadhar: c.aadhar, pan: c.pan, address: c.address, district: c.district,
+              pinCode: c.pinCode || '', dob: c.dob, vehicleModel: c.linkedVehicle?.model,
+              variant: c.variant || '', vehicleColor: c.linkedVehicle?.color,
+              engineNo: c.linkedVehicle?.engineNo, chassisNo: c.linkedVehicle?.frameNo,
+              registrationNo: c.linkedVehicle?.regNo, keyNo: c.keyNo || '', batteryNo: c.batteryNo || '',
+              invoiceDate: c.linkedVehicle?.purchaseDate, financeCompany: c.financerName,
+              price: c.price || 0, insurance: c.insurance || 0, rto: c.rto || 0,
+            }));
+            console.log('📤 Syncing', syncData.length, 'customers to MongoDB...');
+            console.log('📤 Sample:', syncData[0]?.customerName, syncData[0]?.vehicleModel, syncData[0]?.price);
+            const r = await fetch(api('/api/customers/sync'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ customers: syncData }),
+            });
+            if (r.ok) {
+              const result = await r.json();
+              console.log('✅ MongoDB sync SUCCESS:', result.count, 'customers replaced');
+            } else {
+              const errText = await r.text();
+              console.error('❌ MongoDB sync FAILED:', r.status, errText);
+            }
+          } catch(e) { console.error('❌ MongoDB sync ERROR:', e.message); }
+        })();
+
+>>>>>>> 3186175bfcf1cb01a67df321cf9490fa2e68e8f2
         alert('✅ डेटा सफलतापूर्वक लोड हो गया!\n💾 Data save हो गया - अगली बार auto-load होगा!');
       } catch (error) {
         alert('❌ फाइल लोड करने में त्रुटि: ' + error.message);
@@ -1376,4 +1410,7 @@ export default function VehDashboard() {
     </div>
   );
 }
+<<<<<<< HEAD
        
+=======
+>>>>>>> 3186175bfcf1cb01a67df321cf9490fa2e68e8f2

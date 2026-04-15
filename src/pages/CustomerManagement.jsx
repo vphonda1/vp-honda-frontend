@@ -96,11 +96,17 @@ export default function CustomerManagement({ user }) {
       if (shared) {
         try {
           const parsed = JSON.parse(shared);
-          if (parsed.length > 0) {
-            setCustomers(parsed);
-            setLoading(false);
-            return;
-          }
+         if (parsed.length > 0) {
+           // ✅ सबसे नया सबसे ऊपर (createdAt के हिसाब से reverse)
+           const sorted = [...parsed].sort((a, b) => {
+             const dateA = a.createdAt || a._id?.toString().substring(0,8) || 0;
+             const dateB = b.createdAt || b._id?.toString().substring(0,8) || 0;
+             return dateB - dateA;
+           });
+           setCustomers(sorted);
+           setLoading(false);
+           return;
+         }
         } catch(e) {}
       }
       const response = await fetch(api('/api/customers'));
@@ -108,8 +114,13 @@ export default function CustomerManagement({ user }) {
       if (data && data.length > 0) {
         const valid = data.filter(c => (c.customerName || c.name || '').trim());
         if (valid.length) {
-          setCustomers(valid);
-          localStorage.setItem('sharedCustomerData', JSON.stringify(valid));
+           const sorted = [...valid].sort((a, b) => {
+              const dateA = a.createdAt || a._id?.toString().substring(0,8) || 0;
+              const dateB = b.createdAt || b._id?.toString().substring(0,8) || 0;
+              return dateB - dateA;
+           });
+            setCustomers(sorted);
+            localStorage.setItem('sharedCustomerData', JSON.stringify(sorted));
         }
       }
     } catch (error) {
@@ -231,8 +242,13 @@ export default function CustomerManagement({ user }) {
         added++;
       }
 
-      setCustomers(newCustomers);
-      localStorage.setItem('sharedCustomerData', JSON.stringify(newCustomers));
+      const sortedNew = [...newCustomers].sort((a, b) => {
+           const dateA = a.createdAt || a._id?.toString().substring(0,8) || 0;
+           const dateB = b.createdAt || b._id?.toString().substring(0,8) || 0;
+           return dateB - dateA;
+         });
+      setCustomers(sortedNew);
+      localStorage.setItem('sharedCustomerData', JSON.stringify(sortedNew));
       await syncCustomersToMongo(newCustomers);
       setImportResult({ sheetName, added, skipped: 0, errors: 0 });
     } catch (err) {
@@ -269,7 +285,7 @@ export default function CustomerManagement({ user }) {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData)
         });
         if (response.ok) alert('Customer added!');
-        updatedList = [...customers, formData];
+        updatedList = [formData, ...customers];
       }
       setCustomers(updatedList);
       localStorage.setItem('sharedCustomerData', JSON.stringify(updatedList));
