@@ -100,35 +100,48 @@ export default function CustomerManagement({ user }) {
 
   // ── Load customers ────────────────────────────────────────────────────────
   const loadCustomers = async () => {
-    try {
-      const shared = localStorage.getItem('sharedCustomerData');
-      if (shared) {
-        try {
-          const parsed = JSON.parse(shared);
-          if (parsed.length > 0) {
-            const sorted = sortByNewest(parsed);
-            setCustomers(sorted);
-            setLoading(false);
-            return;
-          }
-        } catch(e) {}
-      }
-      const response = await fetch(api('/api/customers'));
+  try {
+    setLoading(true);
+    
+    // 1. पहले MongoDB से डाटा लाएँ
+    const response = await fetch(api('/api/customers'));
+    if (response.ok) {
       const data = await response.json();
-      if (data && data.length > 0) {
-        const valid = data.filter(c => (c.customerName || c.name || '').trim());
-        if (valid.length) {
+      if (data && Array.isArray(data) && data.length > 0) {
+        // फ़िल्टर करें – केवल वही जिनका नाम है
+        const valid = data.filter(c => (c.customerName || c.name || '').trim() !== '');
+        if (valid.length > 0) {
           const sorted = sortByNewest(valid);
           setCustomers(sorted);
+          // MongoDB से मिला डाटा localStorage में भी सेव करें (बैकअप के लिए)
           localStorage.setItem('sharedCustomerData', JSON.stringify(sorted));
+          setLoading(false);
+          return;
         }
       }
-    } catch (error) {
-      console.log('Customer load failed:', error.message);
-    } finally {
-      setLoading(false);
     }
-  };
+    
+    // 2. MongoDB से डाटा नहीं मिला या कोई एरर आया तो localStorage से लोड करें
+    const shared = localStorage.getItem('sharedCustomerData');
+    if (shared) {
+      const parsed = JSON.parse(shared);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const sorted = sortByNewest(parsed);
+        setCustomers(sorted);
+        setLoading(false);
+        return;
+      }
+    }
+    
+    // 3. कहीं से भी डाटा नहीं मिला
+    setCustomers([]);
+  } catch (error) {
+    console.error('Customer load failed:', error.message);
+    setCustomers([]);
+  } finally {
+    setLoading(false);
+  }
+};
 
   useEffect(() => {
     loadCustomers();
