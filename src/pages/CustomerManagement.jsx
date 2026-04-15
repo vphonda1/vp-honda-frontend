@@ -632,30 +632,42 @@ export default function CustomerManagement({ user }) {
 
   const stats = useMemo(() => {
   const total = customers.length;
+  
+  // With Vehicle – सही तरीका
   const withVehicle = customers.filter(c => {
     const vname = c.linkedVehicle?.name || c.vehicleModel || '';
     return vname && vname !== 'N/A' && vname !== '';
   }).length;
+  
+  // Finance Customers
   const financeCustomers = customers.filter(c => {
     const f = String(c.financerName || '').trim();
     return f && f !== '0' && f !== '' && f !== 'NA' && f !== 'N/A' && !/^cash$/i.test(f);
   });
+  
+  // Cash Customers
   const cashCustomers = customers.filter(c => {
     const f = String(c.financerName || '').trim();
     return !f || f === '0' || f === '' || f === 'NA' || f === 'N/A' || /^cash$/i.test(f);
   });
+  
+  // Vehicle Distribution
   const vehMap = {};
   customers.forEach(c => {
     const v = (c.linkedVehicle?.name || c.vehicleModel || 'Unknown').toUpperCase().split(' ').slice(0,2).join(' ');
     vehMap[v] = (vehMap[v] || 0) + 1;
   });
   const vehicleData = Object.entries(vehMap).sort((a,b) => b[1]-a[1]).slice(0,8).map(([name,value]) => ({name,value}));
+  
+  // District Distribution
   const distMap = {};
   customers.forEach(c => {
     const d = (c.district || 'Unknown').toUpperCase();
     distMap[d] = (distMap[d]||0)+1;
   });
   const districtData = Object.entries(distMap).sort((a,b) => b[1]-a[1]).slice(0,8).map(([name,value]) => ({name,value}));
+  
+  // Monthly Sales
   const monthMap = {};
   customers.forEach(c => {
     const pd = c.linkedVehicle?.purchaseDate || c.date;
@@ -665,17 +677,34 @@ export default function CustomerManagement({ user }) {
     }
   });
   const monthlyData = Object.entries(monthMap).sort().slice(-12).map(([name,value]) => ({name: name.slice(5), value}));
+  
+  // Finance Company Distribution
   const finMap = {};
   financeCustomers.forEach(c => {
     const f = String(c.financerName || '').trim().toUpperCase();
     if (f) finMap[f] = (finMap[f]||0)+1;
   });
   const financeCompanyData = Object.entries(finMap).sort((a,b) => b[1]-a[1]).slice(0,10).map(([name,value]) => ({name: name.slice(0,18), value}));
+  
+  // Total Revenue
   const totalRevenue = customers.reduce((s,c) => {
     const price = c.linkedVehicle?.price || c.vehiclePrice || c.price || 0;
     return s + price;
   }, 0);
-  return { total, withVehicle, financeCustomers, cashCustomers, financeCount: financeCustomers.length, cashCount: cashCustomers.length, vehicleData, districtData, monthlyData, financeCompanyData, totalRevenue };
+  
+  return {
+    total,
+    withVehicle,
+    financeCustomers,
+    cashCustomers,
+    financeCount: financeCustomers.length,
+    cashCount: cashCustomers.length,
+    vehicleData,
+    districtData,
+    monthlyData,
+    financeCompanyData,
+    totalRevenue
+  };
 }, [customers]);
 
   if (loading) return <div className="max-w-7xl mx-auto p-6 text-center text-gray-500">Loading customers...</div>;
