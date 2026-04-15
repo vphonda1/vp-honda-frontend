@@ -91,12 +91,12 @@ export default function CustomerManagement({ user }) {
 
   // ── Helper: Sort customers (newest first) ─────────────────────────────────
   const sortByNewest = (list) => {
-    return [...list].sort((a, b) => {
-      const dateA = a.linkedVehicle?.purchaseDate || a.date || a.createdAt || a._id?.toString().substring(0,8) || 0;
-      const dateB = b.linkedVehicle?.purchaseDate || b.date || b.createdAt || b._id?.toString().substring(0,8) || 0;
-      return new Date(dateB)  - newDate(dateA);
-    });
-  };
+  return [...list].sort((a, b) => {
+    const dateA = a.linkedVehicle?.purchaseDate || a.date || a.createdAt || a._id?.toString().substring(0,8) || 0;
+    const dateB = b.linkedVehicle?.purchaseDate || b.date || b.createdAt || b._id?.toString().substring(0,8) || 0;
+    return new Date(dateB) - new Date(dateA);   // ✅ "new Date" सही है, "newDate" नहीं
+  });
+};
 
   // ── Load customers ────────────────────────────────────────────────────────
   const loadCustomers = async () => {
@@ -108,12 +108,10 @@ export default function CustomerManagement({ user }) {
     if (response.ok) {
       const data = await response.json();
       if (data && Array.isArray(data) && data.length > 0) {
-        // फ़िल्टर करें – केवल वही जिनका नाम है
         const valid = data.filter(c => (c.customerName || c.name || '').trim() !== '');
         if (valid.length > 0) {
           const sorted = sortByNewest(valid);
           setCustomers(sorted);
-          // MongoDB से मिला डाटा localStorage में भी सेव करें (बैकअप के लिए)
           localStorage.setItem('sharedCustomerData', JSON.stringify(sorted));
           setLoading(false);
           return;
@@ -121,7 +119,7 @@ export default function CustomerManagement({ user }) {
       }
     }
     
-    // 2. MongoDB से डाटा नहीं मिला या कोई एरर आया तो localStorage से लोड करें
+    // 2. अगर MongoDB से नहीं मिला, तो localStorage से लोड करें
     const shared = localStorage.getItem('sharedCustomerData');
     if (shared) {
       const parsed = JSON.parse(shared);
@@ -135,8 +133,9 @@ export default function CustomerManagement({ user }) {
     
     // 3. कहीं से भी डाटा नहीं मिला
     setCustomers([]);
-  } catch (error) {
-    console.error('Customer load failed:', error.message);
+  } catch (err) {
+    // ✅ यहाँ "newDate" की जगह "err.message" इस्तेमाल करें
+    console.error('Customer load failed:', err.message);
     setCustomers([]);
   } finally {
     setLoading(false);
