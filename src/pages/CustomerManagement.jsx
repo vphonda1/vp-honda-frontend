@@ -633,25 +633,25 @@ export default function CustomerManagement({ user }) {
   const stats = useMemo(() => {
   const total = customers.length;
   
-  // With Vehicle – सही तरीका
+  // वाहन वाले कस्टमर (सही तरीका)
   const withVehicle = customers.filter(c => {
     const vname = c.linkedVehicle?.name || c.vehicleModel || '';
     return vname && vname !== 'N/A' && vname !== '';
   }).length;
   
-  // Finance Customers
+  // Finance वाले कस्टमर
   const financeCustomers = customers.filter(c => {
     const f = String(c.financerName || '').trim();
     return f && f !== '0' && f !== '' && f !== 'NA' && f !== 'N/A' && !/^cash$/i.test(f);
   });
   
-  // Cash Customers
+  // Cash वाले कस्टमर
   const cashCustomers = customers.filter(c => {
     const f = String(c.financerName || '').trim();
     return !f || f === '0' || f === '' || f === 'NA' || f === 'N/A' || /^cash$/i.test(f);
   });
   
-  // Vehicle Distribution
+  // Vehicle Distribution (कौन सी गाड़ी कितनी बिकी)
   const vehMap = {};
   customers.forEach(c => {
     const v = (c.linkedVehicle?.name || c.vehicleModel || 'Unknown').toUpperCase().split(' ').slice(0,2).join(' ');
@@ -659,7 +659,7 @@ export default function CustomerManagement({ user }) {
   });
   const vehicleData = Object.entries(vehMap).sort((a,b) => b[1]-a[1]).slice(0,8).map(([name,value]) => ({name,value}));
   
-  // District Distribution
+  // District Distribution (कौन से जिले से ज्यादा ग्राहक)
   const distMap = {};
   customers.forEach(c => {
     const d = (c.district || 'Unknown').toUpperCase();
@@ -667,7 +667,7 @@ export default function CustomerManagement({ user }) {
   });
   const districtData = Object.entries(distMap).sort((a,b) => b[1]-a[1]).slice(0,8).map(([name,value]) => ({name,value}));
   
-  // Monthly Sales
+  // Monthly Sales (महीने के हिसाब से बिक्री)
   const monthMap = {};
   customers.forEach(c => {
     const pd = c.linkedVehicle?.purchaseDate || c.date;
@@ -678,7 +678,7 @@ export default function CustomerManagement({ user }) {
   });
   const monthlyData = Object.entries(monthMap).sort().slice(-12).map(([name,value]) => ({name: name.slice(5), value}));
   
-  // Finance Company Distribution
+  // Finance Company Distribution (किस फाइनेंस कंपनी ने सबसे ज्यादा लोन दिया)
   const finMap = {};
   financeCustomers.forEach(c => {
     const f = String(c.financerName || '').trim().toUpperCase();
@@ -686,7 +686,7 @@ export default function CustomerManagement({ user }) {
   });
   const financeCompanyData = Object.entries(finMap).sort((a,b) => b[1]-a[1]).slice(0,10).map(([name,value]) => ({name: name.slice(0,18), value}));
   
-  // Total Revenue
+  // Total Revenue (कुल बिक्री मूल्य)
   const totalRevenue = customers.reduce((s,c) => {
     const price = c.linkedVehicle?.price || c.vehiclePrice || c.price || 0;
     return s + price;
