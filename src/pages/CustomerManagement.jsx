@@ -89,6 +89,15 @@ export default function CustomerManagement({ user }) {
     } catch (err) { console.error('Sync error:', err); }
   };
 
+  // ── Helper: Sort customers (newest first) ─────────────────────────────────
+  const sortByNewest = (list) => {
+    return [...list].sort((a, b) => {
+      const dateA = a.createdAt || a._id?.toString().substring(0,8) || 0;
+      const dateB = b.createdAt || b._id?.toString().substring(0,8) || 0;
+      return dateB - dateA;
+    });
+  };
+
   // ── Load customers ────────────────────────────────────────────────────────
   const loadCustomers = async () => {
     try {
@@ -96,17 +105,12 @@ export default function CustomerManagement({ user }) {
       if (shared) {
         try {
           const parsed = JSON.parse(shared);
-         if (parsed.length > 0) {
-           // ✅ सबसे नया सबसे ऊपर (createdAt के हिसाब से reverse)
-           const sorted = [...parsed].sort((a, b) => {
-             const dateA = a.createdAt || a._id?.toString().substring(0,8) || 0;
-             const dateB = b.createdAt || b._id?.toString().substring(0,8) || 0;
-             return dateB - dateA;
-           });
-           setCustomers(sorted);
-           setLoading(false);
-           return;
-         }
+          if (parsed.length > 0) {
+            const sorted = sortByNewest(parsed);
+            setCustomers(sorted);
+            setLoading(false);
+            return;
+          }
         } catch(e) {}
       }
       const response = await fetch(api('/api/customers'));
@@ -114,13 +118,9 @@ export default function CustomerManagement({ user }) {
       if (data && data.length > 0) {
         const valid = data.filter(c => (c.customerName || c.name || '').trim());
         if (valid.length) {
-           const sorted = [...valid].sort((a, b) => {
-              const dateA = a.createdAt || a._id?.toString().substring(0,8) || 0;
-              const dateB = b.createdAt || b._id?.toString().substring(0,8) || 0;
-              return dateB - dateA;
-           });
-            setCustomers(sorted);
-            localStorage.setItem('sharedCustomerData', JSON.stringify(sorted));
+          const sorted = sortByNewest(valid);
+          setCustomers(sorted);
+          localStorage.setItem('sharedCustomerData', JSON.stringify(sorted));
         }
       }
     } catch (error) {
@@ -242,14 +242,10 @@ export default function CustomerManagement({ user }) {
         added++;
       }
 
-      const sortedNew = [...newCustomers].sort((a, b) => {
-           const dateA = a.createdAt || a._id?.toString().substring(0,8) || 0;
-           const dateB = b.createdAt || b._id?.toString().substring(0,8) || 0;
-           return dateB - dateA;
-         });
+      const sortedNew = sortByNewest(newCustomers);
       setCustomers(sortedNew);
       localStorage.setItem('sharedCustomerData', JSON.stringify(sortedNew));
-      await syncCustomersToMongo(newCustomers);
+      await syncCustomersToMongo(sortedNew);
       setImportResult({ sheetName, added, skipped: 0, errors: 0 });
     } catch (err) {
       alert('Import failed: ' + err.message);
@@ -285,11 +281,12 @@ export default function CustomerManagement({ user }) {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData)
         });
         if (response.ok) alert('Customer added!');
-        updatedList = [formData, ...customers];
+        updatedList = [formData, ...customers];   // नया सबसे ऊपर
       }
-      setCustomers(updatedList);
-      localStorage.setItem('sharedCustomerData', JSON.stringify(updatedList));
-      await syncCustomersToMongo(updatedList);
+      const sorted = sortByNewest(updatedList);
+      setCustomers(sorted);
+      localStorage.setItem('sharedCustomerData', JSON.stringify(sorted));
+      await syncCustomersToMongo(sorted);
       setShowForm(false);
       setEditingId(null);
       resetForm();
@@ -310,9 +307,10 @@ export default function CustomerManagement({ user }) {
       try {
         await fetch(api(`/api/customers/${customerId}`), { method: 'DELETE' });
         const updatedList = customers.filter(c => c._id !== customerId);
-        setCustomers(updatedList);
-        localStorage.setItem('sharedCustomerData', JSON.stringify(updatedList));
-        await syncCustomersToMongo(updatedList);
+        const sorted = sortByNewest(updatedList);
+        setCustomers(sorted);
+        localStorage.setItem('sharedCustomerData', JSON.stringify(sorted));
+        await syncCustomersToMongo(sorted);
         alert('Customer deleted!');
       } catch (error) {
         console.error('Error deleting customer:', error);
@@ -438,26 +436,8 @@ export default function CustomerManagement({ user }) {
           </tr>
         </table>
         <table style="width: 100%; margin-bottom: 5px; font-size: 11px; border-collapse: collapse;">
-          <tr style="font-weight: bold;">
-            <td style="padding: 5px; border: 1px solid #000; width: 5%; text-align: center;">S No</td>
-            <td style="padding: 5px; border: 1px solid #000; width: 16%;">Model</td>
-            <td style="padding: 5px; border: 1px solid #000; width: 10%;">Variant</td>
-            <td style="padding: 5px; border: 1px solid #000; width: 10%;">Color</td>
-            <td style="padding: 5px; border: 1px solid #000; width: 12%;">HSN Number</td>
-            <td style="padding: 5px; border: 1px solid #000; width: 17%;">Chassis No</td>
-            <td style="padding: 5px; border: 1px solid #000; width: 14%;">Engine No</td>
-            <td style="padding: 5px; border: 1px solid #000; width: 16%; text-align: right;">Amount</td>
-          </tr>
-          <tr>
-            <td style="padding: 5px; border: 1px solid #000; text-align: center;">1</td>
-            <td style="padding: 5px; border: 1px solid #000;">${invoiceData.vehicleModel}</td>
-            <td style="padding: 5px; border: 1px solid #000;">${invoiceData.variant}</td>
-            <td style="padding: 5px; border: 1px solid #000;">${invoiceData.color}</td>
-            <td style="padding: 5px; border: 1px solid #000;">87112029</td>
-            <td style="padding: 5px; border: 1px solid #000;">${invoiceData.chassisNo}</td>
-            <td style="padding: 5px; border: 1px solid #000;">${invoiceData.engineNo}</td>
-            <td style="padding: 5px; border: 1px solid #000; text-align: right;">₹ ${fmt(taxablePrice)}</td>
-          </tr>
+          <tr style="font-weight: bold;"><td style="padding: 5px; border: 1px solid #000; width: 5%; text-align: center;">S No</td><td style="padding: 5px; border: 1px solid #000; width: 16%;">Model</td><td style="padding: 5px; border: 1px solid #000; width: 10%;">Variant</td><td style="padding: 5px; border: 1px solid #000; width: 10%;">Color</td><td style="padding: 5px; border: 1px solid #000; width: 12%;">HSN Number</td><td style="padding: 5px; border: 1px solid #000; width: 17%;">Chassis No</td><td style="padding: 5px; border: 1px solid #000; width: 14%;">Engine No</td><td style="padding: 5px; border: 1px solid #000; width: 16%; text-align: right;">Amount</td></tr>
+          <tr><td style="padding: 5px; border: 1px solid #000; text-align: center;">1</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.vehicleModel}</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.variant}</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.color}</td><td style="padding: 5px; border: 1px solid #000;">87112029</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.chassisNo}</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.engineNo}</td><td style="padding: 5px; border: 1px solid #000; text-align: right;">₹ ${fmt(taxablePrice)}</td></tr>
         </table>
         <table style="width: 100%; margin-bottom: 5px; font-size: 12px; border-collapse: collapse;">
           <tr><td style="padding: 4px; border: 1px solid #000; font-weight: bold; width: 70%;">Taxable Price</td><td style="padding: 4px; border: 1px solid #000; text-align: right; width: 30%;">₹ ${fmt(taxablePrice)}</td></tr>
@@ -472,20 +452,8 @@ export default function CustomerManagement({ user }) {
           <tr><td style="padding: 4px; border: 1px solid #000; font-weight: bold;">Remarks</td><td style="padding: 4px; border: 1px solid #000;">:</td></tr>
         </table>
         <table style="width: 100%; margin-bottom: 8px; font-size: 12px; border-collapse: collapse;">
-          <tr style="font-weight: bold;">
-            <td style="padding: 4px; border: 1px solid #000; width: 20%;">Battery No. #</td>
-            <td style="padding: 4px; border: 1px solid #000; width: 20%;">Book No.#</td>
-            <td style="padding: 4px; border: 1px solid #000; width: 20%;">Key No.#</td>
-            <td style="padding: 4px; border: 1px solid #000; width: 20%;">CC #</td>
-            <td style="padding: 4px; border: 1px solid #000; width: 20%;">Year #</td>
-          </tr>
-          <tr>
-            <td style="padding: 4px; border: 1px solid #000;">${invoiceData.batteryNo || 'NA'}</td>
-            <td style="padding: 4px; border: 1px solid #000;">NA</td>
-            <td style="padding: 4px; border: 1px solid #000;">${invoiceData.keyNo || ''}</td>
-            <td style="padding: 4px; border: 1px solid #000;">${invoiceData.variant || '123.94 CC'}</td>
-            <td style="padding: 4px; border: 1px solid #000;">${new Date(invoiceDate).getFullYear()}</td>
-          </tr>
+          <tr style="font-weight: bold;"><td style="padding: 4px; border: 1px solid #000; width: 20%;">Battery No. #</td><td style="padding: 4px; border: 1px solid #000; width: 20%;">Book No.#</td><td style="padding: 4px; border: 1px solid #000; width: 20%;">Key No.#</td><td style="padding: 4px; border: 1px solid #000; width: 20%;">CC #</td><td style="padding: 4px; border: 1px solid #000; width: 20%;">Year #</td></tr>
+          <tr><td style="padding: 4px; border: 1px solid #000;">${invoiceData.batteryNo || 'NA'}</td><td style="padding: 4px; border: 1px solid #000;">NA</td><td style="padding: 4px; border: 1px solid #000;">${invoiceData.keyNo || ''}</td><td style="padding: 4px; border: 1px solid #000;">${invoiceData.variant || '123.94 CC'}</td><td style="padding: 4px; border: 1px solid #000;">${new Date(invoiceDate).getFullYear()}</td></tr>
         </table>
         <div style="font-size: 9.5px; margin-bottom: 6px; line-height: 1.5; page-break-inside: avoid;">
           <div style="font-weight: bold; margin-bottom: 3px;">Terms &amp; conditions-</div>
@@ -766,7 +734,7 @@ export default function CustomerManagement({ user }) {
             <Card className="border-2"><CardHeader className="py-3 bg-purple-50"><CardTitle className="text-base">📍 District Distribution</CardTitle></CardHeader><CardContent>{stats.districtData.length?<ResponsiveContainer width="100%" height={250}><BarChart data={stats.districtData}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="name" tick={{fontSize:9}}/><YAxis/><Tooltip/><Bar dataKey="value" fill="#8b5cf6" radius={[4,4,0,0]}/></BarChart></ResponsiveContainer>:<p className="text-gray-400 text-center py-10">No data</p>}</CardContent></Card>
             <Card className="border-2"><CardHeader className="py-3 bg-green-50"><CardTitle className="text-base">📈 Monthly Vehicle Sales</CardTitle></CardHeader><CardContent>{stats.monthlyData.length?<ResponsiveContainer width="100%" height={250}><BarChart data={stats.monthlyData}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="name"/><YAxis/><Tooltip/><Bar dataKey="value" fill="#10b981" radius={[4,4,0,0]}/></BarChart></ResponsiveContainer>:<p className="text-gray-400 text-center py-10">No data</p>}</CardContent></Card>
           </div>
-          <Card className="border-2"><CardHeader className="py-3 bg-gray-50"><CardTitle className="text-base">🆕 Recent Customers</CardTitle></CardHeader><CardContent className="p-0"><table className="w-full text-sm"><thead className="bg-gray-100"><tr>{['Name','Phone','Vehicle','Reg No','Finance','District'].map(h=><th key={h} className="px-4 py-2 text-left font-bold">{h}</th>)}</tr></thead><tbody>{customers.slice(0,8).map((c,i)=><tr key={i} className="border-b hover:bg-gray-50"><td className="px-4 py-2 font-bold">{c.name}</td><td className="px-4 py-2">{c.phone}</td><td className="px-4 py-2 text-blue-600">{c.linkedVehicle?.name||'—'}</td><td className="px-4 py-2 font-mono text-sm">{c.linkedVehicle?.regNo||'—'}</td><td className="px-4 py-2">{(()=>{const f=String(c.financerName||'').trim();return (f&&f!=='0'&&f!=='NA')?<span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-xs font-bold">{f}</span>:<span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-bold">CASH</span>;})()}</td><td className="px-4 py-2">{c.district||'—'}</td></tr>)}</tbody></table></CardContent></Card>
+          <Card className="border-2"><CardHeader className="py-3 bg-gray-50"><CardTitle className="text-base">🆕 Recent Customers</CardTitle></CardHeader><CardContent className="p-0"><table className="w-full text-sm"><thead className="bg-gray-100"><tr><th className="px-4 py-2 text-left font-bold">Name</th><th className="px-4 py-2 text-left font-bold">Phone</th><th className="px-4 py-2 text-left font-bold">Vehicle</th><th className="px-4 py-2 text-left font-bold">Reg No</th><th className="px-4 py-2 text-left font-bold">Finance</th><th className="px-4 py-2 text-left font-bold">District</th></tr></thead><tbody>{customers.slice(0,8).map((c,i)=><tr key={i} className="border-b hover:bg-gray-50"><td className="px-4 py-2 font-bold">{c.name}</td><td className="px-4 py-2">{c.phone}</td><td className="px-4 py-2 text-blue-600">{c.linkedVehicle?.name||'—'}</td><td className="px-4 py-2 font-mono text-sm">{c.linkedVehicle?.regNo||'—'}</td><td className="px-4 py-2">{(()=>{const f=String(c.financerName||'').trim();return (f&&f!=='0'&&f!=='NA')?<span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-xs font-bold">{f}</span>:<span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-bold">CASH</span>;})()}</td><td className="px-4 py-2">{c.district||'—'}</td></tr>)}</tbody></table></CardContent></Card>
         </div>
       )}
 
