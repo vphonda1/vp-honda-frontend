@@ -168,8 +168,154 @@ export default function CustomerManagement({ user }) {
   }, []);
 
   // ── Excel Import (cost_detl) ──────────────────────────────────────────────
- fetch('https://vp-honda-backend.onrender.com/api/customers/sync', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({customers:[]})}).then(r=>r.json()).then(d=>console.log('CLEARED:', d))
+  const handleExcelImport = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  setImporting(true);
+  setImportResult(null);
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    let sheetName = workbook.SheetNames.find(
+      name => name.toLowerCase().replace(/[_\s]/g, '') === 'costdetl' ||
+              name.toLowerCase().includes('cost') ||
+              name.toLowerCase().includes('customer')
+    );
+    if (!sheetName) sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', cellDates: true });
+    if (!rows.length) throw new Error('Sheet में कोई डाटा नहीं: ' + sheetName);
 
+    // 🔍 सबसे पहले कंसोल में सारे कॉलम नाम दिखाएँ (आपको यह देखना है)
+    const columnNames = Object.keys(rows[0]);
+    console.log('📋 Excel के कॉलम नाम:', columnNames);
+
+    // 🎯 अब सटीक मैपिंग – आप यहाँ नीचे दिए गए नामों को अपने Excel के हिसाब से बदल सकते हैं
+    // पहले कोशिश करें कि 'CUST NAME', 'Cost Name', 'Customer Name' जैसे नाम हों
+    let nameCol = columnNames.find(c => /^(cust|cost|customer)\s*name$/i.test(c) || c === 'Name');
+    let phoneCol = columnNames.find(c => /mob|mobile|phone|contact/i.test(c));
+    let vehicleCol = columnNames.find(c => /veh|vehicle|model/i.test(c));
+    let variantCol = columnNames.find(c => /varit|variant|cc/i.test(c));
+    let priceCol = columnNames.find(c => /price|amount/i.test(c));
+    let dateCol = columnNames.find(c => /date|invoice/i.test(c));
+    let regNoCol = columnNames.find(c => /reg\s*no|registration/i.test(c));
+    let fatherCol = columnNames.find(c => /father/i.test(c));
+    let aadharCol = columnNames.find(c => /aadhar|aadhaar/i.test(c));
+    let addressCol = columnNames.find(c => /add|address/i.test(c));
+    let districtCol = columnNames.find(c => /dist|district/i.test(c));
+    let pinCol = columnNames.find(c => /pin|pincode/i.test(c));
+    let engineCol = columnNames.find(c => /engine|ingine/i.test(c));
+    let chassisCol = columnNames.find(c => /chassis|frame/i.test(c));
+    let colorCol = columnNames.find(c => /colour|color/i.test(c));
+    let dobCol = columnNames.find(c => /dob|birth/i.test(c));
+    let financeCol = columnNames.find(c => /fin|finance|bank|cash/i.test(c));
+    let batteryCol = columnNames.find(c => /bty|battery/i.test(c));
+    let keyCol = columnNames.find(c => /key/i.test(c));
+
+    // अगर Name वाला कॉलम नहीं मिला, तो आप यहाँ मैन्युअली इंडेक्स डाल सकते हैं (जैसे columnNames[1])
+    if (!nameCol) {
+      console.error('❌ Name वाला कॉलम नहीं मिला! कॉलम हैं:', columnNames);
+      alert('Excel में "CUST NAME" या "Cost Name" नाम का कॉलम नहीं है। कृपया कॉलम का नाम बदलें या नीचे दिए गए निर्देश देखें।');
+      setImporting(false);
+      return;
+    }
+
+    console.log('✅ मैपिंग:', { nameCol, phoneCol, vehicleCol, variantCol, priceCol, dateCol });
+
+    const parseDate = (val) => {
+      if (!val) return '';
+      if (val instanceof Date) return val.toISOString().split('T')[0];
+      if (typeof val === 'number') {
+        const d = new Date((val - 25569) * 86400000);
+        return d.toISOString().split('T')[0];
+      }
+      const str = String(val).trim();
+      const parts = str.split(/[\/\-\.]/);
+      if (parts.length === 3) {
+        let d = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+        if (!isNaN(d)) return d.toISOString().split('T')[0];
+        d = new Date(`${parts[2]}-${parts[0]}-${parts[1]}`);
+        if (!isNaN(d)) return d.toISOString().split('T')[0];
+      }
+      return '';
+    };
+
+    let added = 0;
+    const newCustomers = [];
+
+    for (const row of rows) {
+      const name = nameCol ? String(row[nameCol] || '').trim() : '';
+      if (!name) continue; // बिना नाम के रिकॉर्ड स्किप करें
+
+      const phone = phoneCol ? String(row[phoneCol] || '').trim() : '';
+      const vehicle = vehicleCol ? String(row[vehicleCol] || '').trim() : '';
+      const variant = variantCol ? String(row[variantCol] || '').trim() : '';
+      const price = priceCol ? parseFloat(row[priceCol]) || 0 : 0;
+      const date = parseDate(row[dateCol]);
+      const regNo = regNoCol ? String(row[regNoCol] || '').trim().toUpperCase() : '';
+      const engine = engineCol ? String(row[engineCol] || '').trim().toUpperCase() : '';
+      const chassis = chassisCol ? String(row[chassisCol] || '').trim().toUpperCase() : '';
+      const color = colorCol ? String(row[colorCol] || '').trim() : '';
+      const father = fatherCol ? String(row[fatherCol] || '').trim() : '';
+      const address = addressCol ? String(row[addressCol] || '').trim() : '';
+      const district = districtCol ? String(row[districtCol] || '').trim() : '';
+      const pin = pinCol ? String(row[pinCol] || '').trim() : '';
+      const dob = parseDate(row[dobCol]);
+      const finance = financeCol ? String(row[financeCol] || '').trim() : '';
+      const battery = batteryCol ? String(row[batteryCol] || '').trim() : '';
+      const keyNo = keyCol ? String(row[keyCol] || '').trim() : '';
+      const aadhar = aadharCol ? String(row[aadharCol] || '').trim() : '';
+
+      const customerData = {
+        name,
+        fatherName: father,
+        phone,
+        aadhar,
+        pan: '',
+        address,
+        district,
+        pinCode: pin,
+        state: 'M.P.',
+        dob,
+        financerName: finance,
+        vehiclePrice: price,
+        linkedVehicle: {
+          name: vehicle,
+          regNo,
+          chassisNo: chassis,
+          frameNo: chassis,
+          engineNo: engine,
+          color,
+          model: variant,
+          keyNo,
+          batteryNo: battery,
+          price,
+          purchaseDate: date,
+          warranty: 'YES'
+        }
+      };
+      newCustomers.push(customerData);
+      added++;
+    }
+
+    if (newCustomers.length === 0) throw new Error('कोई valid customer नहीं मिला। कॉलम नाम चेक करें।');
+
+    const sortedNew = sortByNewest(newCustomers);
+    setCustomers(sortedNew);
+    localStorage.setItem('sharedCustomerData', JSON.stringify(sortedNew));
+    await syncCustomersToMongo(sortedNew);
+
+    setImportResult({ sheetName, added, skipped: 0, errors: 0, columnNames: columnNames.join(', ') });
+    alert(`✅ ${added} customers सही से import हो गए!\nकॉलम नाम: ${columnNames.join(', ')}`);
+
+  } catch (err) {
+    console.error(err);
+    alert('❌ Import failed: ' + err.message);
+    setImportResult({ error: err.message });
+  }
+  setImporting(false);
+  if (fileInputRef.current) fileInputRef.current.value = '';
+};
   const resetForm = () => {
     setFormData({
       name: '', fatherName: '', phone: '', aadhar: '', pan: '', address: '',
