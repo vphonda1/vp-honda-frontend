@@ -92,9 +92,9 @@ export default function CustomerManagement({ user }) {
   // ── Helper: Sort customers (newest first) ─────────────────────────────────
   const sortByNewest = (list) => {
     return [...list].sort((a, b) => {
-      const dateA = a.createdAt || a._id?.toString().substring(0,8) || 0;
-      const dateB = b.createdAt || b._id?.toString().substring(0,8) || 0;
-      return dateB - dateA;
+      const dateA = a.linkedVehicle?.purchaseDate || a.date || a.createdAt || a._id?.toString().substring(0,8) || 0;
+      const dateB = b.linkedVehicle?.purchaseDate || b.date || b.createdAt || b._id?.toString().substring(0,8) || 0;
+      return new Date(dateB)  - newDate(dateA);
     });
   };
 
@@ -632,7 +632,10 @@ export default function CustomerManagement({ user }) {
 
   const stats = useMemo(() => {
     const total = customers.length;
-    const withVehicle = customers.filter(c => c.linkedVehicle?.name && c.linkedVehicle.name !== 'N/A').length;
+    const withVehicle = customers.filter(c 
+     const vname =  c.linkedVehicle?.name || c.VehicleModel || ' ';
+     return vname && vname ! == 'N/A' && vname !== ' ';
+   }).length;
     const financeCustomers = customers.filter(c => {
       const f = String(c.financerName || '').trim();
       return f && f !== '0' && f !== '' && f !== 'NA' && f !== 'N/A' && !/^cash$/i.test(f);
@@ -653,7 +656,9 @@ export default function CustomerManagement({ user }) {
     const finMap = {};
     financeCustomers.forEach(c => { const f = String(c.financerName || '').trim().toUpperCase(); if (f) finMap[f] = (finMap[f]||0)+1; });
     const financeCompanyData = Object.entries(finMap).sort((a,b) => b[1]-a[1]).slice(0,10).map(([name,value]) => ({name: name.slice(0,18), value}));
-    const totalRevenue = customers.reduce((s,c) => s + (c.vehiclePrice || c.linkedVehicle?.price || 0), 0);
+    const totalRevenue = customers.reduce((s,c) =>  {
+    const price = c.linkedVehicle?.price || c.vehiclePrice || c.price || 0;
+    return s + price; }, 0);
     return { total, withVehicle, financeCustomers, cashCustomers, financeCount: financeCustomers.length, cashCount: cashCustomers.length, vehicleData, districtData, monthlyData, financeCompanyData, totalRevenue };
   }, [customers]);
 
