@@ -3,136 +3,41 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, Trash2, Download, ArrowLeft, Eye, FileText, FolderOpen, RefreshCw, Clock } from 'lucide-react';
+import { Search, Trash2, Download, ArrowLeft, Eye, FileText, FolderOpen, RefreshCw, Clock, AlertCircle } from 'lucide-react';
 import { api } from '../utils/apiConfig';
 
-const getLS = (k, fb=[]) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;} };
-
-const extractPDFText = async (file) => {
-  const formData = new FormData(); formData.append('pdf', file);
-  const res = await fetch(api('/api/parse-pdf'), { method: 'POST', body: formData });
-  if (!res.ok) throw new Error(await res.json().then(d=>d.error).catch(()=>'Server error'));
-  const data = await res.json();
-  if (!data.text) throw new Error('No text extracted');
-  return data.text;
+const getLS = (k, fb=[]) => { 
+  try{
+    const v=localStorage.getItem(k);
+    return v?JSON.parse(v):fb;
+  }catch{
+    return fb;
+  } 
 };
 
-// ========== ROBUST OCR PARSER FOR SERVICE INVOICES ==========
-const parseOCRServiceInvoice = (text, filename) => {
-  const lines = text.split(/\r?\n/);
-  const flat = text.replace(/\n/g, ' ').replace(/\s+/g, ' ');
-  
-  // ----- Extract basic fields -----
-  let invoiceNumber = '';
-  const invMatch = flat.match(/Invoice\s*No\.?\s*:?\s*(\d+)/i) || flat.match(/#(\d{4,})/);
-  if (invMatch) invoiceNumber = invMatch[1];
-  else invoiceNumber = String(Math.floor(Math.random()*900000+100000));
-  
-  let invoiceDate = new Date().toISOString().split('T')[0];
-  const dateMatch = flat.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-  if (dateMatch) {
-    let d = new Date(`${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`);
-    if (!isNaN(d)) invoiceDate = d.toISOString().split('T')[0];
+const saveLS = (k, v) => {
+  try {
+    localStorage.setItem(k, JSON.stringify(v));
+  } catch(e) {
+    console.error('Storage error:', e);
   }
-  
-  let regNo = '';
-  const regMatch = flat.match(/MP\d{2}[A-Z]{1,3}\d{4}/i);
-  if (regMatch) regNo = regMatch[0].toUpperCase();
-  
-  let customerName = filename.replace(/\.pdf$/i, '').replace(/^[_\d]+/, '').replace(/[_]+/g, ' ').trim();
-  if (!customerName || customerName.length<3) customerName = 'Unknown';
-  
-  let customerPhone = '';
-  const phoneMatch = flat.match(/\b\d{10}\b/);
-  if (phoneMatch) customerPhone = phoneMatch[0];
-  
-  let vehicle = '';
-  const vehMatch = flat.match(/(?:Model|Vehicle)\s*:?\s*([A-Z][A-Z0-9\s]{3,30})/i);
-  if (vehMatch) vehicle = vehMatch[1].trim();
-  if (!vehicle) vehicle = filename.match(/SP125|Activa|Shine|Hornet/i)?.[0] || '';
-  
-  // ----- Extract parts table (line by line) -----
-  const items = [];
-  let inTable = false;
-  for (let line of lines) {
-    line = line.trim();
-    if (!line) continue;
-    if (/Part\s*No|Description|Qty|MRP|Taxable/i.test(line)) {
-      inTable = true;
-      continue;
-    }
-    if (inTable && /^[A-Z0-9\-]{5,}/.test(line)) {
-      const parts = line.split(/\s{2,}/);
-      if (parts.length >= 4) {
-        const partNo = parts[0];
-        const description = parts[1] || '';
-        const qty = parseInt(parts[2]) || 1;
-        const mrp = parseFloat(parts[3]) || 0;
-        const taxableAmt = parts[4] ? parseFloat(parts[4]) : mrp;
-        let gstAmount = parts[5] ? parseFloat(parts[5]) : 0;
-        let gstRate = 0;
-        if (taxableAmt > 0 && gstAmount > 0) gstRate = Math.round((gstAmount / taxableAmt) * 100);
-        else gstRate = 18;
-        items.push({ partNo, description, qty, mrp, taxableAmt, gstAmount, gstRate, total: taxableAmt });
-      } else {
-        const numMatch = line.match(/(\d+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})$/);
-        if (numMatch) {
-          const qty = parseInt(numMatch[1]);
-          const mrp = parseFloat(numMatch[2].replace(/,/g,''));
-          const taxable = parseFloat(numMatch[3].replace(/,/g,''));
-          const partMatch = line.match(/^([A-Z0-9\-]+)/);
-          const partNo = partMatch ? partMatch[1] : 'UNKNOWN';
-          const desc = line.replace(partNo, '').replace(numMatch[0], '').trim();
-          items.push({ partNo, description: desc, qty, mrp, taxableAmt: taxable, gstAmount: 0, gstRate: 18, total: taxable });
-        }
-      }
-    }
-    if (/Subtotal|Total\s+Invoice/i.test(line)) inTable = false;
-  }
-  
-  // ----- Totals -----
-  let subtotal = 0, gstAmount = 0, finalTotal = 0;
-  const subtotalMatch = flat.match(/Subtotal\s*:?\s*[₹]*\s*([\d,]+\.\d{2})/i);
-  if (subtotalMatch) subtotal = parseFloat(subtotalMatch[1].replace(/,/g,''));
-  const gstMatch = flat.match(/GST\s*:?\s*[₹]*\s*([\d,]+\.\d{2})/i);
-  if (gstMatch) gstAmount = parseFloat(gstMatch[1].replace(/,/g,''));
-  const totalMatch = flat.match(/Total\s*:?\s*[₹]*\s*([\d,]+\.\d{2})/i);
-  if (totalMatch) finalTotal = parseFloat(totalMatch[1].replace(/,/g,''));
-  
-  if (items.length > 0 && finalTotal === 0) {
-    subtotal = items.reduce((s,i)=>s+i.taxableAmt, 0);
-    gstAmount = items.reduce((s,i)=>s+(i.gstAmount||0), 0);
-    finalTotal = subtotal + gstAmount;
-  }
-  if (gstAmount > 0 && finalTotal === 0 && subtotal === 0) {
-    subtotal = Math.round((gstAmount / 0.18) * 100) / 100;
-    finalTotal = subtotal + gstAmount;
-  }
-  
-  const hasPartKeywords = /Part\s*No|Description|Qty|MRP/i.test(flat);
-  const invoiceType = hasPartKeywords ? 'service' : 'vehicle';
-  let serviceNumber = null;
-  const svcMatch = flat.match(/(\d+)(?:st|nd|rd|th)\s+Service/i);
-  if (svcMatch) serviceNumber = parseInt(svcMatch[1]);
-  
-  return {
-    invoiceNumber, invoiceDate, customerName: customerName.slice(0,60), customerPhone,
-    vehicle, regNo, frameNo: '', engineNo: '', paymentMode: 'CASH',
-    serviceKm: null, serviceNumber, serviceType: '',
-    items, parts: items,
-    totals: { subtotal, gstRate: 18, gstAmount, totalAmount: finalTotal },
-    invoiceType, importedFrom: filename, importedAt: new Date().toISOString(), status: 'Active'
-  };
 };
 
-const exportInvoicesAsPDF = (invoices) => {
-  const total = invoices.reduce((s,i)=>s+(i.totals?.totalAmount||i.amount||0),0);
-  const html = `<!DOCTYPE html><html><head><title>VP Honda Invoices</title><style>body{font-family:Arial;font-size:11px;margin:20px}h2{color:#1a3a8a}table{width:100%;border-collapse:collapse;margin-top:8px}th{background:#1a3a8a;color:white;padding:5px 7px;text-align:left;font-size:10px}td{border-bottom:1px solid #e5e7eb;padding:4px 7px}tr:nth-child(even){background:#f9fafb}.total{background:#1a3a8a;color:white;font-weight:bold}.footer{margin-top:12px;font-size:9px;color:#6b7280;text-align:center}</style></head><body><h2>🏍️ VP Honda — Invoice Report</h2><p style="color:#6b7280;font-size:10px">Generated: ${new Date().toLocaleString('en-IN')} | ${invoices.length} invoices | ₹${total.toLocaleString('en-IN')}</p></table>
-    <thead><tr><th>#</th><th>Invoice No</th><th>Customer</th><th>Phone</th><th>Vehicle</th><th>Reg No</th><th>Date</th><th>Amount</th><th>Parts</th><th>Source</th></tr></thead>
-    <tbody>${invoices.map((inv,i)=>`<tr><td>${i+1}</td><td><b>#${inv.invoiceNumber||inv.id}</b></td><td>${inv.customerName||'—'}</td><td>${inv.customerPhone||'—'}</td><td>${inv.vehicle||'—'}</td><td>${inv.regNo||'—'}</td><td>${new Date(inv.invoiceDate||Date.now()).toLocaleDateString('en-IN')}</td><td><b>₹${(inv.totals?.totalAmount||inv.amount||0).toLocaleString('en-IN')}</b></td><td>${(inv.items||inv.parts||[]).length}</td><td>${inv.importedFrom?'PDF':'Manual'}</td></tr>`).join('')}</tbody>
-    <tfoot><tr><td colspan="7">TOTAL</td><td><b>₹${total.toLocaleString('en-IN')}</b></td><td colspan="2"></td></tr></tfoot>
-  </table><div class="footer">VP Honda Dealership, Bhopal</div></body></html>`;
-  const w = window.open('','_blank'); w.document.write(html); w.document.close(); setTimeout(()=>w.print(), 500);
+const importPDFs = async (files) => {
+  const formData = new FormData();
+  files.forEach(f => formData.append('pdfs', f));
+  
+  const res = await fetch(api('/api/parse-pdf-batch'), {
+    method: 'POST',
+    body: formData
+  });
+  
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Import failed');
+  }
+  
+  return res.json();
 };
 
 export default function InvoiceManagementDashboard() {
@@ -142,10 +47,11 @@ export default function InvoiceManagementDashboard() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
-  const [progress, setProgress] = useState({ current:0, total:0 });
-  const [lastRefresh, setLastRefresh] = useState(new Date());
+  const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
   const [activeTab, setActiveTab] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [lastRefresh, setLastRefresh] = useState(new Date());
+  
   const INVOICES_PER_PAGE = 5;
   const intervalRef = useRef(null);
 
@@ -154,252 +60,604 @@ export default function InvoiceManagementDashboard() {
     const fn = () => loadInvoices();
     window.addEventListener('storage', fn);
     intervalRef.current = setInterval(fn, 30000);
-    return () => { window.removeEventListener('storage', fn); clearInterval(intervalRef.current); };
+    return () => { 
+      window.removeEventListener('storage', fn); 
+      clearInterval(intervalRef.current); 
+    };
   }, []);
 
   const loadInvoices = async () => {
     let dbInv = [];
-    try { const res = await fetch(api('/api/invoices')); if (res.ok) dbInv = await res.json(); } catch(e) {}
-    const lsInv = getLS('invoices');
+    try { 
+      const res = await fetch(api('/api/invoices')); 
+      if (res.ok) dbInv = await res.json(); 
+    } catch(e) {}
+
+    const lsInv = getLS('invoices', []);
     const all = [...dbInv, ...lsInv];
+    
     const seen = new Set();
-    const unique = all.filter(i => { const k = i.invoiceNumber||i.id||i._id; if(seen.has(k)) return false; seen.add(k); return true; })
-      .sort((a,b)=>new Date(b.importedAt||b.invoiceDate||b.date||0) - new Date(a.importedAt||a.invoiceDate||a.date||0));
+    const unique = all
+      .filter(i => { 
+        const k = i.invoiceNumber || i.id || i._id; 
+        if(seen.has(k)) return false; 
+        seen.add(k); 
+        return true; 
+      })
+      .sort((a,b) => new Date(b.importedAt || b.invoiceDate || 0) - new Date(a.importedAt || a.invoiceDate || 0));
+
     setInvoices(unique);
     setLastRefresh(new Date());
     setLoading(false);
   };
 
-  const processPDFFiles = async (files, expectedType = 'both') => {
+  const handleImportPDFs = async (files, type = 'both') => {
     if (!files.length) return;
+
     setImporting(true);
-    setProgress({ current:0, total:files.length });
-    const existing = getLS('invoices', []);
-    const added = [], errors = [];
-    for (let i=0; i<files.length; i++) {
+    setImportProgress({ current: 0, total: files.length });
+    const errors = [];
+    const added = [];
+
+    for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      setProgress({ current:i+1, total:files.length });
-      if (file.type !== 'application/pdf') continue;
+      setImportProgress({ current: i + 1, total: files.length });
+
+      if (file.type !== 'application/pdf') {
+        errors.push(file.name + ': PDF नहीं है');
+        continue;
+      }
+
       try {
-        const text = await extractPDFText(file);
-        const parsed = parseOCRServiceInvoice(text, file.name);
-        if (expectedType !== 'both' && parsed.invoiceType !== expectedType) {
-          console.log(`Skipping ${file.name} (type ${parsed.invoiceType}) not ${expectedType}`);
+        const formData = new FormData();
+        formData.append('pdf', file);
+
+        const res = await fetch(api('/api/parse-pdf'), {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error);
+        }
+
+        const data = await res.json();
+        const invoice = data.invoice;
+
+        // Type check करो
+        if (type === 'vehicle' && invoice.invoiceType !== 'vehicle') {
+          console.log(`⏭️ Skipping ${file.name} (vehicle invoice नहीं)`);
           continue;
         }
-        added.push(parsed);
+        if (type === 'service' && invoice.invoiceType !== 'service') {
+          console.log(`⏭️ Skipping ${file.name} (service invoice नहीं)`);
+          continue;
+        }
+
+        added.push(invoice);
+
+        // Database में save करो
+        try {
+          await fetch(api('/api/invoices'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(invoice)
+          });
+        } catch(e) {
+          console.warn('DB save error:', e);
+        }
+
       } catch (err) {
-        console.error(`❌ ${file.name} Error:`, err);
+        console.error(`❌ ${file.name}:`, err.message);
         errors.push(file.name + ': ' + err.message);
       }
     }
-    const newInvoices = [...added, ...existing];
-    localStorage.setItem('invoices', JSON.stringify(newInvoices));
+
+    // LocalStorage में save करो
+    const existing = getLS('invoices', []);
+    const updated = [...added, ...existing];
+    const seen = new Set();
+    const deduplicated = updated.filter(i => {
+      const k = i.invoiceNumber;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    saveLS('invoices', deduplicated);
+
+    // Service data update करो (service reminders के लिए)
+    updateServiceData(added);
+
+    setImporting(false);
+    setImportProgress({ current: 0, total: 0 });
+    loadInvoices();
+
+    const successMsg = added.length > 0 ? `✅ ${added.length} imported` : '';
+    const errorMsg = errors.length > 0 ? ` | ⚠️ ${errors.length} errors` : '';
+    setMessage(successMsg + errorMsg);
+    setTimeout(() => setMessage(''), 6000);
+  };
+
+  const updateServiceData = (invoices) => {
     const svcData = getLS('customerServiceData', {});
-    for (const inv of added) {
+
+    for (const inv of invoices) {
       const reg = inv.regNo;
       if (!reg) continue;
+
       if (!svcData[reg]) svcData[reg] = {};
       const s = svcData[reg];
+
       s.customerName = inv.customerName;
       s.phone = inv.customerPhone;
       s.vehicle = inv.vehicle;
       s.regNo = reg;
+
       if (inv.invoiceType === 'vehicle') {
+        // Vehicle purchase
         s.purchaseDate = inv.invoiceDate;
         s.purchaseInvoice = inv.invoiceNumber;
-      } else {
+        // Service reminders बनाओ
+        s.serviceReminders = {
+          first: {
+            dueDate: addDays(inv.invoiceDate, 180), // 6 months
+            dueKm: 1000,
+            status: 'pending'
+          },
+          second: {
+            dueDate: addDays(inv.invoiceDate, 365),
+            dueKm: 20000,
+            status: 'pending'
+          },
+          third: {
+            dueDate: addDays(inv.invoiceDate, 730),
+            dueKm: 40000,
+            status: 'pending'
+          }
+        };
+      } else if (inv.invoiceType === 'service') {
+        // Service invoice
         const sn = inv.serviceNumber;
-        if (sn === 1) { s.firstServiceDate = inv.invoiceDate; s.firstServiceKm = inv.serviceKm; }
-        if (sn === 2) { s.secondServiceDate = inv.invoiceDate; s.secondServiceKm = inv.serviceKm; }
-        if (sn === 3) { s.thirdServiceDate = inv.invoiceDate; s.thirdServiceKm = inv.serviceKm; }
+        if (sn === 1) {
+          s.firstServiceDate = inv.invoiceDate;
+          s.firstServiceKm = 0;
+          if (s.serviceReminders) s.serviceReminders.first.status = 'completed';
+        }
+        if (sn === 2) {
+          s.secondServiceDate = inv.invoiceDate;
+          s.secondServiceKm = 0;
+          if (s.serviceReminders) s.serviceReminders.second.status = 'completed';
+        }
+        if (sn === 3) {
+          s.thirdServiceDate = inv.invoiceDate;
+          s.thirdServiceKm = 0;
+          if (s.serviceReminders) s.serviceReminders.third.status = 'completed';
+        }
+
         if (!s.serviceHistory) s.serviceHistory = [];
-        s.serviceHistory.push({ number: sn, date: inv.invoiceDate, km: inv.serviceKm, invoiceNo: inv.invoiceNumber, parts: inv.items.length, total: inv.totals.totalAmount });
+        s.serviceHistory.push({
+          number: sn || 0,
+          date: inv.invoiceDate,
+          invoiceNo: inv.invoiceNumber,
+          amount: inv.grandTotal,
+          parts: inv.items.length
+        });
       }
     }
-    localStorage.setItem('customerServiceData', JSON.stringify(svcData));
-    for (const inv of added) {
-      try { await fetch(api('/api/invoices'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(inv) }); } catch(e) {}
-    }
-    window.dispatchEvent(new Event('storage'));
-    setImporting(false); setProgress({ current:0, total:0 });
-    loadInvoices();
-    setMessage(errors.length ? `✅ ${added.length-errors.length} imported | ⚠️ ${errors.length} errors` : `✅ ${added.length} PDFs imported!`);
-    setTimeout(()=>setMessage(''), 6000);
+
+    saveLS('customerServiceData', svcData);
   };
 
-  const handleVehicleFile = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files), 'vehicle'); i.click(); };
-  const handleServiceFile = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files), 'service'); i.click(); };
-  
-  const clearVehicleInvoices = async () => {
-    const pwd = prompt('Admin password:');
-    if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
-    const remaining = invoices.filter(i => i.invoiceType !== 'vehicle');
-    localStorage.setItem('invoices', JSON.stringify(remaining));
-    await fetch(api('/api/invoices/sync'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ invoices: remaining }) });
-    loadInvoices();
-    setMessage('✅ Vehicle invoices cleared');
-    setTimeout(()=>setMessage(''), 3000);
+  const addDays = (dateStr, days) => {
+    const d = new Date(dateStr);
+    d.setDate(d.getDate() + days);
+    return d.toISOString().split('T')[0];
   };
-  
-  const clearServiceInvoices = async () => {
-    const pwd = prompt('Admin password:');
-    if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
-    const remaining = invoices.filter(i => i.invoiceType !== 'service');
-    localStorage.setItem('invoices', JSON.stringify(remaining));
-    await fetch(api('/api/invoices/sync'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ invoices: remaining }) });
-    loadInvoices();
-    setMessage('✅ Service invoices cleared');
-    setTimeout(()=>setMessage(''), 3000);
+
+  const handleVehicleFile = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.pdf';
+    input.multiple = true;
+    input.onchange = e => handleImportPDFs(Array.from(e.target.files), 'vehicle');
+    input.click();
   };
-  
-  const handleDelete = async (no) => {
-    if (!window.confirm('Delete?')) return;
-    const invToDelete = invoices.find(i=>String(i.invoiceNumber||i.id)===String(no));
-    if (invToDelete && invToDelete._id) {
-      try { await fetch(api(`/api/invoices/${invToDelete._id}`), { method: 'DELETE' }); } catch(e) {}
+
+  const handleServiceFile = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.pdf';
+    input.multiple = true;
+    input.onchange = e => handleImportPDFs(Array.from(e.target.files), 'service');
+    input.click();
+  };
+
+  const clearInvoices = async (type) => {
+    const pwd = prompt('Admin password:');
+    if (pwd !== 'vphonda@123') {
+      alert('❌ गलत password!');
+      return;
     }
-    const upd = invoices.filter(i=>String(i.invoiceNumber||i.id)!==String(no));
-    localStorage.setItem('invoices', JSON.stringify(upd));
-    loadInvoices(); setMessage('✅ Deleted!'); setTimeout(()=>setMessage(''),2000);
+
+    const remaining = invoices.filter(i => {
+      if (type === 'vehicle') return i.invoiceType !== 'vehicle';
+      if (type === 'service') return i.invoiceType !== 'service';
+      return true;
+    });
+
+    saveLS('invoices', remaining);
+    
+    try {
+      await fetch(api('/api/invoices/clear'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type })
+      });
+    } catch(e) {}
+
+    loadInvoices();
+    setMessage(`✅ ${type} invoices cleared`);
+    setTimeout(() => setMessage(''), 3000);
+  };
+
+  const handleDelete = async (invoiceNo) => {
+    if (!window.confirm('Delete this invoice?')) return;
+
+    const inv = invoices.find(i => String(i.invoiceNumber) === String(invoiceNo));
+    
+    if (inv && inv._id) {
+      try {
+        await fetch(api(`/api/invoices/${inv._id}`), { method: 'DELETE' });
+      } catch(e) {}
+    }
+
+    const updated = invoices.filter(i => String(i.invoiceNumber) !== String(invoiceNo));
+    saveLS('invoices', updated);
+    loadInvoices();
+    setMessage('✅ Deleted!');
+    setTimeout(() => setMessage(''), 2000);
   };
 
   const filtered = invoices.filter(inv => {
     if (activeTab === 'vehicle' && inv.invoiceType !== 'vehicle') return false;
     if (activeTab === 'service' && inv.invoiceType !== 'service') return false;
+
     if (searchTerm) {
       const s = searchTerm.toLowerCase();
-      return (inv.invoiceNumber+'').includes(s) || (inv.customerName||'').toLowerCase().includes(s) ||
-             (inv.customerPhone||'').includes(s) || (inv.vehicle||'').toLowerCase().includes(s) ||
-             (inv.regNo||'').includes(s);
+      return (
+        String(inv.invoiceNumber).includes(s) ||
+        (inv.customerName || '').toLowerCase().includes(s) ||
+        (inv.customerPhone || '').includes(s) ||
+        (inv.vehicle || '').toLowerCase().includes(s) ||
+        (inv.regNo || '').includes(s)
+      );
     }
     return true;
   });
-  const vehicleInvoices = invoices.filter(i => i.invoiceType === 'vehicle');
-  const serviceInvoices = invoices.filter(i => i.invoiceType === 'service');
-  const totalRev = invoices.reduce((s,i)=>s+(i.totals?.totalAmount||i.amount||0),0);
-  const vehicleRev = vehicleInvoices.reduce((s,i)=>s+(i.totals?.totalAmount||i.amount||0),0);
-  const serviceRev = serviceInvoices.reduce((s,i)=>s+(i.totals?.totalAmount||i.amount||0),0);
-  const totalPages = Math.ceil(filtered.length / INVOICES_PER_PAGE);
-  const paginated = filtered.slice((currentPage-1)*INVOICES_PER_PAGE, currentPage*INVOICES_PER_PAGE);
 
-  if (loading) return <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center"><div className="w-12 h-12 border-4 border-orange-400 border-t-transparent rounded-full animate-spin mx-auto"/></div>;
+  const vehicleInv = invoices.filter(i => i.invoiceType === 'vehicle');
+  const serviceInv = invoices.filter(i => i.invoiceType === 'service');
+  const totalRev = invoices.reduce((s, i) => s + (i.grandTotal || 0), 0);
+  const vehicleRev = vehicleInv.reduce((s, i) => s + (i.grandTotal || 0), 0);
+  const serviceRev = serviceInv.reduce((s, i) => s + (i.grandTotal || 0), 0);
+
+  const totalPages = Math.ceil(filtered.length / INVOICES_PER_PAGE);
+  const paginated = filtered.slice((currentPage - 1) * INVOICES_PER_PAGE, currentPage * INVOICES_PER_PAGE);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center">
+        <div className="w-12 h-12 border-4 border-orange-400 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-6">
       <div className="max-w-7xl mx-auto space-y-6">
+
+        {/* Header */}
         <div className="flex flex-wrap justify-between items-center gap-3">
-          <Button onClick={()=>navigate('/reminders')} className="bg-red-700 hover:bg-red-600 text-white font-bold flex items-center gap-2"><ArrowLeft size={18}/> Back</Button>
-          <div className="text-center"><h1 className="text-2xl font-bold text-white">📋 Invoice Management Dashboard</h1><p className="text-slate-400 text-xs flex items-center justify-center gap-1 mt-1"><Clock size={11}/> {lastRefresh.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</p></div>
-          <Button onClick={loadInvoices} className="bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-2"><RefreshCw size={16}/> Refresh</Button>
+          <Button 
+            onClick={() => navigate('/reminders')} 
+            className="bg-red-700 hover:bg-red-600 text-white font-bold flex items-center gap-2"
+          >
+            <ArrowLeft size={18} /> Back
+          </Button>
+          <div className="text-center">
+            <h1 className="text-2xl font-bold text-white">📋 Invoice Management</h1>
+            <p className="text-slate-400 text-xs flex items-center justify-center gap-1 mt-1">
+              <Clock size={11} /> {lastRefresh.toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'})}
+            </p>
+          </div>
+          <Button 
+            onClick={loadInvoices} 
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-2"
+          >
+            <RefreshCw size={16} /> Refresh
+          </Button>
         </div>
-        {message && <Card className={`${message.includes('✅')?'bg-green-900/20 border-green-500':'bg-red-900/20 border-red-500'}`}><CardContent className="pt-4 pb-4"><p className={`font-bold text-sm ${message.includes('✅')?'text-green-300':'text-red-400'}`}>{message}</p></CardContent></Card>}
-        {importing && <Card className="bg-blue-900/30 border-blue-500"><CardContent className="pt-4 pb-4"><div className="flex items-center gap-3"><div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0"/><div className="flex-1"><p className="text-blue-300 font-bold text-sm">PDF import: {progress.current}/{progress.total}</p><p className="text-blue-500 text-xs">PDF → OCR → parse → save</p><div className="h-2 bg-slate-700 rounded-full mt-2"><div className="h-2 bg-blue-500 rounded-full transition-all" style={{width:`${progress.total?progress.current/progress.total*100:0}%`}}/></div></div></div></CardContent></Card>}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Button onClick={()=>navigate('/reminders')} className="bg-gradient-to-r from-orange-600 to-orange-700 text-white font-bold py-3">🔔 Reminders</Button>
-          <Button onClick={()=>navigate('/customer-data-manager')} className="bg-gradient-to-r from-purple-600 to-purple-700 text-white font-bold py-3">📊 Data Manager</Button>
-          <Button onClick={()=>navigate('/diagnostic')} className="bg-gradient-to-r from-cyan-600 to-cyan-700 text-white font-bold py-3">🔍 Diagnostic</Button>
-          <Button onClick={()=>navigate('/job-cards')} className="bg-gradient-to-r from-green-600 to-green-700 text-white font-bold py-3">🎫 Job Cards</Button>
-        </div>
+
+        {/* Messages */}
+        {message && (
+          <Card className={`${message.includes('✅') ? 'bg-green-900/20 border-green-500' : 'bg-red-900/20 border-red-500'}`}>
+            <CardContent className="pt-4 pb-4">
+              <p className={`font-bold text-sm ${message.includes('✅') ? 'text-green-300' : 'text-red-400'}`}>
+                {message}
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Import Progress */}
+        {importing && (
+          <Card className="bg-blue-900/30 border-blue-500">
+            <CardContent className="pt-4 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                <div className="flex-1">
+                  <p className="text-blue-300 font-bold text-sm">
+                    Importing: {importProgress.current}/{importProgress.total}
+                  </p>
+                  <div className="h-2 bg-slate-700 rounded-full mt-2">
+                    <div 
+                      className="h-2 bg-blue-500 rounded-full transition-all" 
+                      style={{width: `${importProgress.total ? (importProgress.current/importProgress.total*100) : 0}%`}}
+                    />
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Import Buttons */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card className="bg-blue-900/20 border-blue-500"><CardContent className="pt-5 pb-5"><Button onClick={handleVehicleFile} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 flex items-center justify-center gap-2 text-base"><FileText size={22}/> Import Vehicle PDF</Button><p className="text-blue-400 text-xs mt-2 text-center">Vehicle Tax Invoice (purchase date)</p></CardContent></Card>
-          <Card className="bg-green-900/20 border-green-500"><CardContent className="pt-5 pb-5"><Button onClick={handleServiceFile} className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 flex items-center justify-center gap-2 text-base"><FolderOpen size={22}/> Import Service PDF</Button><p className="text-green-400 text-xs mt-2 text-center">Service/Parts Invoice (service number)</p></CardContent></Card>
-          <Card className="bg-purple-900/20 border-purple-500"><CardContent className="pt-5 pb-5"><Button onClick={()=>exportInvoicesAsPDF(filtered)} className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-4 flex items-center justify-center gap-2 text-base"><Download size={22}/> Export as PDF</Button><p className="text-purple-400 text-xs mt-2 text-center">Invoice list PDF print/download</p></CardContent></Card>
+          <Card className="bg-blue-900/20 border-blue-500">
+            <CardContent className="pt-5 pb-5">
+              <Button 
+                onClick={handleVehicleFile}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 flex items-center justify-center gap-2 text-base"
+              >
+                <FileText size={22} /> Import Vehicle PDF
+              </Button>
+              <p className="text-blue-400 text-xs mt-2 text-center">Vehicle Tax Invoice</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-green-900/20 border-green-500">
+            <CardContent className="pt-5 pb-5">
+              <Button 
+                onClick={handleServiceFile}
+                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 flex items-center justify-center gap-2 text-base"
+              >
+                <FolderOpen size={22} /> Import Service PDF
+              </Button>
+              <p className="text-green-400 text-xs mt-2 text-center">Service/Parts Invoice</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-purple-900/20 border-purple-500">
+            <CardContent className="pt-5 pb-5">
+              <Button 
+                className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-4 flex items-center justify-center gap-2 text-base"
+                disabled
+              >
+                <Download size={22} /> Export as PDF
+              </Button>
+              <p className="text-purple-400 text-xs mt-2 text-center">Coming soon</p>
+            </CardContent>
+          </Card>
         </div>
+
+        {/* Clear Buttons */}
         <div className="flex gap-3 flex-wrap">
-          <Button onClick={clearVehicleInvoices} className="bg-orange-800 hover:bg-orange-700 text-white font-bold flex items-center gap-2"><Trash2 size={16}/> Clear Vehicle Invoices ({vehicleInvoices.length})</Button>
-          <Button onClick={clearServiceInvoices} className="bg-green-800 hover:bg-green-700 text-white font-bold flex items-center gap-2"><Trash2 size={16}/> Clear Service Invoices ({serviceInvoices.length})</Button>
+          <Button 
+            onClick={() => clearInvoices('vehicle')}
+            className="bg-orange-800 hover:bg-orange-700 text-white font-bold flex items-center gap-2"
+          >
+            <Trash2 size={16} /> Clear Vehicle ({vehicleInv.length})
+          </Button>
+          <Button 
+            onClick={() => clearInvoices('service')}
+            className="bg-green-800 hover:bg-green-700 text-white font-bold flex items-center gap-2"
+          >
+            <Trash2 size={16} /> Clear Service ({serviceInv.length})
+          </Button>
         </div>
+
+        {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          <Card className="bg-blue-900/20 border-blue-500"><CardContent className="pt-4 pb-4"><p className="text-xs text-slate-400">📋 Total Invoices</p><h3 className="text-3xl font-black text-blue-400 mt-1">{invoices.length}</h3><p className="text-xs text-slate-500 mt-1">₹{totalRev.toLocaleString('en-IN')}</p></CardContent></Card>
-          <Card className="bg-orange-900/20 border-orange-500"><CardContent className="pt-4 pb-4"><p className="text-xs text-slate-400">🏍️ Vehicle Tax Invoices</p><h3 className="text-3xl font-black text-orange-400 mt-1">{vehicleInvoices.length}</h3><p className="text-xs text-slate-500 mt-1">₹{vehicleRev.toLocaleString('en-IN')}</p></CardContent></Card>
-          <Card className="bg-green-900/20 border-green-500"><CardContent className="pt-4 pb-4"><p className="text-xs text-slate-400">🔧 Service/Parts Invoices</p><h3 className="text-3xl font-black text-green-400 mt-1">{serviceInvoices.length}</h3><p className="text-xs text-slate-500 mt-1">₹{serviceRev.toLocaleString('en-IN')}</p></CardContent></Card>
+          <Card className="bg-blue-900/20 border-blue-500">
+            <CardContent className="pt-4 pb-4">
+              <p className="text-xs text-slate-400">📋 Total</p>
+              <h3 className="text-3xl font-black text-blue-400 mt-1">{invoices.length}</h3>
+              <p className="text-xs text-slate-500 mt-1">₹{totalRev.toLocaleString('en-IN')}</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-orange-900/20 border-orange-500">
+            <CardContent className="pt-4 pb-4">
+              <p className="text-xs text-slate-400">🏍️ Vehicle</p>
+              <h3 className="text-3xl font-black text-orange-400 mt-1">{vehicleInv.length}</h3>
+              <p className="text-xs text-slate-500 mt-1">₹{vehicleRev.toLocaleString('en-IN')}</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-green-900/20 border-green-500">
+            <CardContent className="pt-4 pb-4">
+              <p className="text-xs text-slate-400">🔧 Service</p>
+              <h3 className="text-3xl font-black text-green-400 mt-1">{serviceInv.length}</h3>
+              <p className="text-xs text-slate-500 mt-1">₹{serviceRev.toLocaleString('en-IN')}</p>
+            </CardContent>
+          </Card>
         </div>
+
+        {/* Tabs */}
         <div className="flex gap-2 flex-wrap">
           {[
-            { id:'all', label:`📋 सभी (${invoices.length})`, col:'blue'},
-            { id:'vehicle', label:`🏍️ Vehicle Tax Invoice (${vehicleInvoices.length})`, col:'orange'},
-            { id:'service', label:`🔧 Service/Parts Invoice (${serviceInvoices.length})`, col:'green'}
+            { id: 'all', label: `📋 सभी (${invoices.length})`, col: 'blue' },
+            { id: 'vehicle', label: `🏍️ Vehicle (${vehicleInv.length})`, col: 'orange' },
+            { id: 'service', label: `🔧 Service (${serviceInv.length})`, col: 'green' }
           ].map(t => (
-            <button key={t.id} onClick={() => setActiveTab(t.id)} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border-2 ${activeTab===t.id ? `bg-${t.col}-600 border-${t.col}-400 text-white shadow-lg` : `bg-slate-800 border-slate-600 text-slate-300 hover:border-${t.col}-500`}`}>{t.label}</button>
+            <button
+              key={t.id}
+              onClick={() => { setActiveTab(t.id); setCurrentPage(1); }}
+              className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border-2 ${
+                activeTab === t.id
+                  ? `bg-${t.col}-600 border-${t.col}-400 text-white shadow-lg`
+                  : `bg-slate-800 border-slate-600 text-slate-300 hover:border-${t.col}-500`
+              }`}
+            >
+              {t.label}
+            </button>
           ))}
         </div>
-        <div><div className="relative"><Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><Input value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} placeholder="Invoice #, Customer, Phone, Vehicle, Reg No..." className="pl-10 bg-slate-800 border-slate-600 text-white placeholder-slate-500"/></div><p className="text-slate-500 text-xs mt-1">{filtered.length} invoices</p></div>
+
+        {/* Search */}
+        <div>
+          <div className="relative">
+            <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Input
+              value={searchTerm}
+              onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+              placeholder="Invoice #, Customer, Phone, Vehicle, Reg No..."
+              className="pl-10 bg-slate-800 border-slate-600 text-white placeholder-slate-500"
+            />
+          </div>
+          <p className="text-slate-500 text-xs mt-1">{filtered.length} invoices found</p>
+        </div>
+
+        {/* Invoice List Table */}
         <Card className="bg-slate-800 border-slate-700">
-          <CardHeader className="bg-gradient-to-r from-slate-700 to-slate-800 py-3"><CardTitle className="text-white text-base">{activeTab === 'vehicle' ? '🏍️ Vehicle Tax Invoices' : activeTab === 'service' ? '🔧 Service/Parts Invoices' : '📋 Invoice List'} ({filtered.length})</CardTitle></CardHeader>
+          <CardHeader className="bg-gradient-to-r from-slate-700 to-slate-800 py-3">
+            <CardTitle className="text-white text-base">
+              {activeTab === 'vehicle' ? '🏍️ Vehicle Invoices' : activeTab === 'service' ? '🔧 Service Invoices' : '📋 All Invoices'} ({filtered.length})
+            </CardTitle>
+          </CardHeader>
+
           <CardContent className="p-0">
-            {filtered.length===0 ? (
-              <div className="text-center py-12"><p className="text-slate-400">कोई invoice नहीं।</p></div>
+            {filtered.length === 0 ? (
+              <div className="text-center py-12">
+                <AlertCircle className="mx-auto text-slate-500 mb-2" size={32} />
+                <p className="text-slate-400">कोई invoice नहीं।</p>
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-700 border-b border-slate-600">
                     <tr>
                       <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">#</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Invoice No</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Invoice</th>
                       <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Type</th>
                       <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Customer</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Phone</th>
                       <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Vehicle</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Reg No</th>
                       <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Date</th>
                       <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Amount</th>
                       <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Parts</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Source</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">GST</th>
                       <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Actions</th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {paginated.map((inv, idx) => {
-                      const rowIdx = (currentPage-1)*INVOICES_PER_PAGE + idx;
+                      const rowIdx = (currentPage - 1) * INVOICES_PER_PAGE + idx;
                       return (
-                        <tr key={inv._id || inv.id || idx} className="border-b border-slate-700 hover:bg-slate-700/50">
-                          <td className="px-3 py-2 text-slate-500 text-xs">{rowIdx+1}</td>
-                          <td className="px-3 py-2 text-white font-bold text-xs">#{inv.invoiceNumber||inv.id}</td>
+                        <tr key={inv._id || inv.invoiceNumber} className="border-b border-slate-700 hover:bg-slate-700/50">
+                          <td className="px-3 py-2 text-slate-500 text-xs">{rowIdx + 1}</td>
+                          <td className="px-3 py-2 text-white font-bold text-xs">#{inv.invoiceNumber}</td>
                           <td className="px-3 py-2 text-xs">
                             {inv.invoiceType === 'vehicle' 
                               ? <span className="bg-orange-900 text-orange-300 px-1.5 py-0.5 rounded font-bold">🏍️ Vehicle</span>
-                              : <span className="bg-green-900 text-green-300 px-1.5 py-0.5 rounded font-bold">🔧 Service</span>}
+                              : <span className="bg-green-900 text-green-300 px-1.5 py-0.5 rounded font-bold">🔧 Service</span>
+                            }
                           </td>
-                          <td className="px-3 py-2 text-slate-200 text-xs font-medium">{inv.customerName||'—'}</td>
-                          <td className="px-3 py-2 text-slate-400 text-xs">{inv.customerPhone||'—'}</td>
-                          <td className="px-3 py-2 text-blue-300 text-xs">{inv.vehicle||'—'}</td>
-                          <td className="px-3 py-2 text-slate-400 text-xs font-mono">{inv.regNo||'—'}</td>
-                          <td className="px-3 py-2 text-slate-400 text-xs">{new Date(inv.invoiceDate||Date.now()).toLocaleDateString('en-IN')}</td>
-                          <td className="px-3 py-2 text-green-400 font-bold text-xs">₹{(inv.totals?.totalAmount||inv.amount||0).toLocaleString('en-IN')}</td>
-                          <td className="px-3 py-2 text-center"><span className={`text-xs font-bold px-1.5 py-0.5 rounded ${(inv.items||inv.parts||[]).length>0?'bg-blue-900 text-blue-300':'bg-slate-700 text-slate-500'}`}>{(inv.items||inv.parts||[]).length}</span></td>
-                          <td className="px-3 py-2 text-xs">{inv.importedFrom?<span className="bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded">📄 PDF</span>:<span className="bg-blue-900 text-blue-300 px-1.5 py-0.5 rounded">📋 Manual</span>}</td>
+                          <td className="px-3 py-2 text-slate-200 text-xs">{inv.customerName || '—'}</td>
+                          <td className="px-3 py-2 text-blue-300 text-xs">{inv.vehicle || '—'}</td>
+                          <td className="px-3 py-2 text-slate-400 text-xs">
+                            {new Date(inv.invoiceDate).toLocaleDateString('en-IN')}
+                          </td>
+                          <td className="px-3 py-2 text-green-400 font-bold text-xs">
+                            ₹{(inv.grandTotal || 0).toLocaleString('en-IN')}
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <span className="bg-blue-900 text-blue-300 px-1.5 py-0.5 rounded font-bold text-xs">
+                              {(inv.items || []).length}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-yellow-300 font-bold text-xs">
+                            ₹{(inv.totalGST || 0).toLocaleString('en-IN')}
+                          </td>
                           <td className="px-3 py-2">
                             <div className="flex gap-1.5">
-                              <Button onClick={()=>navigate(`/invoice/${inv.invoiceNumber||inv.id}`)} className="bg-blue-600 hover:bg-blue-700 text-white h-7 px-2 text-xs flex items-center gap-1"><Eye size={12}/> View</Button>
-                              <Button onClick={()=>handleDelete(inv.invoiceNumber||inv.id)} className="bg-red-700 hover:bg-red-600 text-white h-7 px-2 text-xs"><Trash2 size={12}/></Button>
+                              <Button 
+                                onClick={() => navigate(`/invoice/${inv.invoiceNumber}`)}
+                                className="bg-blue-600 hover:bg-blue-700 text-white h-7 px-2 text-xs flex items-center gap-1"
+                              >
+                                <Eye size={12} /> View
+                              </Button>
+                              <Button 
+                                onClick={() => handleDelete(inv.invoiceNumber)}
+                                className="bg-red-700 hover:bg-red-600 text-white h-7 px-2 text-xs"
+                              >
+                                <Trash2 size={12} />
+                              </Button>
                             </div>
                           </td>
                         </tr>
                       );
                     })}
                   </tbody>
+
                   <tfoot className="bg-slate-700 border-t-2 border-slate-600">
                     <tr>
-                      <td colSpan="8" className="px-3 py-2 text-slate-300 font-bold text-sm">TOTAL ({filtered.length})</td>
-                      <td className="px-3 py-2 text-green-300 font-black text-sm">₹{filtered.reduce((s,i)=>s+(i.totals?.totalAmount||i.amount||0),0).toLocaleString('en-IN')}</td>
-                      <td colSpan="3"></td>
+                      <td colSpan="6" className="px-3 py-2 text-slate-300 font-bold text-sm">
+                        TOTAL ({filtered.length})
+                      </td>
+                      <td className="px-3 py-2 text-green-300 font-black text-sm">
+                        ₹{filtered.reduce((s, i) => s + (i.grandTotal || 0), 0).toLocaleString('en-IN')}
+                      </td>
+                      <td className="px-3 py-2 text-blue-300 font-black text-sm">
+                        {filtered.reduce((s, i) => s + (i.items || []).length, 0)}
+                      </td>
+                      <td className="px-3 py-2 text-yellow-300 font-black text-sm">
+                        ₹{filtered.reduce((s, i) => s + (i.totalGST || 0), 0).toLocaleString('en-IN')}
+                      </td>
+                      <td></td>
                     </tr>
                   </tfoot>
                 </table>
               </div>
             )}
-            {totalPages>1 && (
+
+            {totalPages > 1 && (
               <div className="flex items-center justify-between px-4 py-3 bg-slate-700/50 border-t border-slate-600">
-                <p className="text-xs text-slate-400">Page <b className="text-white">{currentPage}</b> of <b className="text-white">{totalPages}</b> — {filtered.length} invoices</p>
+                <p className="text-xs text-slate-400">
+                  Page <b className="text-white">{currentPage}</b> of <b className="text-white">{totalPages}</b>
+                </p>
                 <div className="flex gap-2">
-                  <Button onClick={()=>setCurrentPage(p=>Math.max(1,p-1))} disabled={currentPage===1} className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-4 text-xs disabled:opacity-40">◀ Previous</Button>
-                  <Button onClick={()=>setCurrentPage(p=>Math.min(totalPages,p+1))} disabled={currentPage===totalPages} className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-4 text-xs disabled:opacity-40">Next ▶</Button>
+                  <Button 
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-4 text-xs disabled:opacity-40"
+                  >
+                    ◀ Previous
+                  </Button>
+                  <Button 
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-4 text-xs disabled:opacity-40"
+                  >
+                    Next ▶
+                  </Button>
                 </div>
               </div>
             )}
           </CardContent>
         </Card>
+
       </div>
     </div>
   );
