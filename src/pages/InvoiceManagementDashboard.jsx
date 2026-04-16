@@ -8,7 +8,6 @@ import { api } from '../utils/apiConfig';
 
 const getLS = (k, fb=[]) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;} };
 
-// Backend PDF text extraction (no pdfjs in browser)
 const extractPDFText = async (file) => {
   const formData = new FormData(); formData.append('pdf', file);
   const res = await fetch(api('/api/parse-pdf'), { method: 'POST', body: formData });
@@ -18,51 +17,70 @@ const extractPDFText = async (file) => {
   return data.text;
 };
 
-// ----- Parser for VP Honda Invoices (Vehicle or Service) -----
+// ================== VP HONDA INVOICE PARSER (FIXED FOR VEHICLE & SERVICE) ==================
 const parseVPHondaInvoice = (text, filename) => {
   const flat = text.replace(/\n/g,' ').replace(/\s+/g,' ');
   const find = (patterns, fb='') => { for (const p of patterns) { const m = flat.match(p) || text.match(p); if (m) return (m[1]||m[0]).trim(); } return fb; };
   
-  // Basic fields
+  // --- Basic fields ---
   const invoiceNumber = find([/Invoice\s*No[:\-]*\s*(\d+)/i, /Invoice\s*#\s*(\d+)/i], String(Math.floor(Math.random()*900000+100000)));
   let rawDate = find([/Invoice\s*Date[:\-]*\s*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i, /Date\s*[:-]\s*(\d{2}-\d{2}-\d{4})/i]);
   let invoiceDate = new Date().toISOString().split('T')[0];
   if (rawDate) {
     try { const pts = rawDate.split(/[-\/]/); if(pts.length===3){ let y=pts[2].length===2?'20'+pts[2]:pts[2]; let d=new Date(`${y}-${pts[1].padStart(2,'0')}-${pts[0].padStart(2,'0')}`); if(!isNaN(d)) invoiceDate=d.toISOString().split('T')[0]; } } catch(e){}
   }
-  // RegNo (Primary Key)
-  const regNo = find([/Veh\s*Number[:\-]*\s*([A-Z]{2}\s*\d{2}\s*[A-Z]{1,3}\s*\d{4})/i, /Reg\s*No[:\-]*\s*([A-Z]{2}\d{2}[A-Z]{1,3}\d{4})/i, /MP\d{2}[A-Z]{1,3}\d{4}/]).toUpperCase().replace(/\s/g,'');
-  // Customer Name (from filename)
+  
+  // --- RegNo (primary key) ---
+  let regNo = find([
+    /Veh\s*Number[:\-]*\s*([A-Z]{2}\s*\d{2}\s*[A-Z]{1,3}\s*\d{4})/i,
+    /Reg\s*No[:\-]*\s*([A-Z]{2}\d{2}[A-Z]{1,3}\d{4})/i,
+    /MP\d{2}[A-Z]{1,3}\d{4}/,
+    /Registration\s*No[:\-]*\s*([A-Z0-9]{9,})/i,
+  ]);
+  if (!regNo) {
+    const mpMatch = flat.match(/(MP\d{2}[A-Z]{1,3}\d{4})/);
+    if (mpMatch) regNo = mpMatch[1];
+  }
+  regNo = (regNo || '').toUpperCase().replace(/\s/g, '');
+  
+  // --- Customer name from filename or PDF ---
   let customerName = filename.replace(/\.pdf$/i,'').replace(/^[_\d]+/,'').replace(/[_]+/g,' ').trim();
   if (!customerName || customerName.length<3) customerName = find([/Customer\s*Name[:\-]*\s*([A-Z][A-Z ]{2,30})/i]) || 'Unknown';
   const customerPhone = find([/Phone[:\-]*\s*([6-9]\d{9})/i, /Mobile[:\-]*\s*([6-9]\d{9})/i]);
-  const vehicle = find([/Model\s*No[:\-]*\s*([A-Z][A-Z0-9 ]{3,40})/i, /(?:Activa|Shine|Hornet|SP\s*125|CB\d|NXR|Dio|Grazia|Unicorn|Livo|Dream)\s*[A-Z0-9 ]{0,30}/i]);
+  const vehicle = find([
+    /Model\s*No[:\-]*\s*([A-Z][A-Z0-9 ]{3,40})/i,
+    /(?:Activa|Shine|Hornet|SP\s*125|CB\d|NXR|Dio|Grazia|Unicorn|Livo|Dream)\s*[A-Z0-9 ]{0,30}/i,
+  ]);
   const frameNo = find([/Frame\s*No[:\-]*\s*([A-Z0-9]{10,})/i]);
   const engineNo = find([/Engine\s*No[:\-]*\s*([A-Z0-9]{10,})/i]);
   const paymentMode = find([/Payment\s*Mode[:\-]*\s*(CASH|FINANCE|CHEQUE|UPI)/i], 'CASH');
+  
+  // --- Service specific ---
   const serviceKm = find([/Service\s*KM[:\-]*\s*(\d{1,6})/i]);
   let serviceNumber = 0;
   const svcMatch = flat.match(/(\d+)(?:st|nd|rd|th)\s+Service/i);
   if(svcMatch) serviceNumber = parseInt(svcMatch[1]);
   else { const smh = flat.match(/SMH\s*\/\s*(\d+)/i); if(smh) serviceNumber = parseInt(smh[1]); }
   const serviceType = find([/Service\s*Type[:\-]*\s*(FREE|PAID)/i]);
-  // Totals from PDF
+  
+  // --- Totals from PDF ---
   const rawTotal = find([/Total\s*Invoice\s*Value[^₹]*₹\s*([\d,]+\.\d{2})/i, /Grand\s*Total[^₹]*₹\s*([\d,]+\.\d{2})/i]);
   const pdfTotal = parseFloat((rawTotal||'0').replace(/,/g,'')) || 0;
   const rawGST = find([/Total\s*GST\s*Amount[^₹]*₹\s*([\d,]+\.\d{2})/i, /GST[^₹]*₹\s*([\d,]+\.\d{2})/i]);
   const pdfGST = parseFloat((rawGST||'0').replace(/,/g,'')) || 0;
-
-  // Detect Invoice Type
+  
+  // --- Detect Invoice Type (Vehicle vs Service) ---
   const hasPartTable = /Part\s*No|Description|Qty|MRP|Taxable\s*Amt/i.test(flat);
-  const isVehicle = /Sale\s*Date|Selling\s*Dealer|HMSI/i.test(flat) || (pdfTotal > 50000 && !hasPartTable);
-  const invoiceType = isVehicle ? 'vehicle' : 'service';
-
-  // Extract parts (only for service invoices)
+  const hasSaleKeywords = /Sale\s*Date|Selling\s*Dealer|HMSI|Ex-Showroom|RTO|Registration/i.test(flat);
+  const highAmount = pdfTotal > 50000;
+  let invoiceType = 'service';
+  if (hasSaleKeywords || (highAmount && !hasPartTable)) invoiceType = 'vehicle';
+  if (/VEHICLE|TAX\s*INVOICE|SALE/i.test(filename)) invoiceType = 'vehicle';
+  
+  // --- Parts extraction (only for service invoices) ---
   let items = [];
   if (invoiceType === 'service') {
-    // Try to extract table rows using regex that matches VP Honda format
-    // Example row: "108233-2MA-F1LG1ENGINE OIL ILLIN 900ML 5W30MA1431.32409.75"
-    // We'll use a pattern that captures PartNo, Description, Qty, MRP, TaxableAmt
+    // Try to extract table rows (VP Honda service invoice format)
     const rowPattern = /(\d{5,}[\w\-]+|\d{3,}[\w\-]+)\s+([A-Z][A-Z\s\/\-\.]+?)\s+(\d+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(?:\s+([\d,]+\.\d{2}))?/g;
     let match;
     while ((match = rowPattern.exec(flat)) !== null) {
@@ -78,14 +96,14 @@ const parseVPHondaInvoice = (text, filename) => {
       else gstRate = 18;
       items.push({ partNo, description, qty, mrp, taxableAmt, gstAmount, gstRate, total: taxableAmt });
     }
-    // Fallback: simpler pattern
+    // Fallback simple pattern
     if (items.length === 0) {
       const simple = /([A-Z0-9]{5,}[\-]?[A-Z0-9]+)\s+([A-Z][A-Z\s\/]+?)\s+(\d+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/g;
       let m; while((m=simple.exec(flat))) items.push({ partNo:m[1], description:m[2].trim(), qty:parseInt(m[3])||1, mrp:parseFloat(m[4].replace(/,/g,''))||0, taxableAmt:parseFloat(m[5].replace(/,/g,''))||0, gstRate:18, gstAmount:0, total:parseFloat(m[5].replace(/,/g,''))||0 });
     }
   }
-
-  // Calculate totals
+  
+  // Calculate totals from items or from PDF
   let subtotal = items.reduce((s,i)=>s+(i.taxableAmt||0),0);
   let gstAmount = items.reduce((s,i)=>s+(i.gstAmount||0),0);
   let finalTotal = subtotal + gstAmount;
@@ -93,7 +111,7 @@ const parseVPHondaInvoice = (text, filename) => {
   if (pdfGST > 0) gstAmount = pdfGST;
   if (finalTotal > 0 && gstAmount > 0) subtotal = finalTotal - gstAmount;
   const gstRate = subtotal > 0 ? Math.round((gstAmount/subtotal)*100) : 0;
-
+  
   return {
     invoiceNumber, invoiceDate, customerName: customerName.slice(0,60), customerPhone, vehicle,
     regNo, frameNo, engineNo, paymentMode, serviceKm: serviceKm?parseInt(serviceKm):null,
@@ -103,7 +121,6 @@ const parseVPHondaInvoice = (text, filename) => {
   };
 };
 
-// Export all invoices as PDF report
 const exportInvoicesAsPDF = (invoices) => {
   const total = invoices.reduce((s,i)=>s+(i.totals?.totalAmount||i.amount||0),0);
   const html = `<!DOCTYPE html><html><head><title>VP Honda Invoices</title><style>body{font-family:Arial;font-size:11px;margin:20px}h2{color:#1a3a8a}table{width:100%;border-collapse:collapse;margin-top:8px}th{background:#1a3a8a;color:white;padding:5px 7px;text-align:left;font-size:10px}td{border-bottom:1px solid #e5e7eb;padding:4px 7px}tr:nth-child(even){background:#f9fafb}.total{background:#1a3a8a;color:white;font-weight:bold}.footer{margin-top:12px;font-size:9px;color:#6b7280;text-align:center}</style></head><body><h2>🏍️ VP Honda — Invoice Report</h2><p style="color:#6b7280;font-size:10px">Generated: ${new Date().toLocaleString('en-IN')} | ${invoices.length} invoices | ₹${total.toLocaleString('en-IN')}</p><table><tr><th>#</th><th>Invoice No</th><th>Customer</th><th>Phone</th><th>Vehicle</th><th>Reg No</th><th>Date</th><th>Amount</th><th>Parts</th><th>Source</th></tr>${invoices.map((inv,i)=>`<tr><td>${i+1}</td><td><b>#${inv.invoiceNumber||inv.id}</b></td><td>${inv.customerName||'—'}</td><td>${inv.customerPhone||'—'}</td><td>${inv.vehicle||'—'}</td><td>${inv.regNo||'—'}</td><td>${new Date(inv.invoiceDate||Date.now()).toLocaleDateString('en-IN')}</td><td><b>₹${(inv.totals?.totalAmount||inv.amount||0).toLocaleString('en-IN')}</b></td><td>${(inv.items||inv.parts||[]).length}</td><td>${inv.importedFrom?'PDF':'Manual'}</td></tr>`).join('')}<tr class="total"><td colspan="7">TOTAL</td><td>₹${total.toLocaleString('en-IN')}</td><td colspan="2"></td></tr></table><div class="footer">VP Honda Dealership, Bhopal</div></body></html>`;
@@ -119,7 +136,7 @@ export default function InvoiceManagementDashboard() {
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState({ current:0, total:0 });
   const [lastRefresh, setLastRefresh] = useState(new Date());
-  const [activeTab, setActiveTab] = useState('all'); // all, vehicle, service
+  const [activeTab, setActiveTab] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const INVOICES_PER_PAGE = 5;
   const intervalRef = useRef(null);
@@ -139,13 +156,13 @@ export default function InvoiceManagementDashboard() {
     const all = [...dbInv, ...lsInv];
     const seen = new Set();
     const unique = all.filter(i => { const k = i.invoiceNumber||i.id||i._id; if(seen.has(k)) return false; seen.add(k); return true; })
-      .sort((a,b)=>new Date(b.importedAt||b.invoiceDate||b.date||0)-new Date(a.importedAt||a.invoiceDate||a.date||0));
+      .sort((a,b)=>new Date(b.importedAt||b.invoiceDate||b.date||0) - new Date(a.importedAt||a.invoiceDate||a.date||0));
     setInvoices(unique);
     setLastRefresh(new Date());
     setLoading(false);
   };
 
-  const processPDFFiles = async (files, expectedType = 'both') => { // expectedType: 'vehicle', 'service', 'both'
+  const processPDFFiles = async (files, expectedType = 'both') => {
     if (!files.length) return;
     setImporting(true);
     setProgress({ current:0, total:files.length });
@@ -158,7 +175,6 @@ export default function InvoiceManagementDashboard() {
       try {
         const text = await extractPDFText(file);
         const parsed = parseVPHondaInvoice(text, file.name);
-        // If expectedType is specific, skip mismatched
         if (expectedType !== 'both' && parsed.invoiceType !== expectedType) {
           console.log(`Skipping ${file.name} (type ${parsed.invoiceType}) not ${expectedType}`);
           continue;
@@ -211,15 +227,34 @@ export default function InvoiceManagementDashboard() {
 
   const handleVehicleFile = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files), 'vehicle'); i.click(); };
   const handleServiceFile = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files), 'service'); i.click(); };
-  const handleClearAll = () => {
+  
+  const handleClearAll = async () => {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
-    if (!window.confirm(`⚠️ सभी ${invoices.length} invoices delete होंगे!`)) return;
+    if (!window.confirm(`⚠️ सभी ${invoices.length} invoices DELETE होंगे (localStorage + MongoDB)!`)) return;
+    // Clear localStorage
     localStorage.setItem('invoices', JSON.stringify([]));
-    loadInvoices(); setMessage('✅ सभी clear!'); setTimeout(()=>setMessage(''),3000);
+    localStorage.setItem('customerServiceData', JSON.stringify({}));
+    // Clear MongoDB
+    try {
+      const res = await fetch(api('/api/invoices/sync'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoices: [] })
+      });
+      if (res.ok) console.log('✅ MongoDB cleared');
+    } catch(e) { console.error(e); }
+    loadInvoices();
+    setMessage('✅ सभी invoices clear! अब नए PDF import करें।');
+    setTimeout(()=>setMessage(''), 4000);
   };
-  const handleDelete = (no) => {
+  
+  const handleDelete = async (no) => {
     if (!window.confirm('Delete?')) return;
+    const invToDelete = invoices.find(i=>String(i.invoiceNumber||i.id)===String(no));
+    if (invToDelete && invToDelete._id) {
+      try { await fetch(api(`/api/invoices/${invToDelete._id}`), { method: 'DELETE' }); } catch(e) {}
+    }
     const upd = invoices.filter(i=>String(i.invoiceNumber||i.id)!==String(no));
     localStorage.setItem('invoices', JSON.stringify(upd));
     loadInvoices(); setMessage('✅ Deleted!'); setTimeout(()=>setMessage(''),2000);
@@ -283,7 +318,7 @@ export default function InvoiceManagementDashboard() {
           <CardHeader className="bg-gradient-to-r from-slate-700 to-slate-800 py-3"><CardTitle className="text-white text-base">{activeTab === 'vehicle' ? '🏍️ Vehicle Tax Invoices' : activeTab === 'service' ? '🔧 Service/Parts Invoices' : '📋 Invoice List'} ({filtered.length})</CardTitle></CardHeader>
           <CardContent className="p-0">
             {filtered.length===0 ? <div className="text-center py-12"><p className="text-slate-400">कोई invoice नहीं।</p></div> : (
-              <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-700 border-b border-slate-600"><tr>{['#','Invoice No','Type','Customer','Phone','Vehicle','Reg No','Date','Amount','Parts','Source','Actions'].map(h=><th key={h} className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">{h}</th>)}</tr></thead><tbody>{paginated.map((inv,i)=>{ const rowIdx = (currentPage-1)*INVOICES_PER_PAGE + i; return (<tr key={i} className="border-b border-slate-700 hover:bg-slate-700/50"><td className="px-3 py-2 text-slate-500 text-xs">{rowIdx+1}</td><td className="px-3 py-2 text-white font-bold text-xs">#{inv.invoiceNumber||inv.id}</td><td className="px-3 py-2 text-xs">{inv.invoiceType==='vehicle'?<span className="bg-orange-900 text-orange-300 px-1.5 py-0.5 rounded font-bold">🏍️ Vehicle</span>:<span className="bg-green-900 text-green-300 px-1.5 py-0.5 rounded font-bold">🔧 Service</span>}</td><td className="px-3 py-2 text-slate-200 text-xs font-medium">{inv.customerName||'—'}</td><td className="px-3 py-2 text-slate-400 text-xs">{inv.customerPhone||'—'}</td><td className="px-3 py-2 text-blue-300 text-xs">{inv.vehicle||'—'}</td><td className="px-3 py-2 text-slate-400 text-xs font-mono">{inv.regNo||'—'}</td><td className="px-3 py-2 text-slate-400 text-xs">{new Date(inv.invoiceDate||Date.now()).toLocaleDateString('en-IN')}</td><td className="px-3 py-2 text-green-400 font-bold text-xs">₹{(inv.totals?.totalAmount||inv.amount||0).toLocaleString('en-IN')}</td><td className="px-3 py-2 text-center"><span className={`text-xs font-bold px-1.5 py-0.5 rounded ${(inv.items||inv.parts||[]).length>0?'bg-blue-900 text-blue-300':'bg-slate-700 text-slate-500'}`}>{(inv.items||inv.parts||[]).length}</span></td><td className="px-3 py-2 text-xs">{inv.importedFrom?<span className="bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded">📄 PDF</span>:<span className="bg-blue-900 text-blue-300 px-1.5 py-0.5 rounded">📋 Manual</span>}</td><td className="px-3 py-2"><div className="flex gap-1.5"><Button onClick={()=>navigate(`/invoice/${inv.invoiceNumber||inv.id}`)} className="bg-blue-600 hover:bg-blue-700 text-white h-7 px-2 text-xs flex items-center gap-1"><Eye size={12}/> View</Button><Button onClick={()=>handleDelete(inv.invoiceNumber||inv.id)} className="bg-red-700 hover:bg-red-600 text-white h-7 px-2 text-xs"><Trash2 size={12}/></Button></div></td></tr>);})}</tbody><tfoot className="bg-slate-700 border-t-2 border-slate-600"><tr><td colSpan="8" className="px-3 py-2 text-slate-300 font-bold text-sm">TOTAL ({filtered.length})</td><td className="px-3 py-2 text-green-300 font-black text-sm">₹{filtered.reduce((s,i)=>s+(i.totals?.totalAmount||i.amount||0),0).toLocaleString('en-IN')}</td><td colSpan="3"></td></tr></tfoot></table></div>
+              <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-700 border-b border-slate-600"><tr>{['#','Invoice No','Type','Customer','Phone','Vehicle','Reg No','Date','Amount','Parts','Source','Actions'].map(h=><th key={h} className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">{h}</th>)}</tr></thead><tbody>{paginated.map((inv,i)=>{ const rowIdx = (currentPage-1)*INVOICES_PER_PAGE + i; return (<tr key={i} className="border-b border-slate-700 hover:bg-slate-700/50"><td className="px-3 py-2 text-slate-500 text-xs">{rowIdx+1}</td><td className="px-3 py-2 text-white font-bold text-xs">#{inv.invoiceNumber||inv.id}</td><td className="px-3 py-2 text-xs">{inv.invoiceType==='vehicle'?<span className="bg-orange-900 text-orange-300 px-1.5 py-0.5 rounded font-bold">🏍️ Vehicle</span>:<span className="bg-green-900 text-green-300 px-1.5 py-0.5 rounded font-bold">🔧 Service</span>}</td><td className="px-3 py-2 text-slate-200 text-xs font-medium">{inv.customerName||'—'}</td><td className="px-3 py-2 text-slate-400 text-xs">{inv.customerPhone||'—'}</td><td className="px-3 py-2 text-blue-300 text-xs">{inv.vehicle||'—'}</td><td className="px-3 py-2 text-slate-400 text-xs font-mono">{inv.regNo||'—'}</td><td className="px-3 py-2 text-slate-400 text-xs">{new Date(inv.invoiceDate||Date.now()).toLocaleDateString('en-IN')}</td><td className="px-3 py-2 text-green-400 font-bold text-xs">₹{(inv.totals?.totalAmount||inv.amount||0).toLocaleString('en-IN')}</td><td className="px-3 py-2 text-center"><span className={`text-xs font-bold px-1.5 py-0.5 rounded ${(inv.items||inv.parts||[]).length>0?'bg-blue-900 text-blue-300':'bg-slate-700 text-slate-500'}`}>{(inv.items||inv.parts||[]).length}</span></td><td className="px-3 py-2 text-xs">{inv.importedFrom?<span className="bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded">📄 PDF</span>:<span className="bg-blue-900 text-blue-300 px-1.5 py-0.5 rounded">📋 Manual</span>}</td><td className="px-3 py-2"><div className="flex gap-1.5"><Button onClick={()=>navigate(`/invoice/${inv.invoiceNumber||inv.id}`)} className="bg-blue-600 hover:bg-blue-700 text-white h-7 px-2 text-xs flex items-center gap-1"><Eye size={12}/> View</Button><Button onClick={()=>handleDelete(inv.invoiceNumber||inv.id)} className="bg-red-700 hover:bg-red-600 text-white h-7 px-2 text-xs"><Trash2 size={12}/></Button></div></td></td>);})}</tbody><tfoot className="bg-slate-700 border-t-2 border-slate-600"><tr><td colSpan="8" className="px-3 py-2 text-slate-300 font-bold text-sm">TOTAL ({filtered.length})</td><td className="px-3 py-2 text-green-300 font-black text-sm">₹{filtered.reduce((s,i)=>s+(i.totals?.totalAmount||i.amount||0),0).toLocaleString('en-IN')}</td><td colSpan="3"></td></tr></tfoot></table></div>
             )}
             {totalPages>1 && (<div className="flex items-center justify-between px-4 py-3 bg-slate-700/50 border-t border-slate-600"><p className="text-xs text-slate-400">Page <b className="text-white">{currentPage}</b> of <b className="text-white">{totalPages}</b> — {filtered.length} invoices</p><div className="flex gap-2"><Button onClick={()=>setCurrentPage(p=>Math.max(1,p-1))} disabled={currentPage===1} className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-4 text-xs disabled:opacity-40">◀ Previous</Button><Button onClick={()=>setCurrentPage(p=>Math.min(totalPages,p+1))} disabled={currentPage===totalPages} className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-4 text-xs disabled:opacity-40">Next ▶</Button></div></div>)}
           </CardContent>
