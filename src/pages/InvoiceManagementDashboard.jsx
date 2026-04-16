@@ -69,13 +69,23 @@ const parseVPHondaInvoice = (text, filename) => {
   const rawGST = find([/Total\s*GST\s*Amount[^₹]*₹\s*([\d,]+\.\d{2})/i, /GST[^₹]*₹\s*([\d,]+\.\d{2})/i]);
   const pdfGST = parseFloat((rawGST||'0').replace(/,/g,'')) || 0;
   
-  // --- Detect Invoice Type (Vehicle vs Service) ---
-  const hasPartTable = /Part\s*No|Description|Qty|MRP|Taxable\s*Amt/i.test(flat);
-  const hasSaleKeywords = /Sale\s*Date|Selling\s*Dealer|HMSI|Ex-Showroom|RTO|Registration/i.test(flat);
-  const highAmount = pdfTotal > 50000;
-  let invoiceType = 'service';
-  if (hasSaleKeywords || (highAmount && !hasPartTable)) invoiceType = 'vehicle';
-  if (/VEHICLE|TAX\s*INVOICE|SALE/i.test(filename)) invoiceType = 'vehicle';
+  // --- Detect Invoice Type (Vehicle vs Service) ----
+const hasPartTable = /Part\s*No|Description|Qty|MRP|Taxable\s*Amt/i.test(flat);
+const hasServiceKeywords = /Service\s*Type|Jobcard|SMH\/|1st\s*Service|2nd\s*Service|3rd\s*Service|FREE\s*SERVICE/i.test(flat);
+const hasSaleKeywords = /Sale\s*Date|Selling\s*Dealer|HMSI|Ex-Showroom|RTO|Registration|Vehicle\s*Number/i.test(flat);
+const highAmount = pdfTotal > 50000;
+
+let invoiceType = 'service';
+// अगर साफ तौर पर service keywords हों → service
+if (hasServiceKeywords) invoiceType = 'service';
+// अगर parts table हो और sale keywords न हों → service
+else if (hasPartTable && !hasSaleKeywords) invoiceType = 'service';
+// अगर sale keywords हों या (high amount और parts table न हो) → vehicle
+else if (hasSaleKeywords || (highAmount && !hasPartTable)) invoiceType = 'vehicle';
+// अगर filename में VEHICLE या TAX INVOICE (व्हीकल वाला) हो → vehicle
+if (/VEHICLE|TAX\s*INVOICE|SALE/i.test(filename) && !hasServiceKeywords) invoiceType = 'vehicle';
+// अगर filename में SERVICE हो → service
+if (/SERVICE|PARTS/i.test(filename)) invoiceType = 'service';
   
   // --- Parts extraction (only for service invoices) ---
   let items = [];
