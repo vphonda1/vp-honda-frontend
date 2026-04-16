@@ -80,7 +80,6 @@ const parseVPHondaInvoice = (text, filename) => {
   // --- Parts extraction (only for service invoices) ---
   let items = [];
   if (invoiceType === 'service') {
-    // Try to extract table rows (VP Honda service invoice format)
     const rowPattern = /(\d{5,}[\w\-]+|\d{3,}[\w\-]+)\s+([A-Z][A-Z\s\/\-\.]+?)\s+(\d+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(?:\s+([\d,]+\.\d{2}))?/g;
     let match;
     while ((match = rowPattern.exec(flat)) !== null) {
@@ -96,14 +95,13 @@ const parseVPHondaInvoice = (text, filename) => {
       else gstRate = 18;
       items.push({ partNo, description, qty, mrp, taxableAmt, gstAmount, gstRate, total: taxableAmt });
     }
-    // Fallback simple pattern
     if (items.length === 0) {
       const simple = /([A-Z0-9]{5,}[\-]?[A-Z0-9]+)\s+([A-Z][A-Z\s\/]+?)\s+(\d+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/g;
       let m; while((m=simple.exec(flat))) items.push({ partNo:m[1], description:m[2].trim(), qty:parseInt(m[3])||1, mrp:parseFloat(m[4].replace(/,/g,''))||0, taxableAmt:parseFloat(m[5].replace(/,/g,''))||0, gstRate:18, gstAmount:0, total:parseFloat(m[5].replace(/,/g,''))||0 });
     }
   }
   
-  // Calculate totals from items or from PDF
+  // Calculate totals
   let subtotal = items.reduce((s,i)=>s+(i.taxableAmt||0),0);
   let gstAmount = items.reduce((s,i)=>s+(i.gstAmount||0),0);
   let finalTotal = subtotal + gstAmount;
@@ -123,7 +121,7 @@ const parseVPHondaInvoice = (text, filename) => {
 
 const exportInvoicesAsPDF = (invoices) => {
   const total = invoices.reduce((s,i)=>s+(i.totals?.totalAmount||i.amount||0),0);
-  const html = `<!DOCTYPE html><html><head><title>VP Honda Invoices</title><style>body{font-family:Arial;font-size:11px;margin:20px}h2{color:#1a3a8a}table{width:100%;border-collapse:collapse;margin-top:8px}th{background:#1a3a8a;color:white;padding:5px 7px;text-align:left;font-size:10px}td{border-bottom:1px solid #e5e7eb;padding:4px 7px}tr:nth-child(even){background:#f9fafb}.total{background:#1a3a8a;color:white;font-weight:bold}.footer{margin-top:12px;font-size:9px;color:#6b7280;text-align:center}</style></head><body><h2>🏍️ VP Honda — Invoice Report</h2><p style="color:#6b7280;font-size:10px">Generated: ${new Date().toLocaleString('en-IN')} | ${invoices.length} invoices | ₹${total.toLocaleString('en-IN')}</p><table><tr><th>#</th><th>Invoice No</th><th>Customer</th><th>Phone</th><th>Vehicle</th><th>Reg No</th><th>Date</th><th>Amount</th><th>Parts</th><th>Source</th></tr>${invoices.map((inv,i)=>`<tr><td>${i+1}</td><td><b>#${inv.invoiceNumber||inv.id}</b></td><td>${inv.customerName||'—'}</td><td>${inv.customerPhone||'—'}</td><td>${inv.vehicle||'—'}</td><td>${inv.regNo||'—'}</td><td>${new Date(inv.invoiceDate||Date.now()).toLocaleDateString('en-IN')}</td><td><b>₹${(inv.totals?.totalAmount||inv.amount||0).toLocaleString('en-IN')}</b></td><td>${(inv.items||inv.parts||[]).length}</td><td>${inv.importedFrom?'PDF':'Manual'}</td></tr>`).join('')}<tr class="total"><td colspan="7">TOTAL</td><td>₹${total.toLocaleString('en-IN')}</td><td colspan="2"></td></tr></table><div class="footer">VP Honda Dealership, Bhopal</div></body></html>`;
+  const html = `<!DOCTYPE html><html><head><title>VP Honda Invoices</title><style>body{font-family:Arial;font-size:11px;margin:20px}h2{color:#1a3a8a}table{width:100%;border-collapse:collapse;margin-top:8px}th{background:#1a3a8a;color:white;padding:5px 7px;text-align:left;font-size:10px}td{border-bottom:1px solid #e5e7eb;padding:4px 7px}tr:nth-child(even){background:#f9fafb}.total{background:#1a3a8a;color:white;font-weight:bold}.footer{margin-top:12px;font-size:9px;color:#6b7280;text-align:center}</style></head><body><h2>🏍️ VP Honda — Invoice Report</h2><p style="color:#6b7280;font-size:10px">Generated: ${new Date().toLocaleString('en-IN')} | ${invoices.length} invoices | ₹${total.toLocaleString('en-IN')}</p><table><tr><th>#</th><th>Invoice No</th><th>Customer</th><th>Phone</th><th>Vehicle</th><th>Reg No</th><th>Date</th><th>Amount</th><th>Parts</th><th>Source</th></tr>${invoices.map((inv,i)=>`<tr><td>${i+1}</td><td><b>#${inv.invoiceNumber||inv.id}</b></td><td>${inv.customerName||'—'}</td><td>${inv.customerPhone||'—'}</td><td>${inv.vehicle||'—'}</td><td>${inv.regNo||'—'}</td><td>${new Date(inv.invoiceDate||Date.now()).toLocaleDateString('en-IN')}</td><td><b>₹${(inv.totals?.totalAmount||inv.amount||0).toLocaleString('en-IN')}</b></td><td>${(inv.items||inv.parts||[]).length}</td><td>${inv.importedFrom?'PDF':'Manual'}</td></tr>`).join('')}<tr class="total"><td colspan="7">TOTAL</td><td>₹${total.toLocaleString('en-IN')}</td><td colspan="2"></td></tr></td><div class="footer">VP Honda Dealership, Bhopal</div></body></html>`;
   const w = window.open('','_blank'); w.document.write(html); w.document.close(); setTimeout(()=>w.print(), 500);
 };
 
@@ -228,29 +226,49 @@ export default function InvoiceManagementDashboard() {
   const handleVehicleFile = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files), 'vehicle'); i.click(); };
   const handleServiceFile = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files), 'service'); i.click(); };
   
-  const handleClearAll = async () => {
+  // ----- Clear only Vehicle Invoices -----
+  const clearVehicleInvoices = async () => {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
-    if (!window.confirm(`⚠️ सभी ${invoices.length} invoices DELETE होंगे (localStorage + MongoDB)!`)) return;
-    // Clear localStorage
-    localStorage.setItem('invoices', JSON.stringify([]));
-    localStorage.setItem('customerServiceData', JSON.stringify({}));
-    // Clear MongoDB
+    const vehicleCount = invoices.filter(i => i.invoiceType === 'vehicle').length;
+    if (!window.confirm(`⚠️ ${vehicleCount} Vehicle Invoices DELETE होंगे (localStorage + MongoDB)!`)) return;
+    const remaining = invoices.filter(i => i.invoiceType !== 'vehicle');
+    localStorage.setItem('invoices', JSON.stringify(remaining));
+    // Also update serviceData: remove vehicle-related entries? Keep as is (serviceData may still have purchaseDate etc, but it's okay)
+    await syncInvoicesToMongo(remaining);
+    loadInvoices();
+    setMessage(`✅ ${vehicleCount} Vehicle invoices cleared!`);
+    setTimeout(()=>setMessage(''), 4000);
+  };
+  
+  // ----- Clear only Service Invoices -----
+  const clearServiceInvoices = async () => {
+    const pwd = prompt('Admin password:');
+    if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
+    const serviceCount = invoices.filter(i => i.invoiceType === 'service').length;
+    if (!window.confirm(`⚠️ ${serviceCount} Service Invoices DELETE होंगे (localStorage + MongoDB)!`)) return;
+    const remaining = invoices.filter(i => i.invoiceType !== 'service');
+    localStorage.setItem('invoices', JSON.stringify(remaining));
+    await syncInvoicesToMongo(remaining);
+    loadInvoices();
+    setMessage(`✅ ${serviceCount} Service invoices cleared!`);
+    setTimeout(()=>setMessage(''), 4000);
+  };
+  
+  // Helper to sync invoices array to MongoDB (bulk replace)
+  const syncInvoicesToMongo = async (invList) => {
     try {
       const res = await fetch(api('/api/invoices/sync'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invoices: [] })
+        body: JSON.stringify({ invoices: invList })
       });
-      if (res.ok) console.log('✅ MongoDB cleared');
+      if (!res.ok) console.error('MongoDB sync failed');
     } catch(e) { console.error(e); }
-    loadInvoices();
-    setMessage('✅ सभी invoices clear! अब नए PDF import करें।');
-    setTimeout(()=>setMessage(''), 4000);
   };
   
   const handleDelete = async (no) => {
-    if (!window.confirm('Delete?')) return;
+    if (!window.confirm('Delete this invoice?')) return;
     const invToDelete = invoices.find(i=>String(i.invoiceNumber||i.id)===String(no));
     if (invToDelete && invToDelete._id) {
       try { await fetch(api(`/api/invoices/${invToDelete._id}`), { method: 'DELETE' }); } catch(e) {}
@@ -291,36 +309,118 @@ export default function InvoiceManagementDashboard() {
         </div>
         {message && <Card className={`${message.includes('✅')?'bg-green-900/20 border-green-500':'bg-red-900/20 border-red-500'}`}><CardContent className="pt-4 pb-4"><p className={`font-bold text-sm ${message.includes('✅')?'text-green-300':'text-red-400'}`}>{message}</p></CardContent></Card>}
         {importing && <Card className="bg-blue-900/30 border-blue-500"><CardContent className="pt-4 pb-4"><div className="flex items-center gap-3"><div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0"/><div className="flex-1"><p className="text-blue-300 font-bold text-sm">PDF import: {progress.current}/{progress.total}</p><p className="text-blue-500 text-xs">PDF → text → VP Honda parse → save</p><div className="h-2 bg-slate-700 rounded-full mt-2"><div className="h-2 bg-blue-500 rounded-full transition-all" style={{width:`${progress.total?progress.current/progress.total*100:0}%`}}/></div></div></div></CardContent></Card>}
+        
+        {/* Navigation Buttons */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Button onClick={()=>navigate('/reminders')} className="bg-gradient-to-r from-orange-600 to-orange-700 text-white font-bold py-3">🔔 Reminders</Button>
           <Button onClick={()=>navigate('/customer-data-manager')} className="bg-gradient-to-r from-purple-600 to-purple-700 text-white font-bold py-3">📊 Data Manager</Button>
           <Button onClick={()=>navigate('/diagnostic')} className="bg-gradient-to-r from-cyan-600 to-cyan-700 text-white font-bold py-3">🔍 Diagnostic</Button>
           <Button onClick={()=>navigate('/job-cards')} className="bg-gradient-to-r from-green-600 to-green-700 text-white font-bold py-3">🎫 Job Cards</Button>
         </div>
+        
+        {/* Import Buttons */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card className="bg-blue-900/20 border-blue-500"><CardContent className="pt-5 pb-5"><Button onClick={handleVehicleFile} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 flex items-center justify-center gap-2 text-base"><FileText size={22}/> Import Vehicle PDF</Button><p className="text-blue-400 text-xs mt-2 text-center">Vehicle Tax Invoice (purchase date)</p></CardContent></Card>
           <Card className="bg-green-900/20 border-green-500"><CardContent className="pt-5 pb-5"><Button onClick={handleServiceFile} className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 flex items-center justify-center gap-2 text-base"><FolderOpen size={22}/> Import Service PDF</Button><p className="text-green-400 text-xs mt-2 text-center">Service/Parts Invoice (service number)</p></CardContent></Card>
           <Card className="bg-purple-900/20 border-purple-500"><CardContent className="pt-5 pb-5"><Button onClick={()=>exportInvoicesAsPDF(filtered)} className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-4 flex items-center justify-center gap-2 text-base"><Download size={22}/> Export as PDF</Button><p className="text-purple-400 text-xs mt-2 text-center">Invoice list PDF print/download</p></CardContent></Card>
         </div>
-        {invoices.length > 0 && <Button onClick={handleClearAll} className="bg-red-900 hover:bg-red-800 text-white font-bold flex items-center gap-2"><Trash2 size={16}/> Clear All ({invoices.length})</Button>}
+        
+        {/* Two Clear Buttons */}
+        <div className="flex gap-3 flex-wrap">
+          <Button onClick={clearVehicleInvoices} className="bg-orange-800 hover:bg-orange-700 text-white font-bold flex items-center gap-2">
+            <Trash2 size={16}/> Clear Vehicle Invoices ({vehicleInvoices.length})
+          </Button>
+          <Button onClick={clearServiceInvoices} className="bg-green-800 hover:bg-green-700 text-white font-bold flex items-center gap-2">
+            <Trash2 size={16}/> Clear Service Invoices ({serviceInvoices.length})
+          </Button>
+        </div>
+        
+        {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           <Card className="bg-blue-900/20 border-blue-500"><CardContent className="pt-4 pb-4"><p className="text-xs text-slate-400">📋 Total Invoices</p><h3 className="text-3xl font-black text-blue-400 mt-1">{invoices.length}</h3><p className="text-xs text-slate-500 mt-1">₹{totalRev.toLocaleString('en-IN')}</p></CardContent></Card>
           <Card className="bg-orange-900/20 border-orange-500"><CardContent className="pt-4 pb-4"><p className="text-xs text-slate-400">🏍️ Vehicle Tax Invoices</p><h3 className="text-3xl font-black text-orange-400 mt-1">{vehicleInvoices.length}</h3><p className="text-xs text-slate-500 mt-1">₹{vehicleRev.toLocaleString('en-IN')}</p></CardContent></Card>
           <Card className="bg-green-900/20 border-green-500"><CardContent className="pt-4 pb-4"><p className="text-xs text-slate-400">🔧 Service/Parts Invoices</p><h3 className="text-3xl font-black text-green-400 mt-1">{serviceInvoices.length}</h3><p className="text-xs text-slate-500 mt-1">₹{serviceRev.toLocaleString('en-IN')}</p></CardContent></Card>
         </div>
+        
+        {/* Tabs */}
         <div className="flex gap-2 flex-wrap">
-          {[{ id:'all', label:`📋 सभी (${invoices.length})`, col:'blue'},{ id:'vehicle', label:`🏍️ Vehicle Tax Invoice (${vehicleInvoices.length})`, col:'orange'},{ id:'service', label:`🔧 Service/Parts Invoice (${serviceInvoices.length})`, col:'green'}].map(t => (
+          {[
+            { id:'all', label:`📋 सभी (${invoices.length})`, col:'blue'},
+            { id:'vehicle', label:`🏍️ Vehicle Tax Invoice (${vehicleInvoices.length})`, col:'orange'},
+            { id:'service', label:`🔧 Service/Parts Invoice (${serviceInvoices.length})`, col:'green'}
+          ].map(t => (
             <button key={t.id} onClick={() => setActiveTab(t.id)} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border-2 ${activeTab===t.id ? `bg-${t.col}-600 border-${t.col}-400 text-white shadow-lg` : `bg-slate-800 border-slate-600 text-slate-300 hover:border-${t.col}-500`}`}>{t.label}</button>
           ))}
         </div>
+        
+        {/* Search */}
         <div><div className="relative"><Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><Input value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} placeholder="Invoice #, Customer, Phone, Vehicle, Reg No..." className="pl-10 bg-slate-800 border-slate-600 text-white placeholder-slate-500"/></div><p className="text-slate-500 text-xs mt-1">{filtered.length} invoices</p></div>
+        
+        {/* Invoice Table */}
         <Card className="bg-slate-800 border-slate-700">
           <CardHeader className="bg-gradient-to-r from-slate-700 to-slate-800 py-3"><CardTitle className="text-white text-base">{activeTab === 'vehicle' ? '🏍️ Vehicle Tax Invoices' : activeTab === 'service' ? '🔧 Service/Parts Invoices' : '📋 Invoice List'} ({filtered.length})</CardTitle></CardHeader>
           <CardContent className="p-0">
-            {filtered.length===0 ? <div className="text-center py-12"><p className="text-slate-400">कोई invoice नहीं।</p></div> : (
-              <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-700 border-b border-slate-600"><tr>{['#','Invoice No','Type','Customer','Phone','Vehicle','Reg No','Date','Amount','Parts','Source','Actions'].map(h=><th key={h} className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">{h}</th>)}</tr></thead><tbody>{paginated.map((inv,i)=>{ const rowIdx = (currentPage-1)*INVOICES_PER_PAGE + i; return (<tr key={i} className="border-b border-slate-700 hover:bg-slate-700/50"><td className="px-3 py-2 text-slate-500 text-xs">{rowIdx+1}</td><td className="px-3 py-2 text-white font-bold text-xs">#{inv.invoiceNumber||inv.id}</td><td className="px-3 py-2 text-xs">{inv.invoiceType==='vehicle'?<span className="bg-orange-900 text-orange-300 px-1.5 py-0.5 rounded font-bold">🏍️ Vehicle</span>:<span className="bg-green-900 text-green-300 px-1.5 py-0.5 rounded font-bold">🔧 Service</span>}</td><td className="px-3 py-2 text-slate-200 text-xs font-medium">{inv.customerName||'—'}</td><td className="px-3 py-2 text-slate-400 text-xs">{inv.customerPhone||'—'}</td><td className="px-3 py-2 text-blue-300 text-xs">{inv.vehicle||'—'}</td><td className="px-3 py-2 text-slate-400 text-xs font-mono">{inv.regNo||'—'}</td><td className="px-3 py-2 text-slate-400 text-xs">{new Date(inv.invoiceDate||Date.now()).toLocaleDateString('en-IN')}</td><td className="px-3 py-2 text-green-400 font-bold text-xs">₹{(inv.totals?.totalAmount||inv.amount||0).toLocaleString('en-IN')}</td><td className="px-3 py-2 text-center"><span className={`text-xs font-bold px-1.5 py-0.5 rounded ${(inv.items||inv.parts||[]).length>0?'bg-blue-900 text-blue-300':'bg-slate-700 text-slate-500'}`}>{(inv.items||inv.parts||[]).length}</span></td><td className="px-3 py-2 text-xs">{inv.importedFrom?<span className="bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded">📄 PDF</span>:<span className="bg-blue-900 text-blue-300 px-1.5 py-0.5 rounded">📋 Manual</span>}</td><td className="px-3 py-2"><div className="flex gap-1.5"><Button onClick={()=>navigate(`/invoice/${inv.invoiceNumber||inv.id}`)} className="bg-blue-600 hover:bg-blue-700 text-white h-7 px-2 text-xs flex items-center gap-1"><Eye size={12}/> View</Button><Button onClick={()=>handleDelete(inv.invoiceNumber||inv.id)} className="bg-red-700 hover:bg-red-600 text-white h-7 px-2 text-xs"><Trash2 size={12}/></Button></div></td></td>);})}</tbody><tfoot className="bg-slate-700 border-t-2 border-slate-600"><tr><td colSpan="8" className="px-3 py-2 text-slate-300 font-bold text-sm">TOTAL ({filtered.length})</td><td className="px-3 py-2 text-green-300 font-black text-sm">₹{filtered.reduce((s,i)=>s+(i.totals?.totalAmount||i.amount||0),0).toLocaleString('en-IN')}</td><td colSpan="3"></td></tr></tfoot></table></div>
+            {filtered.length === 0 ? (
+              <div className="text-center py-12"><p className="text-slate-400">कोई invoice नहीं।</p></div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-700 border-b border-slate-600">
+                    <tr>
+                      {['#','Invoice No','Type','Customer','Phone','Vehicle','Reg No','Date','Amount','Parts','Source','Actions'].map(h => (
+                        <th key={h} className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginated.map((inv, idx) => {
+                      const rowIdx = (currentPage-1)*INVOICES_PER_PAGE + idx;
+                      return (
+                        <tr key={inv._id || inv.id || idx} className="border-b border-slate-700 hover:bg-slate-700/50">
+                          <td className="px-3 py-2 text-slate-500 text-xs">{rowIdx+1}</td>
+                          <td className="px-3 py-2 text-white font-bold text-xs">#{inv.invoiceNumber||inv.id}</td>
+                          <td className="px-3 py-2 text-xs">
+                            {inv.invoiceType === 'vehicle' 
+                              ? <span className="bg-orange-900 text-orange-300 px-1.5 py-0.5 rounded font-bold">🏍️ Vehicle</span>
+                              : <span className="bg-green-900 text-green-300 px-1.5 py-0.5 rounded font-bold">🔧 Service</span>}
+                          </td>
+                          <td className="px-3 py-2 text-slate-200 text-xs font-medium">{inv.customerName||'—'}</td>
+                          <td className="px-3 py-2 text-slate-400 text-xs">{inv.customerPhone||'—'}</td>
+                          <td className="px-3 py-2 text-blue-300 text-xs">{inv.vehicle||'—'}</td>
+                          <td className="px-3 py-2 text-slate-400 text-xs font-mono">{inv.regNo||'—'}</td>
+                          <td className="px-3 py-2 text-slate-400 text-xs">{new Date(inv.invoiceDate||Date.now()).toLocaleDateString('en-IN')}</td>
+                          <td className="px-3 py-2 text-green-400 font-bold text-xs">₹{(inv.totals?.totalAmount||inv.amount||0).toLocaleString('en-IN')}</td>
+                          <td className="px-3 py-2 text-center"><span className={`text-xs font-bold px-1.5 py-0.5 rounded ${(inv.items||inv.parts||[]).length>0?'bg-blue-900 text-blue-300':'bg-slate-700 text-slate-500'}`}>{(inv.items||inv.parts||[]).length}</span></td>
+                          <td className="px-3 py-2 text-xs">{inv.importedFrom?<span className="bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded">📄 PDF</span>:<span className="bg-blue-900 text-blue-300 px-1.5 py-0.5 rounded">📋 Manual</span>}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex gap-1.5">
+                              <Button onClick={()=>navigate(`/invoice/${inv.invoiceNumber||inv.id}`)} className="bg-blue-600 hover:bg-blue-700 text-white h-7 px-2 text-xs flex items-center gap-1"><Eye size={12}/> View</Button>
+                              <Button onClick={()=>handleDelete(inv.invoiceNumber||inv.id)} className="bg-red-700 hover:bg-red-600 text-white h-7 px-2 text-xs"><Trash2 size={12}/></Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot className="bg-slate-700 border-t-2 border-slate-600">
+                    <tr>
+                      <td colSpan="8" className="px-3 py-2 text-slate-300 font-bold text-sm">TOTAL ({filtered.length})</td>
+                      <td className="px-3 py-2 text-green-300 font-black text-sm">₹{filtered.reduce((s,i)=>s+(i.totals?.totalAmount||i.amount||0),0).toLocaleString('en-IN')}</td>
+                      <td colSpan="3"></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             )}
-            {totalPages>1 && (<div className="flex items-center justify-between px-4 py-3 bg-slate-700/50 border-t border-slate-600"><p className="text-xs text-slate-400">Page <b className="text-white">{currentPage}</b> of <b className="text-white">{totalPages}</b> — {filtered.length} invoices</p><div className="flex gap-2"><Button onClick={()=>setCurrentPage(p=>Math.max(1,p-1))} disabled={currentPage===1} className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-4 text-xs disabled:opacity-40">◀ Previous</Button><Button onClick={()=>setCurrentPage(p=>Math.min(totalPages,p+1))} disabled={currentPage===totalPages} className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-4 text-xs disabled:opacity-40">Next ▶</Button></div></div>)}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-3 bg-slate-700/50 border-t border-slate-600">
+                <p className="text-xs text-slate-400">Page <b className="text-white">{currentPage}</b> of <b className="text-white">{totalPages}</b> — {filtered.length} invoices</p>
+                <div className="flex gap-2">
+                  <Button onClick={()=>setCurrentPage(p=>Math.max(1,p-1))} disabled={currentPage===1} className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-4 text-xs disabled:opacity-40">◀ Previous</Button>
+                  <Button onClick={()=>setCurrentPage(p=>Math.min(totalPages,p+1))} disabled={currentPage===totalPages} className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-4 text-xs disabled:opacity-40">Next ▶</Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
