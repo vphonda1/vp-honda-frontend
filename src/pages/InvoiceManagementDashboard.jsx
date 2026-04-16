@@ -57,47 +57,40 @@ const parseOCRServiceInvoice = (text, filename) => {
   for (let line of lines) {
     line = line.trim();
     if (!line) continue;
-    // Detect start of table
     if (/Part\s*No|Description|Qty|MRP|Taxable/i.test(line)) {
       inTable = true;
       continue;
     }
-    if (inTable) {
-      // Check if line looks like a parts row (starts with alphanumeric-hyphen pattern)
-      if (/^[A-Z0-9\-]{5,}/.test(line)) {
-        // Split by multiple spaces or tabs
-        const parts = line.split(/\s{2,}/);
-        if (parts.length >= 4) {
-          const partNo = parts[0];
-          const description = parts[1] || '';
-          const qty = parseInt(parts[2]) || 1;
-          const mrp = parseFloat(parts[3]) || 0;
-          const taxableAmt = parts[4] ? parseFloat(parts[4]) : mrp;
-          let gstAmount = parts[5] ? parseFloat(parts[5]) : 0;
-          let gstRate = 0;
-          if (taxableAmt > 0 && gstAmount > 0) gstRate = Math.round((gstAmount / taxableAmt) * 100);
-          else gstRate = 18;
-          items.push({ partNo, description, qty, mrp, taxableAmt, gstAmount, gstRate, total: taxableAmt });
-        } else {
-          // Fallback: use regex to capture numbers at end
-          const numMatch = line.match(/(\d+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})$/);
-          if (numMatch) {
-            const qty = parseInt(numMatch[1]);
-            const mrp = parseFloat(numMatch[2].replace(/,/g,''));
-            const taxable = parseFloat(numMatch[3].replace(/,/g,''));
-            const partMatch = line.match(/^([A-Z0-9\-]+)/);
-            const partNo = partMatch ? partMatch[1] : 'UNKNOWN';
-            const desc = line.replace(partNo, '').replace(numMatch[0], '').trim();
-            items.push({ partNo, description: desc, qty, mrp, taxableAmt: taxable, gstAmount: 0, gstRate: 18, total: taxable });
-          }
+    if (inTable && /^[A-Z0-9\-]{5,}/.test(line)) {
+      const parts = line.split(/\s{2,}/);
+      if (parts.length >= 4) {
+        const partNo = parts[0];
+        const description = parts[1] || '';
+        const qty = parseInt(parts[2]) || 1;
+        const mrp = parseFloat(parts[3]) || 0;
+        const taxableAmt = parts[4] ? parseFloat(parts[4]) : mrp;
+        let gstAmount = parts[5] ? parseFloat(parts[5]) : 0;
+        let gstRate = 0;
+        if (taxableAmt > 0 && gstAmount > 0) gstRate = Math.round((gstAmount / taxableAmt) * 100);
+        else gstRate = 18;
+        items.push({ partNo, description, qty, mrp, taxableAmt, gstAmount, gstRate, total: taxableAmt });
+      } else {
+        const numMatch = line.match(/(\d+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})$/);
+        if (numMatch) {
+          const qty = parseInt(numMatch[1]);
+          const mrp = parseFloat(numMatch[2].replace(/,/g,''));
+          const taxable = parseFloat(numMatch[3].replace(/,/g,''));
+          const partMatch = line.match(/^([A-Z0-9\-]+)/);
+          const partNo = partMatch ? partMatch[1] : 'UNKNOWN';
+          const desc = line.replace(partNo, '').replace(numMatch[0], '').trim();
+          items.push({ partNo, description: desc, qty, mrp, taxableAmt: taxable, gstAmount: 0, gstRate: 18, total: taxable });
         }
       }
-      // End of table detection
-      if (/Subtotal|Total\s+Invoice/i.test(line)) inTable = false;
     }
+    if (/Subtotal|Total\s+Invoice/i.test(line)) inTable = false;
   }
   
-  // ----- Extract totals from text -----
+  // ----- Totals -----
   let subtotal = 0, gstAmount = 0, finalTotal = 0;
   const subtotalMatch = flat.match(/Subtotal\s*:?\s*[₹]*\s*([\d,]+\.\d{2})/i);
   if (subtotalMatch) subtotal = parseFloat(subtotalMatch[1].replace(/,/g,''));
@@ -106,23 +99,18 @@ const parseOCRServiceInvoice = (text, filename) => {
   const totalMatch = flat.match(/Total\s*:?\s*[₹]*\s*([\d,]+\.\d{2})/i);
   if (totalMatch) finalTotal = parseFloat(totalMatch[1].replace(/,/g,''));
   
-  // If items exist but totals missing, calculate
   if (items.length > 0 && finalTotal === 0) {
     subtotal = items.reduce((s,i)=>s+i.taxableAmt, 0);
     gstAmount = items.reduce((s,i)=>s+(i.gstAmount||0), 0);
     finalTotal = subtotal + gstAmount;
   }
-  // If only GST found, estimate
   if (gstAmount > 0 && finalTotal === 0 && subtotal === 0) {
     subtotal = Math.round((gstAmount / 0.18) * 100) / 100;
     finalTotal = subtotal + gstAmount;
   }
   
-  // Determine invoice type
   const hasPartKeywords = /Part\s*No|Description|Qty|MRP/i.test(flat);
   const invoiceType = hasPartKeywords ? 'service' : 'vehicle';
-  
-  // Service number (1st, 2nd, 3rd)
   let serviceNumber = null;
   const svcMatch = flat.match(/(\d+)(?:st|nd|rd|th)\s+Service/i);
   if (svcMatch) serviceNumber = parseInt(svcMatch[1]);
@@ -139,7 +127,11 @@ const parseOCRServiceInvoice = (text, filename) => {
 
 const exportInvoicesAsPDF = (invoices) => {
   const total = invoices.reduce((s,i)=>s+(i.totals?.totalAmount||i.amount||0),0);
-  const html = `<!DOCTYPE html><html><head><title>VP Honda Invoices</title><style>body{font-family:Arial;font-size:11px;margin:20px}h2{color:#1a3a8a}table{width:100%;border-collapse:collapse;margin-top:8px}th{background:#1a3a8a;color:white;padding:5px 7px;text-align:left;font-size:10px}td{border-bottom:1px solid #e5e7eb;padding:4px 7px}tr:nth-child(even){background:#f9fafb}.total{background:#1a3a8a;color:white;font-weight:bold}.footer{margin-top:12px;font-size:9px;color:#6b7280;text-align:center}</style></head><body><h2>🏍️ VP Honda — Invoice Report</h2><p style="color:#6b7280;font-size:10px">Generated: ${new Date().toLocaleString('en-IN')} | ${invoices.length} invoices | ₹${total.toLocaleString('en-IN')}</p><table><tr><th>#</th><th>Invoice No</th><th>Customer</th><th>Phone</th><th>Vehicle</th><th>Reg No</th><th>Date</th><th>Amount</th><th>Parts</th><th>Source</th></tr>${invoices.map((inv,i)=>`<tr><td>${i+1}</td><td><b>#${inv.invoiceNumber||inv.id}</b></td><td>${inv.customerName||'—'}</td><td>${inv.customerPhone||'—'}</td><td>${inv.vehicle||'—'}</td><td>${inv.regNo||'—'}</td><td>${new Date(inv.invoiceDate||Date.now()).toLocaleDateString('en-IN')}</td><td><b>₹${(inv.totals?.totalAmount||inv.amount||0).toLocaleString('en-IN')}</b></td><td>${(inv.items||inv.parts||[]).length}</td><td>${inv.importedFrom?'PDF':'Manual'}</td></td>`).join('')}<tr class="total"><td colspan="7">TOTAL</td><td>₹${total.toLocaleString('en-IN')}</td><td colspan="2"></td></tr></table><div class="footer">VP Honda Dealership, Bhopal</div></body></html>`;
+  const html = `<!DOCTYPE html><html><head><title>VP Honda Invoices</title><style>body{font-family:Arial;font-size:11px;margin:20px}h2{color:#1a3a8a}table{width:100%;border-collapse:collapse;margin-top:8px}th{background:#1a3a8a;color:white;padding:5px 7px;text-align:left;font-size:10px}td{border-bottom:1px solid #e5e7eb;padding:4px 7px}tr:nth-child(even){background:#f9fafb}.total{background:#1a3a8a;color:white;font-weight:bold}.footer{margin-top:12px;font-size:9px;color:#6b7280;text-align:center}</style></head><body><h2>🏍️ VP Honda — Invoice Report</h2><p style="color:#6b7280;font-size:10px">Generated: ${new Date().toLocaleString('en-IN')} | ${invoices.length} invoices | ₹${total.toLocaleString('en-IN')}</p></table>
+    <thead><tr><th>#</th><th>Invoice No</th><th>Customer</th><th>Phone</th><th>Vehicle</th><th>Reg No</th><th>Date</th><th>Amount</th><th>Parts</th><th>Source</th></tr></thead>
+    <tbody>${invoices.map((inv,i)=>`<tr><td>${i+1}</td><td><b>#${inv.invoiceNumber||inv.id}</b></td><td>${inv.customerName||'—'}</td><td>${inv.customerPhone||'—'}</td><td>${inv.vehicle||'—'}</td><td>${inv.regNo||'—'}</td><td>${new Date(inv.invoiceDate||Date.now()).toLocaleDateString('en-IN')}</td><td><b>₹${(inv.totals?.totalAmount||inv.amount||0).toLocaleString('en-IN')}</b></td><td>${(inv.items||inv.parts||[]).length}</td><td>${inv.importedFrom?'PDF':'Manual'}</td></tr>`).join('')}</tbody>
+    <tfoot><tr><td colspan="7">TOTAL</td><td><b>₹${total.toLocaleString('en-IN')}</b></td><td colspan="2"></td></tr></tfoot>
+  </table><div class="footer">VP Honda Dealership, Bhopal</div></body></html>`;
   const w = window.open('','_blank'); w.document.write(html); w.document.close(); setTimeout(()=>w.print(), 500);
 };
 
@@ -203,7 +195,6 @@ export default function InvoiceManagementDashboard() {
     }
     const newInvoices = [...added, ...existing];
     localStorage.setItem('invoices', JSON.stringify(newInvoices));
-    // Update serviceData
     const svcData = getLS('customerServiceData', {});
     for (const inv of added) {
       const reg = inv.regNo;
@@ -227,7 +218,6 @@ export default function InvoiceManagementDashboard() {
       }
     }
     localStorage.setItem('customerServiceData', JSON.stringify(svcData));
-    // Save to MongoDB
     for (const inv of added) {
       try { await fetch(api('/api/invoices'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(inv) }); } catch(e) {}
     }
@@ -338,10 +328,76 @@ export default function InvoiceManagementDashboard() {
         <Card className="bg-slate-800 border-slate-700">
           <CardHeader className="bg-gradient-to-r from-slate-700 to-slate-800 py-3"><CardTitle className="text-white text-base">{activeTab === 'vehicle' ? '🏍️ Vehicle Tax Invoices' : activeTab === 'service' ? '🔧 Service/Parts Invoices' : '📋 Invoice List'} ({filtered.length})</CardTitle></CardHeader>
           <CardContent className="p-0">
-            {filtered.length===0 ? <div className="text-center py-12"><p className="text-slate-400">कोई invoice नहीं।</p></div> : (
-              <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-700 border-b border-slate-600"><tr>{['#','Invoice No','Type','Customer','Phone','Vehicle','Reg No','Date','Amount','Parts','Source','Actions'].map(h=><th key={h} className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">{h}</th>)}</tr></thead><tbody>{paginated.map((inv,i)=>{ const rowIdx = (currentPage-1)*INVOICES_PER_PAGE + i; return (<tr key={i} className="border-b border-slate-700 hover:bg-slate-700/50"><td className="px-3 py-2 text-slate-500 text-xs">{rowIdx+1}</td><td className="px-3 py-2 text-white font-bold text-xs">#{inv.invoiceNumber||inv.id}</td><td className="px-3 py-2 text-xs">{inv.invoiceType==='vehicle'?<span className="bg-orange-900 text-orange-300 px-1.5 py-0.5 rounded font-bold">🏍️ Vehicle</span>:<span className="bg-green-900 text-green-300 px-1.5 py-0.5 rounded font-bold">🔧 Service</span>}</td><td className="px-3 py-2 text-slate-200 text-xs font-medium">{inv.customerName||'—'}</td><td className="px-3 py-2 text-slate-400 text-xs">{inv.customerPhone||'—'}</td><td className="px-3 py-2 text-blue-300 text-xs">{inv.vehicle||'—'}</td><td className="px-3 py-2 text-slate-400 text-xs font-mono">{inv.regNo||'—'}</td><td className="px-3 py-2 text-slate-400 text-xs">{new Date(inv.invoiceDate||Date.now()).toLocaleDateString('en-IN')}</td><td className="px-3 py-2 text-green-400 font-bold text-xs">₹{(inv.totals?.totalAmount||inv.amount||0).toLocaleString('en-IN')}</td><td className="px-3 py-2 text-center"><span className={`text-xs font-bold px-1.5 py-0.5 rounded ${(inv.items||inv.parts||[]).length>0?'bg-blue-900 text-blue-300':'bg-slate-700 text-slate-500'}`}>{(inv.items||inv.parts||[]).length}</span></td><td className="px-3 py-2 text-xs">{inv.importedFrom?<span className="bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded">📄 PDF</span>:<span className="bg-blue-900 text-blue-300 px-1.5 py-0.5 rounded">📋 Manual</span>}</td><td className="px-3 py-2"><div className="flex gap-1.5"><Button onClick={()=>navigate(`/invoice/${inv.invoiceNumber||inv.id}`)} className="bg-blue-600 hover:bg-blue-700 text-white h-7 px-2 text-xs flex items-center gap-1"><Eye size={12}/> View</Button><Button onClick={()=>handleDelete(inv.invoiceNumber||inv.id)} className="bg-red-700 hover:bg-red-600 text-white h-7 px-2 text-xs"><Trash2 size={12}/></Button></div></td></td>);})}</tbody><tfoot className="bg-slate-700 border-t-2 border-slate-600"><tr><td colSpan="8" className="px-3 py-2 text-slate-300 font-bold text-sm">TOTAL ({filtered.length})</td><td className="px-3 py-2 text-green-300 font-black text-sm">₹{filtered.reduce((s,i)=>s+(i.totals?.totalAmount||i.amount||0),0).toLocaleString('en-IN')}</td><td colSpan="3"></td></tr></tfoot></table></div>
+            {filtered.length===0 ? (
+              <div className="text-center py-12"><p className="text-slate-400">कोई invoice नहीं।</p></div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-700 border-b border-slate-600">
+                    <tr>
+                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">#</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Invoice No</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Type</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Customer</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Phone</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Vehicle</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Reg No</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Date</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Amount</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Parts</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Source</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginated.map((inv, idx) => {
+                      const rowIdx = (currentPage-1)*INVOICES_PER_PAGE + idx;
+                      return (
+                        <tr key={inv._id || inv.id || idx} className="border-b border-slate-700 hover:bg-slate-700/50">
+                          <td className="px-3 py-2 text-slate-500 text-xs">{rowIdx+1}</td>
+                          <td className="px-3 py-2 text-white font-bold text-xs">#{inv.invoiceNumber||inv.id}</td>
+                          <td className="px-3 py-2 text-xs">
+                            {inv.invoiceType === 'vehicle' 
+                              ? <span className="bg-orange-900 text-orange-300 px-1.5 py-0.5 rounded font-bold">🏍️ Vehicle</span>
+                              : <span className="bg-green-900 text-green-300 px-1.5 py-0.5 rounded font-bold">🔧 Service</span>}
+                          </td>
+                          <td className="px-3 py-2 text-slate-200 text-xs font-medium">{inv.customerName||'—'}</td>
+                          <td className="px-3 py-2 text-slate-400 text-xs">{inv.customerPhone||'—'}</td>
+                          <td className="px-3 py-2 text-blue-300 text-xs">{inv.vehicle||'—'}</td>
+                          <td className="px-3 py-2 text-slate-400 text-xs font-mono">{inv.regNo||'—'}</td>
+                          <td className="px-3 py-2 text-slate-400 text-xs">{new Date(inv.invoiceDate||Date.now()).toLocaleDateString('en-IN')}</td>
+                          <td className="px-3 py-2 text-green-400 font-bold text-xs">₹{(inv.totals?.totalAmount||inv.amount||0).toLocaleString('en-IN')}</td>
+                          <td className="px-3 py-2 text-center"><span className={`text-xs font-bold px-1.5 py-0.5 rounded ${(inv.items||inv.parts||[]).length>0?'bg-blue-900 text-blue-300':'bg-slate-700 text-slate-500'}`}>{(inv.items||inv.parts||[]).length}</span></td>
+                          <td className="px-3 py-2 text-xs">{inv.importedFrom?<span className="bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded">📄 PDF</span>:<span className="bg-blue-900 text-blue-300 px-1.5 py-0.5 rounded">📋 Manual</span>}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex gap-1.5">
+                              <Button onClick={()=>navigate(`/invoice/${inv.invoiceNumber||inv.id}`)} className="bg-blue-600 hover:bg-blue-700 text-white h-7 px-2 text-xs flex items-center gap-1"><Eye size={12}/> View</Button>
+                              <Button onClick={()=>handleDelete(inv.invoiceNumber||inv.id)} className="bg-red-700 hover:bg-red-600 text-white h-7 px-2 text-xs"><Trash2 size={12}/></Button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot className="bg-slate-700 border-t-2 border-slate-600">
+                    <tr>
+                      <td colSpan="8" className="px-3 py-2 text-slate-300 font-bold text-sm">TOTAL ({filtered.length})</td>
+                      <td className="px-3 py-2 text-green-300 font-black text-sm">₹{filtered.reduce((s,i)=>s+(i.totals?.totalAmount||i.amount||0),0).toLocaleString('en-IN')}</td>
+                      <td colSpan="3"></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             )}
-            {totalPages>1 && (<div className="flex items-center justify-between px-4 py-3 bg-slate-700/50 border-t border-slate-600"><p className="text-xs text-slate-400">Page <b className="text-white">{currentPage}</b> of <b className="text-white">{totalPages}</b> — {filtered.length} invoices</p><div className="flex gap-2"><Button onClick={()=>setCurrentPage(p=>Math.max(1,p-1))} disabled={currentPage===1} className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-4 text-xs disabled:opacity-40">◀ Previous</Button><Button onClick={()=>setCurrentPage(p=>Math.min(totalPages,p+1))} disabled={currentPage===totalPages} className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-4 text-xs disabled:opacity-40">Next ▶</Button></div></div>)}
+            {totalPages>1 && (
+              <div className="flex items-center justify-between px-4 py-3 bg-slate-700/50 border-t border-slate-600">
+                <p className="text-xs text-slate-400">Page <b className="text-white">{currentPage}</b> of <b className="text-white">{totalPages}</b> — {filtered.length} invoices</p>
+                <div className="flex gap-2">
+                  <Button onClick={()=>setCurrentPage(p=>Math.max(1,p-1))} disabled={currentPage===1} className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-4 text-xs disabled:opacity-40">◀ Previous</Button>
+                  <Button onClick={()=>setCurrentPage(p=>Math.min(totalPages,p+1))} disabled={currentPage===totalPages} className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-4 text-xs disabled:opacity-40">Next ▶</Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
