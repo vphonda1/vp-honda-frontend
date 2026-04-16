@@ -18,113 +18,129 @@ const extractPDFText = async (file) => {
 };
 
 // ================== VP HONDA INVOICE PARSER (FIXED FOR VEHICLE & SERVICE) ==================
-const parseVPHondaInvoice = (text, filename) => {
-  const flat = text.replace(/\n/g,' ').replace(/\s+/g,' ');
-  const find = (patterns, fb='') => { for (const p of patterns) { const m = flat.match(p) || text.match(p); if (m) return (m[1]||m[0]).trim(); } return fb; };
+// ========== OCR SERVICE INVOICE PARSER (बेहतर) ==========
+const parseOCRServiceInvoice = (text, filename) => {
+  const flat = text.replace(/\n/g, ' ').replace(/\s+/g, ' ');
   
-  // --- Basic fields ---
-  const invoiceNumber = find([/Invoice\s*No[:\-]*\s*(\d+)/i, /Invoice\s*#\s*(\d+)/i], String(Math.floor(Math.random()*900000+100000)));
-  let rawDate = find([/Invoice\s*Date[:\-]*\s*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i, /Date\s*[:-]\s*(\d{2}-\d{2}-\d{4})/i]);
+  // ----- Invoice Number -----
+  let invoiceNumber = '';
+  const invMatch = flat.match(/Invoice\s*No\.?\s*:?\s*(\d+)/i) || flat.match(/#(\d{4,})/);
+  if (invMatch) invoiceNumber = invMatch[1];
+  else invoiceNumber = String(Math.floor(Math.random()*900000+100000));
+  
+  // ----- Date -----
   let invoiceDate = new Date().toISOString().split('T')[0];
-  if (rawDate) {
-    try { const pts = rawDate.split(/[-\/]/); if(pts.length===3){ let y=pts[2].length===2?'20'+pts[2]:pts[2]; let d=new Date(`${y}-${pts[1].padStart(2,'0')}-${pts[0].padStart(2,'0')}`); if(!isNaN(d)) invoiceDate=d.toISOString().split('T')[0]; } } catch(e){}
+  const dateMatch = flat.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (dateMatch) {
+    let d = new Date(`${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`);
+    if (!isNaN(d)) invoiceDate = d.toISOString().split('T')[0];
   }
   
-  // --- RegNo (primary key) ---
-  let regNo = find([
-    /Veh\s*Number[:\-]*\s*([A-Z]{2}\s*\d{2}\s*[A-Z]{1,3}\s*\d{4})/i,
-    /Reg\s*No[:\-]*\s*([A-Z]{2}\d{2}[A-Z]{1,3}\d{4})/i,
-    /MP\d{2}[A-Z]{1,3}\d{4}/,
-    /Registration\s*No[:\-]*\s*([A-Z0-9]{9,})/i,
-  ]);
-  if (!regNo) {
-    const mpMatch = flat.match(/(MP\d{2}[A-Z]{1,3}\d{4})/);
-    if (mpMatch) regNo = mpMatch[1];
+  // ----- RegNo (primary key) -----
+  let regNo = '';
+  const regMatch = flat.match(/MP\d{2}[A-Z]{1,3}\d{4}/i);
+  if (regMatch) regNo = regMatch[0].toUpperCase();
+  
+  // ----- Customer Name (filename से) -----
+  let customerName = filename.replace(/\.pdf$/i, '').replace(/^[_\d]+/, '').replace(/[_]+/g, ' ').trim();
+  if (!customerName || customerName.length < 3) customerName = 'Unknown';
+  
+  // ----- Phone -----
+  let customerPhone = '';
+  const phoneMatch = flat.match(/(\d{10})/);
+  if (phoneMatch) customerPhone = phoneMatch[1];
+  
+  // ----- Vehicle Model -----
+  let vehicle = '';
+  const vehMatch = flat.match(/(?:Model|Vehicle)\s*:?\s*([A-Z][A-Z0-9\s]{3,30})/i);
+  if (vehMatch) vehicle = vehMatch[1].trim();
+  if (!vehicle) vehicle = filename.match(/SP125|Activa|Shine|Hornet/i)?.[0] || '';
+  
+  // ----- Parts Extraction – महत्वपूर्ण भाग -----
+  const items = [];
+  // अब line by line parse करेंगे
+  const lines = text.split('\n');
+  let inTable = false;
+  for (let line of lines) {
+    // टेबल की शुरुआत
+    if (/Part\s*No|Description|Qty|MRP|Taxable/i.test(line)) {
+      inTable = true;
+      continue;
+    }
+    if (inTable && line.trim().length > 0 && /^[A-Z0-9\-]{5,}/.test(line.trim())) {
+      // लाइन को स्पेस से split करें
+      const parts = line.trim().split(/\s{2,}/);
+      if (parts.length >= 4) {
+        let partNo = parts[0];
+        let description = parts[1] || '';
+        let qty = parseInt(parts[2]) || 1;
+        let mrp = parseFloat(parts[3]) || 0;
+        let taxableAmt = parts[4] ? parseFloat(parts[4]) : mrp;
+        let gstAmount = 0, gstRate = 0;
+        if (parts[5]) gstAmount = parseFloat(parts[5]);
+        if (taxableAmt > 0 && gstAmount > 0) gstRate = Math.round((gstAmount / taxableAmt) * 100);
+        else gstRate = 18;
+        items.push({
+          partNo, description, qty, mrp, taxableAmt, gstAmount, gstRate, total: taxableAmt
+        });
+      } else {
+        // फॉलबैक: single line में numbers अंत में
+        const numMatch = line.match(/(\d+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})$/);
+        if (numMatch) {
+          let qty = parseInt(numMatch[1]);
+          let mrp = parseFloat(numMatch[2].replace(/,/g,''));
+          let taxable = parseFloat(numMatch[3].replace(/,/g,''));
+          let partMatch = line.match(/^([A-Z0-9\-]+)/);
+          let partNo = partMatch ? partMatch[1] : 'UNKNOWN';
+          let desc = line.replace(partNo, '').replace(numMatch[0], '').trim();
+          items.push({
+            partNo, description: desc, qty, mrp, taxableAmt: taxable,
+            gstAmount: 0, gstRate: 18, total: taxable
+          });
+        }
+      }
+    }
+    // टेबल खत्म होने पर
+    if (/Subtotal|Total\s+Invoice/i.test(line)) inTable = false;
   }
-  regNo = (regNo || '').toUpperCase().replace(/\s/g, '');
   
-  // --- Customer name from filename or PDF ---
-  let customerName = filename.replace(/\.pdf$/i,'').replace(/^[_\d]+/,'').replace(/[_]+/g,' ').trim();
-  if (!customerName || customerName.length<3) customerName = find([/Customer\s*Name[:\-]*\s*([A-Z][A-Z ]{2,30})/i]) || 'Unknown';
-  const customerPhone = find([/Phone[:\-]*\s*([6-9]\d{9})/i, /Mobile[:\-]*\s*([6-9]\d{9})/i]);
-  const vehicle = find([
-    /Model\s*No[:\-]*\s*([A-Z][A-Z0-9 ]{3,40})/i,
-    /(?:Activa|Shine|Hornet|SP\s*125|CB\d|NXR|Dio|Grazia|Unicorn|Livo|Dream)\s*[A-Z0-9 ]{0,30}/i,
-  ]);
-  const frameNo = find([/Frame\s*No[:\-]*\s*([A-Z0-9]{10,})/i]);
-  const engineNo = find([/Engine\s*No[:\-]*\s*([A-Z0-9]{10,})/i]);
-  const paymentMode = find([/Payment\s*Mode[:\-]*\s*(CASH|FINANCE|CHEQUE|UPI)/i], 'CASH');
+  // ----- Totals (PDF से निकालें) -----
+  let subtotal = 0, gstAmount = 0, finalTotal = 0;
+  const subtotalMatch = flat.match(/Subtotal\s*:?\s*[₹]*\s*([\d,]+\.\d{2})/i);
+  if (subtotalMatch) subtotal = parseFloat(subtotalMatch[1].replace(/,/g,''));
+  const gstMatch = flat.match(/GST\s*:?\s*[₹]*\s*([\d,]+\.\d{2})/i);
+  if (gstMatch) gstAmount = parseFloat(gstMatch[1].replace(/,/g,''));
+  const totalMatch = flat.match(/Total\s*:?\s*[₹]*\s*([\d,]+\.\d{2})/i);
+  if (totalMatch) finalTotal = parseFloat(totalMatch[1].replace(/,/g,''));
   
-  // --- Service specific ---
-  const serviceKm = find([/Service\s*KM[:\-]*\s*(\d{1,6})/i]);
-  let serviceNumber = 0;
+  // अगर items हैं और totals नहीं मिले, तो items से calculate करें
+  if (items.length > 0 && finalTotal === 0) {
+    subtotal = items.reduce((s,i)=>s+i.taxableAmt, 0);
+    gstAmount = items.reduce((s,i)=>s+(i.gstAmount || 0), 0);
+    finalTotal = subtotal + gstAmount;
+  }
+  // अगर सिर्फ GST मिला हो और subtotal न हो, तो अनुमान लगाएँ
+  if (gstAmount > 0 && finalTotal === 0 && subtotal === 0) {
+    // मान लें कि GST rate 18% है
+    subtotal = Math.round((gstAmount / 0.18) * 100) / 100;
+    finalTotal = subtotal + gstAmount;
+  }
+  
+  // ----- Invoice Type -----
+  const hasPartKeywords = /Part\s*No|Description|Qty|MRP/i.test(flat);
+  const invoiceType = hasPartKeywords ? 'service' : 'vehicle';
+  
+  // Service number (1st, 2nd, 3rd) – अगर text में हो
+  let serviceNumber = null;
   const svcMatch = flat.match(/(\d+)(?:st|nd|rd|th)\s+Service/i);
-  if(svcMatch) serviceNumber = parseInt(svcMatch[1]);
-  else { const smh = flat.match(/SMH\s*\/\s*(\d+)/i); if(smh) serviceNumber = parseInt(smh[1]); }
-  const serviceType = find([/Service\s*Type[:\-]*\s*(FREE|PAID)/i]);
-  
-  // --- Totals from PDF ---
-  const rawTotal = find([/Total\s*Invoice\s*Value[^₹]*₹\s*([\d,]+\.\d{2})/i, /Grand\s*Total[^₹]*₹\s*([\d,]+\.\d{2})/i]);
-  const pdfTotal = parseFloat((rawTotal||'0').replace(/,/g,'')) || 0;
-  const rawGST = find([/Total\s*GST\s*Amount[^₹]*₹\s*([\d,]+\.\d{2})/i, /GST[^₹]*₹\s*([\d,]+\.\d{2})/i]);
-  const pdfGST = parseFloat((rawGST||'0').replace(/,/g,'')) || 0;
-  
-  // --- Detect Invoice Type (Vehicle vs Service) ----
-const hasPartTable = /Part\s*No|Description|Qty|MRP|Taxable\s*Amt/i.test(flat);
-const hasServiceKeywords = /Service\s*Type|Jobcard|SMH\/|1st\s*Service|2nd\s*Service|3rd\s*Service|FREE\s*SERVICE/i.test(flat);
-const hasSaleKeywords = /Sale\s*Date|Selling\s*Dealer|HMSI|Ex-Showroom|RTO|Registration|Vehicle\s*Number/i.test(flat);
-const highAmount = pdfTotal > 50000;
-
-let invoiceType = 'service';
-// अगर साफ तौर पर service keywords हों → service
-if (hasServiceKeywords) invoiceType = 'service';
-// अगर parts table हो और sale keywords न हों → service
-else if (hasPartTable && !hasSaleKeywords) invoiceType = 'service';
-// अगर sale keywords हों या (high amount और parts table न हो) → vehicle
-else if (hasSaleKeywords || (highAmount && !hasPartTable)) invoiceType = 'vehicle';
-// अगर filename में VEHICLE या TAX INVOICE (व्हीकल वाला) हो → vehicle
-if (/VEHICLE|TAX\s*INVOICE|SALE/i.test(filename) && !hasServiceKeywords) invoiceType = 'vehicle';
-// अगर filename में SERVICE हो → service
-if (/SERVICE|PARTS/i.test(filename)) invoiceType = 'service';
-  
-  // --- Parts extraction (only for service invoices) ---
-  let items = [];
-  if (invoiceType === 'service') {
-    const rowPattern = /(\d{5,}[\w\-]+|\d{3,}[\w\-]+)\s+([A-Z][A-Z\s\/\-\.]+?)\s+(\d+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(?:\s+([\d,]+\.\d{2}))?/g;
-    let match;
-    while ((match = rowPattern.exec(flat)) !== null) {
-      const partNo = match[1].trim();
-      const description = match[2].trim();
-      const qty = parseInt(match[3]) || 1;
-      const mrp = parseFloat(match[4].replace(/,/g,'')) || 0;
-      const taxableAmt = parseFloat(match[5].replace(/,/g,'')) || 0;
-      let gstAmount = match[6] ? parseFloat(match[6].replace(/,/g,'')) : 0;
-      let gstRate = 0;
-      if (taxableAmt > 0 && gstAmount > 0) gstRate = Math.round((gstAmount / taxableAmt) * 100);
-      else if (/CONSUM|OIL|WASHER/i.test(description)) gstRate = 0;
-      else gstRate = 18;
-      items.push({ partNo, description, qty, mrp, taxableAmt, gstAmount, gstRate, total: taxableAmt });
-    }
-    if (items.length === 0) {
-      const simple = /([A-Z0-9]{5,}[\-]?[A-Z0-9]+)\s+([A-Z][A-Z\s\/]+?)\s+(\d+)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})/g;
-      let m; while((m=simple.exec(flat))) items.push({ partNo:m[1], description:m[2].trim(), qty:parseInt(m[3])||1, mrp:parseFloat(m[4].replace(/,/g,''))||0, taxableAmt:parseFloat(m[5].replace(/,/g,''))||0, gstRate:18, gstAmount:0, total:parseFloat(m[5].replace(/,/g,''))||0 });
-    }
-  }
-  
-  // Calculate totals
-  let subtotal = items.reduce((s,i)=>s+(i.taxableAmt||0),0);
-  let gstAmount = items.reduce((s,i)=>s+(i.gstAmount||0),0);
-  let finalTotal = subtotal + gstAmount;
-  if (pdfTotal > 0) finalTotal = pdfTotal;
-  if (pdfGST > 0) gstAmount = pdfGST;
-  if (finalTotal > 0 && gstAmount > 0) subtotal = finalTotal - gstAmount;
-  const gstRate = subtotal > 0 ? Math.round((gstAmount/subtotal)*100) : 0;
+  if (svcMatch) serviceNumber = parseInt(svcMatch[1]);
   
   return {
-    invoiceNumber, invoiceDate, customerName: customerName.slice(0,60), customerPhone, vehicle,
-    regNo, frameNo, engineNo, paymentMode, serviceKm: serviceKm?parseInt(serviceKm):null,
-    serviceNumber: serviceNumber||null, serviceType: serviceType||'', items, parts: items,
-    totals: { subtotal, gstRate, gstAmount, totalAmount: finalTotal },
+    invoiceNumber, invoiceDate, customerName: customerName.slice(0,60), customerPhone,
+    vehicle, regNo, frameNo: '', engineNo: '', paymentMode: 'CASH',
+    serviceKm: null, serviceNumber, serviceType: '',
+    items, parts: items,
+    totals: { subtotal, gstRate: 18, gstAmount, totalAmount: finalTotal },
     invoiceType, importedFrom: filename, importedAt: new Date().toISOString(), status: 'Active'
   };
 };
@@ -182,7 +198,7 @@ export default function InvoiceManagementDashboard() {
       if (file.type !== 'application/pdf') continue;
       try {
         const text = await extractPDFText(file);
-        const parsed = parseVPHondaInvoice(text, file.name);
+        const parsed = parseOCRServiceInvoice(text, file.name);
         if (expectedType !== 'both' && parsed.invoiceType !== expectedType) {
           console.log(`Skipping ${file.name} (type ${parsed.invoiceType}) not ${expectedType}`);
           continue;
