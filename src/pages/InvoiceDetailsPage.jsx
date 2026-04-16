@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Edit2, Download, Print, Trash2, Plus, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Edit2, Download, Printer, Trash2, Plus, AlertCircle } from 'lucide-react';
 import { api } from '../utils/apiConfig';
 import html2pdf from 'html2pdf.js';
 
@@ -230,7 +230,7 @@ export default function InvoiceDetailsPage() {
                   onClick={handlePrint}
                   className="bg-orange-600 hover:bg-orange-700 text-white font-bold flex items-center gap-2"
                 >
-                  <Print size={16} /> Print
+                  <Printer size={16} /> Print
                 </Button>
               </>
             )}
