@@ -484,6 +484,7 @@ export default function InvoiceManagementDashboard() {
   const [lastRefresh,    setLastRefresh]    = useState(new Date());
   const [activeTab,      setActiveTab]      = useState('all'); // 'all' | 'vehicle' | 'service'
   const [currentPage,   setCurrentPage]   = useState(1);
+  const [selectedInvoice, setSelectedInvoice] = useState(null);
   const INVOICES_PER_PAGE = 5;
   const intervalRef = useRef(null);
 
@@ -762,17 +763,17 @@ export default function InvoiceManagementDashboard() {
           <Card className="bg-blue-900/20 border-blue-500">
             <CardContent className="pt-5 pb-5">
               <Button onClick={handleSingleFile} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 flex items-center justify-center gap-2 text-base">
-                <FileText size={22}/> Import Single PDF
+                <FileText size={22}/> Import Vehicle Tax Invoice
               </Button>
-              <p className="text-blue-400 text-xs mt-2 text-center">एक PDF — सभी data extract होगा</p>
+              <p className="text-blue-400 text-xs mt-2 text-center">Vehicle Tax Invoice PDF import</p>
             </CardContent>
           </Card>
           <Card className="bg-green-900/20 border-green-500">
             <CardContent className="pt-5 pb-5">
               <Button onClick={handleMultiFile} className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 flex items-center justify-center gap-2 text-base">
-                <FolderOpen size={22}/> Import Multiple PDFs
+                <FolderOpen size={22}/> Import Service PDFs
               </Button>
-              <p className="text-green-400 text-xs mt-2 text-center">314+ VP Honda invoices एक साथ</p>
+              <p className="text-green-400 text-xs mt-2 text-center">Service/Parts invoices एक साथ</p>
             </CardContent>
           </Card>
           <Card className="bg-purple-900/20 border-purple-500">
@@ -918,7 +919,7 @@ export default function InvoiceManagementDashboard() {
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex gap-1.5">
-                            <Button onClick={()=>navigate(`/invoice/${inv.invoiceNumber||inv.id}`)}
+                            <Button onClick={()=>setSelectedInvoice(inv)}
                               className="bg-blue-600 hover:bg-blue-700 text-white h-7 px-2 text-xs flex items-center gap-1">
                               <Eye size={12}/> View
                             </Button>
@@ -964,6 +965,87 @@ export default function InvoiceManagementDashboard() {
         </Card>
 
       </div>
+
+      {/* ═══ INVOICE DETAIL MODAL ═══ */}
+      {selectedInvoice && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={()=>setSelectedInvoice(null)}>
+          <div className="bg-slate-800 rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 border border-slate-600" onClick={e=>e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-white">📋 Invoice #{selectedInvoice.invoiceNumber||selectedInvoice.id}</h2>
+              <Button onClick={()=>setSelectedInvoice(null)} className="bg-red-600 hover:bg-red-700 text-white h-8 px-3">✕ Close</Button>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
+              <div className="bg-slate-700/50 rounded p-3">
+                <p className="text-slate-400 text-xs">Customer</p>
+                <p className="text-white font-bold">{selectedInvoice.customerName||'—'}</p>
+              </div>
+              <div className="bg-slate-700/50 rounded p-3">
+                <p className="text-slate-400 text-xs">Phone</p>
+                <p className="text-white">{selectedInvoice.customerPhone||'—'}</p>
+              </div>
+              <div className="bg-slate-700/50 rounded p-3">
+                <p className="text-slate-400 text-xs">Vehicle</p>
+                <p className="text-blue-300">{selectedInvoice.vehicle||'—'}</p>
+              </div>
+              <div className="bg-slate-700/50 rounded p-3">
+                <p className="text-slate-400 text-xs">Reg No</p>
+                <p className="text-white font-mono">{selectedInvoice.regNo||'—'}</p>
+              </div>
+              <div className="bg-slate-700/50 rounded p-3">
+                <p className="text-slate-400 text-xs">Date</p>
+                <p className="text-white">{selectedInvoice.invoiceDate||'—'}</p>
+              </div>
+              <div className="bg-slate-700/50 rounded p-3">
+                <p className="text-slate-400 text-xs">Type</p>
+                <p className="text-white">{getInvoiceType(selectedInvoice) === 'vehicle' ? '🏍️ Vehicle' : '🔧 Service'}</p>
+              </div>
+            </div>
+
+            {/* Parts Table */}
+            {(selectedInvoice.items||selectedInvoice.parts||[]).length > 0 && (
+              <div className="mb-4">
+                <h3 className="text-sm font-bold text-slate-300 mb-2">🔧 Parts / Items</h3>
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-700">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left text-slate-400">Part No</th>
+                      <th className="px-2 py-1.5 text-left text-slate-400">Description</th>
+                      <th className="px-2 py-1.5 text-right text-slate-400">Qty</th>
+                      <th className="px-2 py-1.5 text-right text-slate-400">MRP (₹)</th>
+                      <th className="px-2 py-1.5 text-right text-slate-400">Taxable (₹)</th>
+                      <th className="px-2 py-1.5 text-right text-slate-400">GST%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(selectedInvoice.items||selectedInvoice.parts||[]).map((item,idx) => (
+                      <tr key={idx} className="border-b border-slate-700">
+                        <td className="px-2 py-1.5 text-blue-300 font-mono">{item.partNo||'—'}</td>
+                        <td className="px-2 py-1.5 text-white">{item.description||'—'}</td>
+                        <td className="px-2 py-1.5 text-right text-slate-300">{item.quantity||1}</td>
+                        <td className="px-2 py-1.5 text-right text-slate-300">₹{(item.mrp||0).toLocaleString('en-IN')}</td>
+                        <td className="px-2 py-1.5 text-right text-green-400 font-bold">₹{(item.total||item.taxableAmount||0).toLocaleString('en-IN')}</td>
+                        <td className="px-2 py-1.5 text-right text-slate-400">{item.gstRate||0}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Totals */}
+            <div className="bg-slate-700/50 rounded p-4 text-sm">
+              <div className="flex justify-between mb-1"><span className="text-slate-400">Subtotal:</span><span className="text-white">₹{(selectedInvoice.totals?.subtotal||0).toLocaleString('en-IN')}</span></div>
+              <div className="flex justify-between mb-1"><span className="text-slate-400">GST ({selectedInvoice.totals?.gstRate||0}%):</span><span className="text-white">₹{(selectedInvoice.totals?.gstAmount||0).toLocaleString('en-IN')}</span></div>
+              <div className="flex justify-between border-t border-slate-600 pt-2 mt-2"><span className="text-white font-bold text-base">Total:</span><span className="text-green-400 font-black text-lg">₹{(selectedInvoice.totals?.totalAmount||selectedInvoice.totalAmount||0).toLocaleString('en-IN')}</span></div>
+            </div>
+
+            {selectedInvoice.importedFrom && (
+              <p className="text-xs text-slate-500 mt-3">📄 Source: {selectedInvoice.importedFrom}</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
