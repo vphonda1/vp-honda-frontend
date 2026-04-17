@@ -6,31 +6,54 @@ import { Input } from "@/components/ui/input";
 import { Search, Trash2, Download, ArrowLeft, Eye, FileText, FolderOpen, RefreshCw, Clock } from 'lucide-react';
 import { api } from '../utils/apiConfig';
 
-// ── NO pdfjs-dist needed! PDF parsing happens on backend (Node.js) ──────────
-// Backend route: POST /api/parse-pdf (see pdfRoutes.js)
+// ── PDF text extraction: backend first, pdfjs CDN fallback ──────────────────
+// Excel-generated PDFs sometimes fail with pdf-parse — pdfjs handles them reliably
+
+const extractPDFTextClient = async (file) => {
+  // Load pdfjs from CDN if not already loaded
+  if (!window.pdfjsLib) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+  const ab = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: ab }).promise;
+  let out = '';
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const tc   = await page.getTextContent();
+    out += tc.items.map(i => i.str).join(' ') + '\n';
+  }
+  if (!out.trim()) throw new Error('PDF से text extract नहीं हुआ');
+  console.log('📄 Client-side pdfjs extracted:', out.length, 'chars');
+  return out;
+};
 
 const getLS = (k, fb=[]) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;} };
 
-// Extract PDF text via backend API — zero browser worker issues
 const extractPDFText = async (file) => {
-  const formData = new FormData();
-  formData.append('pdf', file);
+  // 1️⃣ Try backend first
+  try {
+    const fd = new FormData();
+    fd.append('pdf', file);
+    const res = await fetch(api('/api/invoices/parse-pdf'), { method: 'POST', body: fd });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.text && data.text.trim().length > 50) {
+        console.log('📄 Backend extracted:', data.text.length, 'chars');
+        return data.text;
+      }
+    }
+  } catch(e) { console.log('⚠️ Backend failed, switching to client-side pdfjs...'); }
 
-  const res = await fetch(api('/api/invoices/parse-pdf'), {
-    method: 'POST',
-    body: formData,
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Server error' }));
-    throw new Error(err.error || 'PDF parse failed');
-  }
-
-  const data = await res.json();
-  if (!data.text) throw new Error(data.error || 'No text extracted');
-
-  console.log('📄 PDF extracted via backend, length:', data.text.length);
-  return data.text;
+  // 2️⃣ Fallback: client-side pdfjs (handles Excel PDFs reliably)
+  console.log('📄 Using pdfjs client-side for:', file.name);
+  return await extractPDFTextClient(file);
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -48,9 +71,8 @@ const parseVPHondaInvoice = (text, filename) => {
     return fb;
   };
 
-  // Invoice No — handles "Invoice No :- 550" and "Invoice No : SMH/25-26 153"
+  // Invoice No
   const invoiceNumber = find([
-    /Invoice\s*No\s*[:-]+\s*(?:[A-Z\/\-]*\d{2}-\d{2}\s+)?(\d+)/i,
     /Invoice\s*No\s*[:-]+\s*(\d+)/i,
     /Invoice\s*#\s*(\d+)/i,
     /INV[- ](\d+)/i,
@@ -74,11 +96,16 @@ const parseVPHondaInvoice = (text, filename) => {
     } catch {}
   }
 
-  // Customer name — filename is most reliable (e.g. _522_SANJAY_JATAV.pdf)
+  // Customer name — filename is most reliable
+  // Handles: _550_NIKITA BAI.pdf, 13-04-2026_JYOTI.pdf, _13-04-2026_JYOTI_1.pdf, _522_SANJAY_JATAV.pdf
   let customerName = '';
-  // Step 1: Extract from filename (remove invoice number, underscores, .pdf)
-  const fnClean = filename.replace(/\.pdf$/i,'').replace(/^[_\d]+/,'').replace(/[_]+/g,' ').trim();
-  if (fnClean && fnClean.length > 2 && !/^unknown$/i.test(fnClean)) {
+  const fnClean = filename
+    .replace(/\.pdf$/i, '')          // remove .pdf
+    .replace(/^_?[\d][\d\-]*_/, '') // remove leading date/number: "_550_" or "13-04-2026_" or "_13-04-2026_"
+    .replace(/_\d+$/, '')           // remove trailing "_1" suffix
+    .replace(/_/g, ' ')             // underscores → spaces
+    .trim();
+  if (fnClean && fnClean.length > 1 && !/^unknown$/i.test(fnClean)) {
     customerName = fnClean.toUpperCase();
   }
   // Step 2: If filename didn't work, try Leagal Name from PDF (skip V P HONDA / Dealer Name)
@@ -91,18 +118,16 @@ const parseVPHondaInvoice = (text, filename) => {
   }
   if (!customerName) customerName = 'Unknown';
 
-  // Phone — vehicle invoices use "Mobile :" format, service use "Phone (M)"
-  // Dealer phone (9713394738) is avoided by matching customer phone only
+  // Phone
   const customerPhone = find([
     /Phone\s*\(M\)\s*[:-]?\s*([6-9]\d{9})/i,
-    /Mobile\s*[:-]?\s*([6-9]\d{9})/i,
     /\b([6-9]\d{9})\b/,
   ]);
 
-  // Vehicle model — "Model No : SP125 DLX DISK" or vehicle invoice table "SHINE 100-OBD2B"
+  // Vehicle model — "Model No : SP125 DLX DISK"
   const vehicle = find([
-    /Model\s*No\s*[:-]*\s*([A-Z][A-Z0-9 \-]{3,30}?)(?=\s+(?:Colour|Color|Engine|Frame|Jobcard|Service|Sale|Model\s*Code))/i,
-    /(?:SHINE|Activa|Hornet|SP\s*125|CB\d|NXR|Dio|Grazia|Unicorn|Livo|Dream|XBlade|Hness)\s*[\w\-. ]{0,20}/i,
+    /Model\s*No\s*[:-]*\s*([A-Z][A-Z0-9 ]{3,30}?)(?=\s+(?:Colour|Color|Engine|Frame|Jobcard|Service|Sale|Model\s*Code))/i,
+    /(?:Activa|Shine|Hornet|SP\s*125|CB\d|NXR|Dio|Grazia|Unicorn|Livo|Dream)\s*[A-Z0-9 ]{0,20}/i,
   ]);
 
   // Reg No — "Veh Number :- MP04WA9535"
@@ -123,12 +148,11 @@ const parseVPHondaInvoice = (text, filename) => {
   if (svcM) serviceNumber = svcM[1];
   if (!serviceNumber) { const smh = flat.match(/SMH\s*\/\s*(\d+)/i); if (smh) serviceNumber = smh[1]; }
 
-  // Total — service: "Total Invoice Value(In Figure) ₹651.00" | vehicle: "Invoice Total ₹65,240.00"
+  // Total — "Total Invoice Value(In Figure) ₹ 861.00"
   const rawTotal = find([
     /Total\s*Invoice\s*Value\s*\([Ii]n\s*[Ff]igure\)\s*[₹Rs.\s]*([\d,]+\.\d{2})/i,
     /Total\s*Invoice\s*Value[^₹]*[₹]\s*([\d,]+\.\d{2})/i,
     /Invoice\s*Value\(?[Ii]n\s*[Ff]igure\)?[₹Rs.\s]*([\d,]+\.\d{2})/i,
-    /Invoice\s*Total\s*[₹Rs.\s]*([\d,]+\.\d{2})/i,
     /Grand\s*Total[^₹]*[₹]\s*([\d,]+\.\d{2})/i,
     /Total\s*Parts\s*Amount[^₹]*[₹]\s*([\d,]+\.\d{2})/i,
     /₹\s*([\d,]+\.\d{2})\s*Total\s*Labour/i,
@@ -534,30 +558,23 @@ export default function InvoiceManagementDashboard() {
       if (file.type !== 'application/pdf') continue;
       try {
         const text = await extractPDFText(file);
-        console.log(`📄 ${file.name} — Extracted text (first 500):`, text.slice(0,500));
+        console.log(`📄 ${file.name} — Extracted (first 300):`, text.slice(0,300));
         const parsed = parseVPHondaInvoice(text, file.name);
-        // forcedType: Vehicle button = 'vehicle', Service button = 'service'
         if (forcedType) parsed.invoiceType = forcedType;
-        console.log(`✅ ${file.name} — Parsed:`, { 
-          invoiceNo: parsed.invoiceNumber, 
-          customer: parsed.customerName, 
-          items: parsed.items.length, 
-          total: parsed.totals.totalAmount 
-        });
+        console.log(`✅ Parsed:`, { no: parsed.invoiceNumber, cust: parsed.customerName, items: parsed.items.length, total: parsed.totals.totalAmount });
         added.push(parsed);
       } catch (err) {
-        console.error(`❌ ${file.name} Error:`, err);
+        console.error(`❌ ${file.name}:`, err.message);
         errors.push(file.name + ': ' + err.message);
         added.push({
           invoiceNumber: Math.floor(Math.random()*900000+100000),
-          customerName: file.name.replace(/[_\-\d]+/g,' ').replace(/\.pdf$/i,'').trim().slice(0,40)||'Unknown',
+          customerName: file.name.replace(/^_?[\d][\d\-]*_/,'').replace(/_\d+$/,'').replace(/_/g,' ').replace(/\.pdf$/i,'').trim().toUpperCase().slice(0,40)||'Unknown',
           customerPhone:'', vehicle:'', regNo:'', items:[], parts:[],
-          invoiceDate:new Date().toISOString().split('T')[0],
+          invoiceDate: new Date().toISOString().split('T')[0],
           totals:{subtotal:0,gstRate:18,gstAmount:0,totalAmount:0},
           invoiceType: forcedType || 'service',
           importedFrom:file.name, importedAt:new Date().toISOString(),
-          customerId:'imported-'+Date.now(), status:'Active',
-          importError: err.message,
+          customerId:'imported-'+Date.now(), status:'Active', importError:err.message,
         });
       }
     }
@@ -605,19 +622,21 @@ export default function InvoiceManagementDashboard() {
       for (const item of (inv.items || [])) {
         const existIdx = partsInv.findIndex(p => p.partNo === item.partNo);
         if (existIdx >= 0) {
+          // Update existing — increment usage count
           partsInv[existIdx].usedCount = (partsInv[existIdx].usedCount || 0) + (item.quantity || 1);
           partsInv[existIdx].lastUsedInvoice = inv.invoiceNumber;
           partsInv[existIdx].lastUsedDate = inv.invoiceDate;
           if (item.mrp > 0) partsInv[existIdx].mrp = item.mrp;
         } else {
+          // Add new part to inventory
           partsInv.push({
             partNo:      item.partNo,
             description: item.description || item.partNo,
             hsn:         item.hsn || '',
             mrp:         item.mrp || 0,
             unitPrice:   item.unitPrice || 0,
-            category:    '',
-            stock:       0,
+            category:    '', // will be auto-detected in PartsManagement
+            stock:       0,  // unknown — user updates manually
             usedCount:   item.quantity || 1,
             lastUsedInvoice: inv.invoiceNumber,
             lastUsedDate:    inv.invoiceDate,
@@ -637,15 +656,13 @@ export default function InvoiceManagementDashboard() {
     setTimeout(()=>setMessage(''), 6000);
   };
 
-  // Vehicle button → forcedType 'vehicle' | Service button → forcedType 'service'
+  // Vehicle button → type 'vehicle' forced | Service button → type 'service' forced
   const handleSingleFile = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'vehicle'); i.click(); };
   const handleMultiFile  = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'service'); i.click(); };
 
   const handleDelete = async (no) => {
     if (!window.confirm('Delete?')) return;
-    // MongoDB delete first
-    try { await fetch(api(`/api/invoices/${no}`), { method: 'DELETE' }); } catch(e) {}
-    // localStorage sync
+    try { await fetch(api(`/api/invoices/${no}`), { method:'DELETE' }); } catch(e) {}
     const upd = invoices.filter(i=>String(i.invoiceNumber||i.id)!==String(no));
     localStorage.setItem('invoices', JSON.stringify(upd.filter(i=>i._s!=='db')));
     loadInvoices(); setMessage('✅ Deleted!'); setTimeout(()=>setMessage(''),2000);
@@ -655,12 +672,7 @@ export default function InvoiceManagementDashboard() {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     if (!window.confirm(`⚠️ सभी ${invoices.length} invoices delete होंगे!`)) return;
-    // MongoDB: delete all via clear route
-    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'all' }) }); } catch(e) {}
-    // Also individual delete for any remaining
-    for (const inv of invoices) {
-      try { await fetch(api(`/api/invoices/${inv.invoiceNumber||inv._id||inv.id}`), { method:'DELETE' }); } catch(e) {}
-    }
+    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'all'}) }); } catch(e) {}
     localStorage.setItem('invoices', JSON.stringify([]));
     localStorage.setItem('generatedInvoices', JSON.stringify([]));
     loadInvoices(); setMessage('✅ सभी clear!'); setTimeout(()=>setMessage(''),3000);
@@ -674,8 +686,7 @@ export default function InvoiceManagementDashboard() {
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     const vCount = vehicleInvoices.length;
     if (!window.confirm(`⚠️ ${vCount} Vehicle Tax Invoices delete होंगे!`)) return;
-    // MongoDB: POST /api/invoices/clear with type:'vehicle'
-    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'vehicle' }) }); } catch(e) {}
+    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'vehicle'}) }); } catch(e) {}
     const remaining = invoices.filter(i => getInvoiceType(i) !== 'vehicle');
     localStorage.setItem('invoices', JSON.stringify(remaining.filter(i=>i._s!=='db')));
     loadInvoices(); setMessage(`✅ ${vCount} Vehicle invoices deleted!`); setTimeout(()=>setMessage(''),3000);
@@ -686,8 +697,7 @@ export default function InvoiceManagementDashboard() {
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     const sCount = serviceInvoices.length;
     if (!window.confirm(`⚠️ ${sCount} Service/Parts Invoices delete होंगे!`)) return;
-    // MongoDB: POST /api/invoices/clear with type:'service'
-    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'service' }) }); } catch(e) {}
+    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'service'}) }); } catch(e) {}
     const remaining = invoices.filter(i => getInvoiceType(i) !== 'service');
     localStorage.setItem('invoices', JSON.stringify(remaining.filter(i=>i._s!=='db')));
     loadInvoices(); setMessage(`✅ ${sCount} Service invoices deleted!`); setTimeout(()=>setMessage(''),3000);
