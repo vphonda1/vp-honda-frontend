@@ -11,26 +11,49 @@ import { api } from '../utils/apiConfig';
 
 const getLS = (k, fb=[]) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;} };
 
-// Extract PDF text via backend API — zero browser worker issues
-const extractPDFText = async (file) => {
-  const formData = new FormData();
-  formData.append('pdf', file);
-
-  const res = await fetch(api('/api/parse-pdf'), {
-    method: 'POST',
-    body: formData,
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Server error' }));
-    throw new Error(err.error || 'PDF parse failed');
+// ── Client-side PDF text extraction using pdfjs CDN (no Vite worker issues) ──
+const extractPDFTextClient = async (file) => {
+  // Dynamically load pdfjs from CDN if not already loaded
+  if (!window.pdfjsLib) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   }
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let fullText = '';
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const tc = await page.getTextContent();
+    fullText += tc.items.map(item => item.str).join('\n') + '\n';
+  }
+  console.log('📄 PDF extracted client-side, length:', fullText.length);
+  return fullText;
+};
 
-  const data = await res.json();
-  if (!data.text) throw new Error(data.error || 'No text extracted');
+// Extract PDF text — backend first, client-side fallback
+const extractPDFText = async (file) => {
+  // Try backend first
+  try {
+    const formData = new FormData();
+    formData.append('pdf', file);
+    const res = await fetch(api('/api/parse-pdf'), { method: 'POST', body: formData });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.text) {
+        console.log('📄 PDF extracted via backend, length:', data.text.length);
+        return data.text;
+      }
+    }
+  } catch(e) { console.log('Backend PDF parse unavailable, using client-side...'); }
 
-  console.log('📄 PDF extracted via backend, length:', data.text.length);
-  return data.text;
+  // Fallback: client-side extraction
+  return await extractPDFTextClient(file);
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -48,8 +71,9 @@ const parseVPHondaInvoice = (text, filename) => {
     return fb;
   };
 
-  // Invoice No
+  // Invoice No — handle both "Invoice No :- 550" and "Invoice No : SMH/25-26 153"
   const invoiceNumber = find([
+    /Invoice\s*No\s*[:-]+\s*(?:[A-Z\/\-]*\d{2}-\d{2}\s+)?(\d+)/i,
     /Invoice\s*No\s*[:-]+\s*(\d+)/i,
     /Invoice\s*#\s*(\d+)/i,
     /INV[- ](\d+)/i,
@@ -90,16 +114,17 @@ const parseVPHondaInvoice = (text, filename) => {
   }
   if (!customerName) customerName = 'Unknown';
 
-  // Phone
+  // Phone — vehicle invoices use "Mobile :" format, service use "Phone (M)"
   const customerPhone = find([
     /Phone\s*\(M\)\s*[:-]?\s*([6-9]\d{9})/i,
+    /Mobile\s*[:-]?\s*([6-9]\d{9})/i,
     /\b([6-9]\d{9})\b/,
   ]);
 
-  // Vehicle model — "Model No : SP125 DLX DISK"
+  // Vehicle model — "Model No : SP125 DLX DISK" or table row "SHINE 100-OBD2B M A GREY"
   const vehicle = find([
-    /Model\s*No\s*[:-]*\s*([A-Z][A-Z0-9 ]{3,30}?)(?=\s+(?:Colour|Color|Engine|Frame|Jobcard|Service|Sale|Model\s*Code))/i,
-    /(?:Activa|Shine|Hornet|SP\s*125|CB\d|NXR|Dio|Grazia|Unicorn|Livo|Dream)\s*[A-Z0-9 ]{0,20}/i,
+    /Model\s*No\s*[:-]*\s*([A-Z][A-Z0-9 \-]{3,30}?)(?=\s+(?:Colour|Color|Engine|Frame|Jobcard|Service|Sale|Model\s*Code))/i,
+    /(?:SHINE|Activa|Hornet|SP\s*125|CB\d|NXR|Dio|Grazia|Unicorn|Livo|Dream|Shine|XBlade|H'Ness|Hness)\s*[\w\-. ]{0,20}/i,
   ]);
 
   // Reg No — "Veh Number :- MP04WA9535"
@@ -120,11 +145,12 @@ const parseVPHondaInvoice = (text, filename) => {
   if (svcM) serviceNumber = svcM[1];
   if (!serviceNumber) { const smh = flat.match(/SMH\s*\/\s*(\d+)/i); if (smh) serviceNumber = smh[1]; }
 
-  // Total — "Total Invoice Value(In Figure) ₹ 861.00"
+  // Total — service: "Total Invoice Value(In Figure) ₹ 651.00" | vehicle: "Invoice Total ₹ 65,240.00"
   const rawTotal = find([
     /Total\s*Invoice\s*Value\s*\([Ii]n\s*[Ff]igure\)\s*[₹Rs.\s]*([\d,]+\.\d{2})/i,
     /Total\s*Invoice\s*Value[^₹]*[₹]\s*([\d,]+\.\d{2})/i,
     /Invoice\s*Value\(?[Ii]n\s*[Ff]igure\)?[₹Rs.\s]*([\d,]+\.\d{2})/i,
+    /Invoice\s*Total\s*[₹Rs.\s]*([\d,]+\.\d{2})/i,
     /Grand\s*Total[^₹]*[₹]\s*([\d,]+\.\d{2})/i,
     /Total\s*Parts\s*Amount[^₹]*[₹]\s*([\d,]+\.\d{2})/i,
     /₹\s*([\d,]+\.\d{2})\s*Total\s*Labour/i,
@@ -517,7 +543,7 @@ export default function InvoiceManagementDashboard() {
     setLoading(false);
   };
 
-  const processPDFFiles = async (files) => {
+  const processPDFFiles = async (files, forcedType = null) => {
     if (!files.length) return;
     setImporting(true);
     setProgress({ current:0, total:files.length });
@@ -532,6 +558,8 @@ export default function InvoiceManagementDashboard() {
         const text = await extractPDFText(file);
         console.log(`📄 ${file.name} — Extracted text (first 500):`, text.slice(0,500));
         const parsed = parseVPHondaInvoice(text, file.name);
+        // Force type based on which import button was clicked
+        if (forcedType) parsed.invoiceType = forcedType;
         console.log(`✅ ${file.name} — Parsed:`, { 
           invoiceNo: parsed.invoiceNumber, 
           customer: parsed.customerName, 
@@ -548,6 +576,7 @@ export default function InvoiceManagementDashboard() {
           customerPhone:'', vehicle:'', regNo:'', items:[], parts:[],
           invoiceDate:new Date().toISOString().split('T')[0],
           totals:{subtotal:0,gstRate:18,gstAmount:0,totalAmount:0},
+          invoiceType: forcedType || 'service',
           importedFrom:file.name, importedAt:new Date().toISOString(),
           customerId:'imported-'+Date.now(), status:'Active',
           importError: err.message,
@@ -632,40 +661,61 @@ export default function InvoiceManagementDashboard() {
     setTimeout(()=>setMessage(''), 6000);
   };
 
-  const handleSingleFile  = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.onchange=e=>processPDFFiles(Array.from(e.target.files)); i.click(); };
-  const handleMultiFile   = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files)); i.click(); };
-  const handleDelete = (no) => {
+  const handleSingleFile  = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.onchange=e=>processPDFFiles(Array.from(e.target.files), 'vehicle'); i.click(); };
+  const handleMultiFile   = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files), 'service'); i.click(); };
+  const handleDelete = async (no) => {
     if (!window.confirm('Delete?')) return;
+    // Delete from MongoDB
+    try {
+      await fetch(api(`/api/invoices/${no}`), { method: 'DELETE' });
+    } catch(e) { console.log('MongoDB delete failed for', no); }
+    // Delete from localStorage
     const upd = invoices.filter(i=>String(i.invoiceNumber||i.id)!==String(no));
     localStorage.setItem('invoices', JSON.stringify(upd.filter(i=>!i._s)));
     loadInvoices(); setMessage('✅ Deleted!'); setTimeout(()=>setMessage(''),2000);
   };
-  const handleClearAll = () => {
+  const handleClearAll = async () => {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     if (!window.confirm(`⚠️ सभी ${invoices.length} invoices delete होंगे!`)) return;
+    // Delete from MongoDB — delete each invoice
+    let dbDel = 0;
+    for (const inv of invoices) {
+      try {
+        const r = await fetch(api(`/api/invoices/${inv.invoiceNumber||inv._id||inv.id}`), { method: 'DELETE' });
+        if (r.ok) dbDel++;
+      } catch(e) {}
+    }
+    console.log(`🗑️ MongoDB: ${dbDel}/${invoices.length} deleted`);
     localStorage.setItem('invoices', JSON.stringify([]));
+    localStorage.setItem('generatedInvoices', JSON.stringify([]));
     loadInvoices(); setMessage('✅ सभी clear!'); setTimeout(()=>setMessage(''),3000);
   };
 
   const vehicleInvoices = invoices.filter(i => getInvoiceType(i) === 'vehicle');
   const serviceInvoices = invoices.filter(i => getInvoiceType(i) === 'service');
 
-  const handleClearVehicle = () => {
+  const handleClearVehicle = async () => {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     const vCount = vehicleInvoices.length;
     if (!window.confirm(`⚠️ ${vCount} Vehicle Tax Invoices delete होंगे!`)) return;
+    for (const inv of vehicleInvoices) {
+      try { await fetch(api(`/api/invoices/${inv.invoiceNumber||inv._id||inv.id}`), { method: 'DELETE' }); } catch(e) {}
+    }
     const remaining = invoices.filter(i => getInvoiceType(i) !== 'vehicle');
     localStorage.setItem('invoices', JSON.stringify(remaining));
     loadInvoices(); setMessage(`✅ ${vCount} Vehicle invoices deleted!`); setTimeout(()=>setMessage(''),3000);
   };
 
-  const handleClearService = () => {
+  const handleClearService = async () => {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     const sCount = serviceInvoices.length;
     if (!window.confirm(`⚠️ ${sCount} Service/Parts Invoices delete होंगे!`)) return;
+    for (const inv of serviceInvoices) {
+      try { await fetch(api(`/api/invoices/${inv.invoiceNumber||inv._id||inv.id}`), { method: 'DELETE' }); } catch(e) {}
+    }
     const remaining = invoices.filter(i => getInvoiceType(i) !== 'service');
     localStorage.setItem('invoices', JSON.stringify(remaining));
     loadInvoices(); setMessage(`✅ ${sCount} Service invoices deleted!`); setTimeout(()=>setMessage(''),3000);
