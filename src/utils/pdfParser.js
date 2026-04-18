@@ -1,9 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Worker from CDN (Render पर कोई issue नहीं)
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
-// PDF से text निकाले
 export const extractTextFromPDF = async (file) => {
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -17,7 +15,6 @@ export const extractTextFromPDF = async (file) => {
   return fullText;
 };
 
-// Invoice data parse करे (वही logic जो पहले backend में था)
 export const parseInvoiceFromText = (text) => {
   if (!text) return {};
   const clean = text.replace(/\r\n/g, '\n').replace(/\s+/g, ' ').trim();
