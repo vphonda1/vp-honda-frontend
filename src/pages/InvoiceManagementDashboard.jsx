@@ -6,20 +6,30 @@ import { Input } from "@/components/ui/input";
 import { Search, Trash2, Download, ArrowLeft, Eye, FileText, FolderOpen, RefreshCw, Clock } from 'lucide-react';
 import { api } from '../utils/apiConfig';
 
-// PDF text extraction — backend only (pdfjs-dist Node.js mode, no worker needed)
+// ── NO pdfjs-dist needed! PDF parsing happens on backend (Node.js) ──────────
+// Backend route: POST /api/parse-pdf (see pdfRoutes.js)
+
 const getLS = (k, fb=[]) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;} };
 
+// Extract PDF text via backend API — zero browser worker issues
 const extractPDFText = async (file) => {
-  const fd = new FormData();
-  fd.append('pdf', file);
-  const res = await fetch(api('/api/invoices/parse-pdf'), { method: 'POST', body: fd });
+  const formData = new FormData();
+  formData.append('pdf', file);
+
+  const res = await fetch(api('/api/parse-pdf'), {
+    method: 'POST',
+    body: formData,
+  });
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Server error' }));
     throw new Error(err.error || 'PDF parse failed');
   }
+
   const data = await res.json();
-  if (!data.text || data.text.trim().length < 20) throw new Error(data.error || 'No text extracted');
-  console.log('📄 Backend extracted:', data.text.length, 'chars');
+  if (!data.text) throw new Error(data.error || 'No text extracted');
+
+  console.log('📄 PDF extracted via backend, length:', data.text.length);
   return data.text;
 };
 
@@ -40,7 +50,7 @@ const parseVPHondaInvoice = (text, filename) => {
 
   // Invoice No
   const invoiceNumber = find([
-    /Invoice\s*No\s*[:-]+\s*(?:[A-Z\/\-]*\d{2}-\d{2}\s+)?(\d+)/i,
+    /Invoice\s*No\s*[:-]+\s*(\d+)/i,
     /Invoice\s*#\s*(\d+)/i,
     /INV[- ](\d+)/i,
   ], String(Math.floor(Math.random()*900000+100000)));
@@ -63,16 +73,13 @@ const parseVPHondaInvoice = (text, filename) => {
     } catch {}
   }
 
-  // Customer name — filename is most reliable
-  // Formats: _550_NIKITA BAI.pdf | 13-04-2026_JYOTI.pdf | _13-04-2026_JYOTI_1.pdf | 543_RAMGOPAL.pdf
+  // Customer name — filename is most reliable (e.g. _522_SANJAY_JATAV.pdf)
   let customerName = '';
-  const fnClean = filename
-    .replace(/\.pdf$/i, '')
-    .replace(/^_?[\d][\d\-]*_/, '')   // remove "_550_" or "13-04-2026_" or "_13-04-2026_"
-    .replace(/_\d+$/, '')              // remove trailing "_1"
-    .replace(/_/g, ' ')                // underscores → spaces
-    .trim();
-  if (fnClean && fnClean.length > 1) customerName = fnClean.toUpperCase();
+  // Step 1: Extract from filename (remove invoice number, underscores, .pdf)
+  const fnClean = filename.replace(/\.pdf$/i,'').replace(/^[_\d]+/,'').replace(/[_]+/g,' ').trim();
+  if (fnClean && fnClean.length > 2 && !/^unknown$/i.test(fnClean)) {
+    customerName = fnClean.toUpperCase();
+  }
   // Step 2: If filename didn't work, try Leagal Name from PDF (skip V P HONDA / Dealer Name)
   if (!customerName) {
     const allLN = [];
@@ -86,14 +93,13 @@ const parseVPHondaInvoice = (text, filename) => {
   // Phone
   const customerPhone = find([
     /Phone\s*\(M\)\s*[:-]?\s*([6-9]\d{9})/i,
-    /Mobile\s*[:-]?\s*([6-9]\d{9})/i,
     /\b([6-9]\d{9})\b/,
   ]);
 
   // Vehicle model — "Model No : SP125 DLX DISK"
   const vehicle = find([
     /Model\s*No\s*[:-]*\s*([A-Z][A-Z0-9 ]{3,30}?)(?=\s+(?:Colour|Color|Engine|Frame|Jobcard|Service|Sale|Model\s*Code))/i,
-    /(?:SHINE|Activa|Shine|Hornet|SP\s*125|CB\d|NXR|Dio|Grazia|Unicorn|Livo|Dream|XBlade)\s*[A-Z0-9 ]{0,20}/i,
+    /(?:Activa|Shine|Hornet|SP\s*125|CB\d|NXR|Dio|Grazia|Unicorn|Livo|Dream)\s*[A-Z0-9 ]{0,20}/i,
   ]);
 
   // Reg No — "Veh Number :- MP04WA9535"
@@ -149,10 +155,25 @@ const parseVPHondaInvoice = (text, filename) => {
     '94109-12000':     'WASHER 12MM DRAIN',
     '91307-KRM-840':   'O-RING 18X31',
     '06455-KYJ-930':   'PAD SET FR',
+    '06455-KYJ-940':   'PAD SET FR',
+    '06455-K0N-D01':   'PAD SET FR',
     '06435-KYJ-930':   'SHOE SET RR BRAKE',
+    '06435-K0N-D01':   'SHOE SET RR BRAKE',
+    '42711-K0N-D01':   'TIRE RR',
+    '42711-KYJ-901':   'TIRE RR',
+    '22401-K0N-D01':   'CLUTCH CABLE',
+    '23100-K0N-D01':   'CHAIN DRIVE',
+    '32213850-784007020': 'HONDA CHAIN CLEANER & LUBE 400ML',
+    '06430-KWP-900879': 'BRAKE SHOE SET',
+    '06410-K67-900401': 'PAD SET FR BRAKE',
+    '91306-KYJ-840':   'O-RING',
+    '18291-K0N-D00':   'GASKET EX PIPE',
+    '17210-K0N-D00':   'ELEMENT AIR CLEANER',
+    '30410-K0N-D01':   'SPARK PLUG',
     'P05':             'NO. PLATE COVER',
     'P05 (B)':         'NO. PLATE COVER',
     'CONSUM':          'CONSUMABLE CHARGES',
+    'LABOUR':          'LABOUR CHARGES',
   };
 
   // Try to find descriptions from text for unknown parts
@@ -187,9 +208,16 @@ const parseVPHondaInvoice = (text, filename) => {
       '06455-KYJ-940','42711-K0N-D01','42711-KYJ-901','42711-K44-D01',
       '15412-KRM-840','17220-KRM-840','06455-K44-D01','06435-K44-D01',
       '91307-KRM-841','94109-14000','22401-K0N-D01','23100-K0N-D01',
-      '15412-K0N-D01842','5412-K0N-D01','15412-K0N-D01',
-      '32213850-784007020','17220-K0N-D00','06455-KYJ-940',
-      '42711-K0N-D01','23100-K0N-D01','22401-K0N-D01',
+      '32213850-784007020','06410-K67-900401','06430-KWP-900879',
+      '17220-K0N-D00','91306-KYJ-840','18291-K0N-D00','18392-K0N-D00',
+      '22870-K0N-D00','43150-K0N-D01','06455-K0N-D01','06435-K0N-D01',
+      '45126-K0N-D01','45351-K0N-D01','45451-K0N-D01','51400-K0N-D01',
+      '51500-K0N-D01','50713-K0N-D00','53100-K0N-D01','53205-K0N-D01',
+      '35110-K0N-D01','35120-K0N-D01','40510-K0N-D01','40530-K0N-D01',
+      '06401-K0N-D01','04711-K0N-D00','04711-KYJ-900','30410-K0N-D01',
+      '31120-K0N-D01','91301-K0N-D00','91302-K0N-D00','91305-K0N-D00',
+      '16010-KYJ-901','16211-K0N-D00','22100-K0N-D01','50530-K0N-D01',
+      '08232-99907','08232-99904','08C35-K0020','08C35-K0010',
     ];
     
     const allLines = text.split('\n').map(l => l.trim()).filter(Boolean);
@@ -205,7 +233,7 @@ const parseVPHondaInvoice = (text, filename) => {
       while ((am = amRe.exec(line)) !== null) {
         amounts.push(parseFloat(am[1].replace(/,/g, '')));
       }
-      if (amounts.length < 3) continue; // Need at least 3 ₹ values for a parts row
+      if (amounts.length < 2) continue; // Need at least 2 ₹ values for a parts row
       
       // Extract part number: strip leading SrNo (1-2 digits), then match Honda pattern
       // Line starts with: SrNo(1-2d) + PartNo + HSN(7-8d) + MRP(1-3d) + Disc(1-3d) + ₹
@@ -227,31 +255,66 @@ const parseVPHondaInvoice = (text, filename) => {
         if (dashIdx >= 4) {
           const digitsBeforeDash = cleaned.slice(0, dashIdx);
           if (/^\d+$/.test(digitsBeforeDash)) {
-            if (digitsBeforeDash.length >= 6) cleaned = cleaned.slice(1);
-            if (digitsBeforeDash.length >= 10) cleaned = cleaned.slice(1);
+            // Strip SrNo: 1-digit if 6 chars (1+5), 2-digit if 7 chars (2+5), etc.
+            const partStartLen = 5; // Honda parts start with 5 digits typically
+            const srNoLen = digitsBeforeDash.length - partStartLen;
+            if (srNoLen >= 1 && srNoLen <= 2) {
+              cleaned = cleaned.slice(srNoLen);
+            } else if (digitsBeforeDash.length >= 9) {
+              // 8-digit part (like 32213850): SrNo = total - 8
+              const srNo8 = digitsBeforeDash.length - 8;
+              if (srNo8 >= 1 && srNo8 <= 2) cleaned = cleaned.slice(srNo8);
+              else cleaned = cleaned.slice(1); // default: strip 1 digit SrNo
+            }
           }
+          // Match Honda part patterns:
+          // A: 5dig-3alphanum-4to6alphanum (08233-2MA-F1LG1)
+          // B: 5dig-5to6dig (94109-12000)
+          // C: 8dig-9dig (32213850-784007020)
           const partMatch = cleaned.match(/^(\d{4,8}-[A-Z0-9]{1,4}-[A-Z0-9]{1,6}|\d{4,8}-\d{4,9})/);
           if (partMatch) {
             partNo = partMatch[1];
-            if (partNo.length > 20) {
-              const seg = partNo.split('-');
-              if (seg.length === 2 && seg[1].length > 9) { seg[1] = seg[1].slice(0,9); partNo = seg.join('-'); }
-            }
           }
         }
       }
       
-      // Method 3: CONSUM / Labour
-      if (!partNo && /CONSUM|Labour/i.test(line)) {
-        partNo = 'CONSUM';
+      // Method 3: CONSUM / Labour / P05
+      if (!partNo) {
+        if (/CONSUM/i.test(line)) partNo = 'CONSUM';
+        else if (/P05/i.test(beforeFirstRupee)) partNo = 'P05';
+        else if (/Labour|Labor/i.test(line)) partNo = 'LABOUR';
+      }
+      
+      // Method 4: Any alphanumeric with dash pattern not yet matched
+      if (!partNo && beforeFirstRupee.match(/[A-Z]/i)) {
+        const genMatch = beforeFirstRupee.match(/\d*([A-Z0-9]{2,5}-[A-Z0-9]{2,10}(?:-[A-Z0-9]{2,8})?)/i);
+        if (genMatch && genMatch[1].length >= 5) partNo = genMatch[1];
       }
       
       if (!partNo) continue;
       if (items.find(i => i.partNo === partNo)) continue; // Skip duplicates
       
       // amounts: [unitPrice, totalAmt, discAmt, taxableAmt] — last one is taxable
-      const unitPrice = amounts[0]; // First ₹ = Unit Price
       const taxableAmt = amounts[amounts.length - 1]; // Last ₹ = Taxable Amount
+      const unitPrice = amounts[0]; // First ₹ = Unit Price
+      
+      // Extract MRP from text between part number and first ₹
+      let mrp = unitPrice; // default fallback
+      if (partNo && beforeFirstRupee.length > partNo.length + 5) {
+        // After partNo, text has: HSN(7-8 digits) + MRP(2-6 digits) + Disc%(1-3 digits)
+        const afterPart = beforeFirstRupee.slice(beforeFirstRupee.indexOf(partNo) + partNo.length);
+        const nums = afterPart.match(/\d+/g);
+        if (nums && nums.length >= 2) {
+          // First number = HSN (7-8 digits), second = MRP, third = disc%
+          const possibleMRP = nums.find((n, i) => i > 0 && n.length >= 2 && n.length <= 6 && parseInt(n) > 5);
+          if (possibleMRP) mrp = parseFloat(possibleMRP);
+        }
+      }
+      
+      // Detect quantity from line
+      let qty = 1;
+      const qtyMatch = line.match(/(\d+)\s*(?:No|Nos|Pc|Pcs|Set)[,]?/i);
+      if (qtyMatch) qty = parseInt(qtyMatch[1]) || 1;
       
       // Determine GST: CONSUM has 20% disc = 0% GST, others have 5% disc = 18% GST (9+9)
       // From TAX SUMMARY: items with HSN "NA" have 0% GST rate
@@ -261,7 +324,7 @@ const parseVPHondaInvoice = (text, filename) => {
       const desc = findDescription(partNo);
       items.push({
         srNo: items.length + 1, partNo, hsn: '', description: desc,
-        mrp: unitPrice, unitPrice, quantity: 1,
+        mrp, unitPrice, quantity: qty,
         total: taxableAmt, gstRate, gstAmount: isZeroGST ? 0 : +(taxableAmt * 0.18).toFixed(2),
       });
     }
@@ -511,7 +574,7 @@ export default function InvoiceManagementDashboard() {
     setLoading(false);
   };
 
-  const processPDFFiles = async (files, forcedType = null) => {
+  const processPDFFiles = async (files) => {
     if (!files.length) return;
     setImporting(true);
     setProgress({ current:0, total:files.length });
@@ -524,23 +587,27 @@ export default function InvoiceManagementDashboard() {
       if (file.type !== 'application/pdf') continue;
       try {
         const text = await extractPDFText(file);
-        console.log(`📄 ${file.name} — first 300:`, text.slice(0,300));
+        console.log(`📄 ${file.name} — Extracted text (first 500):`, text.slice(0,500));
         const parsed = parseVPHondaInvoice(text, file.name);
-        if (forcedType) parsed.invoiceType = forcedType;
-        console.log(`✅ Parsed:`, { no: parsed.invoiceNumber, cust: parsed.customerName, items: parsed.items.length, total: parsed.totals.totalAmount });
+        console.log(`✅ ${file.name} — Parsed:`, { 
+          invoiceNo: parsed.invoiceNumber, 
+          customer: parsed.customerName, 
+          items: parsed.items.length, 
+          total: parsed.totals.totalAmount 
+        });
         added.push(parsed);
       } catch (err) {
-        console.error(`❌ ${file.name}:`, err.message);
+        console.error(`❌ ${file.name} Error:`, err);
         errors.push(file.name + ': ' + err.message);
         added.push({
           invoiceNumber: Math.floor(Math.random()*900000+100000),
-          customerName: file.name.replace(/^_?[\d][\d\-]*_/,'').replace(/_\d+$/,'').replace(/_/g,' ').replace(/\.pdf$/i,'').trim().toUpperCase().slice(0,40)||'Unknown',
+          customerName: file.name.replace(/[_\-\d]+/g,' ').replace(/\.pdf$/i,'').trim().slice(0,40)||'Unknown',
           customerPhone:'', vehicle:'', regNo:'', items:[], parts:[],
-          invoiceDate: new Date().toISOString().split('T')[0],
+          invoiceDate:new Date().toISOString().split('T')[0],
           totals:{subtotal:0,gstRate:18,gstAmount:0,totalAmount:0},
-          invoiceType: forcedType || 'service',
           importedFrom:file.name, importedAt:new Date().toISOString(),
-          customerId:'imported-'+Date.now(), status:'Active', importError:err.message,
+          customerId:'imported-'+Date.now(), status:'Active',
+          importError: err.message,
         });
       }
     }
@@ -622,48 +689,42 @@ export default function InvoiceManagementDashboard() {
     setTimeout(()=>setMessage(''), 6000);
   };
 
-  // Vehicle button → type forced 'vehicle' | Service button → type forced 'service'
-  const handleSingleFile = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'vehicle'); i.click(); };
-  const handleMultiFile  = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'service'); i.click(); };
-  const handleDelete = async (no) => {
+  const handleSingleFile  = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.onchange=e=>processPDFFiles(Array.from(e.target.files)); i.click(); };
+  const handleMultiFile   = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files)); i.click(); };
+  const handleDelete = (no) => {
     if (!window.confirm('Delete?')) return;
-    try { await fetch(api(`/api/invoices/${no}`), { method:'DELETE' }); } catch(e) {}
     const upd = invoices.filter(i=>String(i.invoiceNumber||i.id)!==String(no));
-    localStorage.setItem('invoices', JSON.stringify(upd.filter(i=>i._s!=='db')));
+    localStorage.setItem('invoices', JSON.stringify(upd.filter(i=>!i._s)));
     loadInvoices(); setMessage('✅ Deleted!'); setTimeout(()=>setMessage(''),2000);
   };
-  const handleClearAll = async () => {
+  const handleClearAll = () => {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     if (!window.confirm(`⚠️ सभी ${invoices.length} invoices delete होंगे!`)) return;
-    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'all'}) }); } catch(e) {}
     localStorage.setItem('invoices', JSON.stringify([]));
-    localStorage.setItem('generatedInvoices', JSON.stringify([]));
     loadInvoices(); setMessage('✅ सभी clear!'); setTimeout(()=>setMessage(''),3000);
   };
 
   const vehicleInvoices = invoices.filter(i => getInvoiceType(i) === 'vehicle');
   const serviceInvoices = invoices.filter(i => getInvoiceType(i) === 'service');
 
-  const handleClearVehicle = async () => {
+  const handleClearVehicle = () => {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     const vCount = vehicleInvoices.length;
     if (!window.confirm(`⚠️ ${vCount} Vehicle Tax Invoices delete होंगे!`)) return;
-    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'vehicle'}) }); } catch(e) {}
     const remaining = invoices.filter(i => getInvoiceType(i) !== 'vehicle');
-    localStorage.setItem('invoices', JSON.stringify(remaining.filter(i=>i._s!=='db')));
+    localStorage.setItem('invoices', JSON.stringify(remaining));
     loadInvoices(); setMessage(`✅ ${vCount} Vehicle invoices deleted!`); setTimeout(()=>setMessage(''),3000);
   };
 
-  const handleClearService = async () => {
+  const handleClearService = () => {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     const sCount = serviceInvoices.length;
     if (!window.confirm(`⚠️ ${sCount} Service/Parts Invoices delete होंगे!`)) return;
-    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'service'}) }); } catch(e) {}
     const remaining = invoices.filter(i => getInvoiceType(i) !== 'service');
-    localStorage.setItem('invoices', JSON.stringify(remaining.filter(i=>i._s!=='db')));
+    localStorage.setItem('invoices', JSON.stringify(remaining));
     loadInvoices(); setMessage(`✅ ${sCount} Service invoices deleted!`); setTimeout(()=>setMessage(''),3000);
   };
 
