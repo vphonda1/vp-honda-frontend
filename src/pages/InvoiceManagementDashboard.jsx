@@ -59,7 +59,7 @@ const parseVPHondaInvoice = (text, filename) => {
   const rawDate = find([
     /Invoice\s*Date\s*[:-]*\s*(\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4})/i,
     /Date\s*[:-]\s*(\d{2}-\d{2}-\d{4})/i,
-    /(\d{2}-\d{2}-\d{4})/,
+    /(\d{2}-\d{2}-20\d{2})/,  // only match years 20xx to avoid 1978 etc
   ]);
   let invoiceDate = new Date().toISOString().split('T')[0];
   if (rawDate) {
@@ -67,8 +67,10 @@ const parseVPHondaInvoice = (text, filename) => {
       const pts = rawDate.split(/[-\/]/);
       if (pts.length===3) {
         const yr = pts[2].length===2 ? '20'+pts[2] : pts[2];
+        const yrNum = parseInt(yr);
         const d = new Date(`${yr}-${pts[1].padStart(2,'0')}-${pts[0].padStart(2,'0')}`);
-        if (!isNaN(d)) invoiceDate = d.toISOString().split('T')[0];
+        // Only accept years 2000-2099 to prevent garbage dates
+        if (!isNaN(d) && yrNum >= 2000 && yrNum <= 2099) invoiceDate = d.toISOString().split('T')[0];
       }
     } catch {}
   }
@@ -164,8 +166,9 @@ const parseVPHondaInvoice = (text, filename) => {
     '22401-K0N-D01':   'CLUTCH CABLE',
     '23100-K0N-D01':   'CHAIN DRIVE',
     '32213850-784007020': 'HONDA CHAIN CLEANER & LUBE 400ML',
-    '06430-KWP-900879': 'BRAKE SHOE SET',
-    '06410-K67-900401': 'PAD SET FR BRAKE',
+    '32213850-764007020': 'HONDA CHAIN CLEANER & LUBE 400ML',
+    '06430-KWP-900':   'SHOE SET BRAKE',   // FIXED — was 06430-KWP-900879
+    '06410-K67-900':   'DAMPER SET WHEEL', // FIXED — was 06410-K67-900401
     '91306-KYJ-840':   'O-RING',
     '18291-K0N-D00':   'GASKET EX PIPE',
     '17210-K0N-D00':   'ELEMENT AIR CLEANER',
@@ -200,7 +203,19 @@ const parseVPHondaInvoice = (text, filename) => {
   // Example line: "108233-2MA-F1LG12710197348352₹ 431.321No,s₹ 431.325₹ 3.04₹ 409.75"
   // Decoded: SrNo=1, Part=08233-2MA-F1LG1, HSN=27101973, MRP=483, Disc=52, ₹431.32, Qty=1, ...
   if (items.length === 0) {
-    // Known Honda part numbers (add more as needed)
+
+    // ── Build HSN→TaxableAmount map from TAX SUMMARY (most accurate) ─────────
+    const hsnTaxable = {};
+    const tsRe = /\b(\d{5,10}|NA)\s+([\d,]+\.\d{2})\s+\d{1,2}\s+([\d,]+\.\d{2})\s+\d{1,2}\s+([\d,]+\.\d{2})/g;
+    let tsm;
+    while ((tsm = tsRe.exec(flat)) !== null) {
+      const h = tsm[1].trim();
+      const a = parseFloat(tsm[2].replace(/,/g,''));
+      if (a > 0 && !hsnTaxable[h]) hsnTaxable[h] = a; // first occurrence only
+    }
+    console.log('📊 TAX SUMMARY HSN map:', hsnTaxable);
+
+    // Known Honda part numbers — FIXED (no extra digits)
     const KNOWN_PARTS = [
       '08233-2MA-F1LG1','08233-2MB-F0LG1','15412-K0N-D01','17220-K0N-D00',
       '94109-12000','91307-KRM-840','06455-KYJ-930','06435-KYJ-930',
@@ -208,8 +223,9 @@ const parseVPHondaInvoice = (text, filename) => {
       '06455-KYJ-940','42711-K0N-D01','42711-KYJ-901','42711-K44-D01',
       '15412-KRM-840','17220-KRM-840','06455-K44-D01','06435-K44-D01',
       '91307-KRM-841','94109-14000','22401-K0N-D01','23100-K0N-D01',
-      '32213850-784007020','06410-K67-900401','06430-KWP-900879',
-      '17220-K0N-D00','91306-KYJ-840','18291-K0N-D00','18392-K0N-D00',
+      '32213850-784007020','32213850-764007020',
+      '06410-K67-900','06430-KWP-900',  // FIXED — no extra digits
+      '91306-KYJ-840','18291-K0N-D00','18392-K0N-D00',
       '22870-K0N-D00','43150-K0N-D01','06455-K0N-D01','06435-K0N-D01',
       '45126-K0N-D01','45351-K0N-D01','45451-K0N-D01','51400-K0N-D01',
       '51500-K0N-D01','50713-K0N-D00','53100-K0N-D01','53205-K0N-D01',
@@ -255,22 +271,16 @@ const parseVPHondaInvoice = (text, filename) => {
         if (dashIdx >= 4) {
           const digitsBeforeDash = cleaned.slice(0, dashIdx);
           if (/^\d+$/.test(digitsBeforeDash)) {
-            // Strip SrNo: 1-digit if 6 chars (1+5), 2-digit if 7 chars (2+5), etc.
-            const partStartLen = 5; // Honda parts start with 5 digits typically
+            const partStartLen = 5;
             const srNoLen = digitsBeforeDash.length - partStartLen;
             if (srNoLen >= 1 && srNoLen <= 2) {
               cleaned = cleaned.slice(srNoLen);
             } else if (digitsBeforeDash.length >= 9) {
-              // 8-digit part (like 32213850): SrNo = total - 8
               const srNo8 = digitsBeforeDash.length - 8;
               if (srNo8 >= 1 && srNo8 <= 2) cleaned = cleaned.slice(srNo8);
-              else cleaned = cleaned.slice(1); // default: strip 1 digit SrNo
+              else cleaned = cleaned.slice(1);
             }
           }
-          // Match Honda part patterns:
-          // A: 5dig-3alphanum-4to6alphanum (08233-2MA-F1LG1)
-          // B: 5dig-5to6dig (94109-12000)
-          // C: 8dig-9dig (32213850-784007020)
           const partMatch = cleaned.match(/^(\d{4,8}-[A-Z0-9]{1,4}-[A-Z0-9]{1,6}|\d{4,8}-\d{4,9})/);
           if (partMatch) {
             partNo = partMatch[1];
@@ -293,19 +303,29 @@ const parseVPHondaInvoice = (text, filename) => {
       
       if (!partNo) continue;
       if (items.find(i => i.partNo === partNo)) continue; // Skip duplicates
+
+      // ── Taxable amount: TAX SUMMARY first (accurate), else last ₹ ─────────
+      // Extract HSN from text between partNo and first ₹
+      const partIdx = beforeFirstRupee.indexOf(partNo);
+      const afterPart = partIdx >= 0 ? beforeFirstRupee.slice(partIdx + partNo.length) : '';
+      const hsnMatch = afterPart.match(/\b(\d{7,10})\b/);
+      const hsn = hsnMatch ? hsnMatch[1] : (partNo === 'CONSUM' ? 'NA' : '');
       
-      // amounts: [unitPrice, totalAmt, discAmt, taxableAmt] — last one is taxable
-      const taxableAmt = amounts[amounts.length - 1]; // Last ₹ = Taxable Amount
+      // Use TAX SUMMARY taxable if available, else last ₹ in amounts
+      let taxableAmt;
+      if (hsn && hsnTaxable[hsn]) {
+        taxableAmt = hsnTaxable[hsn];
+      } else {
+        taxableAmt = amounts[amounts.length - 1]; // fallback
+      }
       const unitPrice = amounts[0]; // First ₹ = Unit Price
       
       // Extract MRP from text between part number and first ₹
       let mrp = unitPrice; // default fallback
       if (partNo && beforeFirstRupee.length > partNo.length + 5) {
-        // After partNo, text has: HSN(7-8 digits) + MRP(2-6 digits) + Disc%(1-3 digits)
-        const afterPart = beforeFirstRupee.slice(beforeFirstRupee.indexOf(partNo) + partNo.length);
-        const nums = afterPart.match(/\d+/g);
+        const afterPart2 = beforeFirstRupee.slice(beforeFirstRupee.indexOf(partNo) + partNo.length);
+        const nums = afterPart2.match(/\d+/g);
         if (nums && nums.length >= 2) {
-          // First number = HSN (7-8 digits), second = MRP, third = disc%
           const possibleMRP = nums.find((n, i) => i > 0 && n.length >= 2 && n.length <= 6 && parseInt(n) > 5);
           if (possibleMRP) mrp = parseFloat(possibleMRP);
         }
@@ -317,13 +337,12 @@ const parseVPHondaInvoice = (text, filename) => {
       if (qtyMatch) qty = parseInt(qtyMatch[1]) || 1;
       
       // Determine GST: CONSUM has 20% disc = 0% GST, others have 5% disc = 18% GST (9+9)
-      // From TAX SUMMARY: items with HSN "NA" have 0% GST rate
-      const isZeroGST = partNo === 'CONSUM';
+      const isZeroGST = partNo === 'CONSUM' || hsn === 'NA';
       const gstRate = isZeroGST ? 0 : 18;
       
       const desc = findDescription(partNo);
       items.push({
-        srNo: items.length + 1, partNo, hsn: '', description: desc,
+        srNo: items.length + 1, partNo, hsn, description: desc,
         mrp, unitPrice, quantity: qty,
         total: taxableAmt, gstRate, gstAmount: isZeroGST ? 0 : +(taxableAmt * 0.18).toFixed(2),
       });
