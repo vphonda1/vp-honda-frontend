@@ -7,7 +7,7 @@ import { Search, Trash2, Download, ArrowLeft, Eye, FileText, FolderOpen, Refresh
 import { api } from '../utils/apiConfig';
 
 // ── NO pdfjs-dist needed! PDF parsing happens on backend (Node.js) ──────────
-// Backend route: POST /api/invoice/parse-pdf (see pdfRoutes.js)
+// Backend route: POST /api/invoices/parse-pdf
 
 const getLS = (k, fb=[]) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;} };
 
@@ -689,10 +689,11 @@ export default function InvoiceManagementDashboard() {
     setTimeout(()=>setMessage(''), 6000);
   };
 
-  const handleSingleFile  = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'vehicle'); i.click(); };
+  const handleSingleFile  = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'vehicle'); i.click(); };
   const handleMultiFile   = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'service'); i.click(); };
   const handleDelete = async (no) => {
-    if (!window.confirm('Delete?')) return; try { await fetch(api('/api/invoices/' + no), { method:'DELETE' }); } catch(e) {}
+    if (!window.confirm('Delete?')) return;
+    try { await fetch(api(`/api/invoices/${no}`), { method:'DELETE' }); } catch(e) { console.log('DB delete failed'); }
     const upd = invoices.filter(i=>String(i.invoiceNumber||i.id)!==String(no));
     localStorage.setItem('invoices', JSON.stringify(upd.filter(i=>!i._s)));
     loadInvoices(); setMessage('✅ Deleted!'); setTimeout(()=>setMessage(''),2000);
@@ -700,8 +701,10 @@ export default function InvoiceManagementDashboard() {
   const handleClearAll = async () => {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
-    if (!window.confirm(`⚠️ सभी ${invoices.length} invoices delete होंगे!`)) return; try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'all'}) }); } catch(e) {}
+    if (!window.confirm(`⚠️ सभी ${invoices.length} invoices delete होंगे!`)) return;
+    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'all'}) }); } catch(e) {}
     localStorage.setItem('invoices', JSON.stringify([]));
+    localStorage.setItem('generatedInvoices', JSON.stringify([]));
     loadInvoices(); setMessage('✅ सभी clear!'); setTimeout(()=>setMessage(''),3000);
   };
 
@@ -712,9 +715,10 @@ export default function InvoiceManagementDashboard() {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     const vCount = vehicleInvoices.length;
-    if (!window.confirm(`⚠️ ${vCount} Vehicle Tax Invoices delete होंगे!`)) return; try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'all'}) }); } catch(e) {}
-    const remaining = invoices.filter(i => getInvoiceType(i) !== 'vehicle');,
-    localStorage.setItem('invoices', JSON.stringify(remaining));
+    if (!window.confirm(`⚠️ ${vCount} Vehicle Tax Invoices delete होंगे!`)) return;
+    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'vehicle'}) }); } catch(e) {}
+    const remaining = invoices.filter(i => getInvoiceType(i) !== 'vehicle');
+    localStorage.setItem('invoices', JSON.stringify(remaining.filter(i=>!i._s)));
     loadInvoices(); setMessage(`✅ ${vCount} Vehicle invoices deleted!`); setTimeout(()=>setMessage(''),3000);
   };
 
@@ -722,9 +726,10 @@ export default function InvoiceManagementDashboard() {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     const sCount = serviceInvoices.length;
-    if (!window.confirm(`⚠️ ${sCount} Service/Parts Invoices delete होंगे!`)) return;try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'all'}) }); } catch(e) {}
+    if (!window.confirm(`⚠️ ${sCount} Service/Parts Invoices delete होंगे!`)) return;
+    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'service'}) }); } catch(e) {}
     const remaining = invoices.filter(i => getInvoiceType(i) !== 'service');
-    localStorage.setItem('invoices', JSON.stringify(remaining));
+    localStorage.setItem('invoices', JSON.stringify(remaining.filter(i=>!i._s)));
     loadInvoices(); setMessage(`✅ ${sCount} Service invoices deleted!`); setTimeout(()=>setMessage(''),3000);
   };
 
