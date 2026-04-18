@@ -700,7 +700,7 @@ export default function InvoiceManagementDashboard() {
   const handleClearAll = async () => {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
-    if (!window.confirm(`⚠️ सभी ${invoices.length} invoices delete होंगे!`)) return; try { await fetch(api('/api/invoices/clear'), { method:'POST' headers:{'Content-Type':'application/json'}; body:JSON.stringify({type:'all' }) }); } catch(e) {}
+    if (!window.confirm(`⚠️ सभी ${invoices.length} invoices delete होंगे!`)) return; try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'all'}) }); } catch(e) {}
     localStorage.setItem('invoices', JSON.stringify([]));
     loadInvoices(); setMessage('✅ सभी clear!'); setTimeout(()=>setMessage(''),3000);
   };
@@ -712,7 +712,7 @@ export default function InvoiceManagementDashboard() {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     const vCount = vehicleInvoices.length;
-    if (!window.confirm(`⚠️ ${vCount} Vehicle Tax Invoices delete होंगे!`)) return; try { await fetch(api('/api/invoices/clear'), { method:'POST' headers:{'Content-Type':'application/json'}; body:JSON.stringify({type:'all' }) }); } catch(e) {}
+    if (!window.confirm(`⚠️ ${vCount} Vehicle Tax Invoices delete होंगे!`)) return; try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'all'}) }); } catch(e) {}
     const remaining = invoices.filter(i => getInvoiceType(i) !== 'vehicle');,
     localStorage.setItem('invoices', JSON.stringify(remaining));
     loadInvoices(); setMessage(`✅ ${vCount} Vehicle invoices deleted!`); setTimeout(()=>setMessage(''),3000);
@@ -722,7 +722,7 @@ export default function InvoiceManagementDashboard() {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     const sCount = serviceInvoices.length;
-    if (!window.confirm(`⚠️ ${sCount} Service/Parts Invoices delete होंगे!`)) return; try { await fetch(api('/api/invoices/clear'), { method:'POST' headers:{'Content-Type':'application/json'}; body:JSON.stringify({type:'all' }) }); } catch(e) {}
+    if (!window.confirm(`⚠️ ${sCount} Service/Parts Invoices delete होंगे!`)) return;try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'all'}) }); } catch(e) {}
     const remaining = invoices.filter(i => getInvoiceType(i) !== 'service');
     localStorage.setItem('invoices', JSON.stringify(remaining));
     loadInvoices(); setMessage(`✅ ${sCount} Service invoices deleted!`); setTimeout(()=>setMessage(''),3000);
