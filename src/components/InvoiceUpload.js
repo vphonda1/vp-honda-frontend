@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
-import * as pdfjsLib from 'pdfjs-dist';
-
-// Set worker (CDN)
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 const InvoiceUpload = ({ onUploadSuccess }) => {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
 
-  // PDF से text निकालने का फ़ंक्शन
+  // PDF से text निकालने का फ़ंक्शन (pdf.js से)
   const extractTextFromPDF = async (file) => {
+    // Dynamic import to avoid build issues
+    const pdfjsLib = await import('pdfjs-dist');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+    
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     let fullText = '';
@@ -22,7 +22,7 @@ const InvoiceUpload = ({ onUploadSuccess }) => {
     return fullText;
   };
 
-  // Text से invoice data बनाने का फ़ंक्शन
+  // Text से invoice data बनाना
   const parseInvoiceFromText = (text) => {
     if (!text) return {};
     const clean = text.replace(/\r\n/g, '\n').replace(/\s+/g, ' ').trim();
@@ -83,30 +83,23 @@ const InvoiceUpload = ({ onUploadSuccess }) => {
   const handleFileChange = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
-
     setUploading(true);
     setError('');
-
     try {
-      // 1. PDF से text निकालें
       const rawText = await extractTextFromPDF(file);
-      // 2. text से structured data बनाएँ
       const invoiceData = parseInvoiceFromText(rawText);
-      // 3. Backend को JSON भेजें (सीधे /api/invoices पर POST)
       const response = await fetch('https://vp-honda-backend.onrender.com/api/invoices', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(invoiceData)
       });
-      
-      if (!response.ok) throw new Error('Backend save failed');
+      if (!response.ok) throw new Error('Backend error');
       const saved = await response.json();
-      console.log('Invoice saved:', saved);
-      alert('✅ Invoice imported successfully!');
-      
+      console.log('Saved:', saved);
+      alert('✅ Invoice imported!');
       if (onUploadSuccess) onUploadSuccess(saved);
     } catch (err) {
-      console.error('Import error:', err);
+      console.error(err);
       setError(err.message);
       alert('❌ Failed: ' + err.message);
     } finally {
@@ -116,16 +109,11 @@ const InvoiceUpload = ({ onUploadSuccess }) => {
   };
 
   return (
-    <div className="invoice-upload-container">
+    <div>
       <h3>Import Service/Part Invoice (PDF)</h3>
-      <input
-        type="file"
-        accept="application/pdf"
-        onChange={handleFileChange}
-        disabled={uploading}
-      />
-      {uploading && <p>Processing PDF... Please wait.</p>}
-      {error && <p style={{ color: 'red' }}>Error: {error}</p>}
+      <input type="file" accept="application/pdf" onChange={handleFileChange} disabled={uploading} />
+      {uploading && <p>Processing...</p>}
+      {error && <p style={{color:'red'}}>{error}</p>}
     </div>
   );
 };
