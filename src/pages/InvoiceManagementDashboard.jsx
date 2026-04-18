@@ -149,7 +149,7 @@ const parseVPHondaInvoice = (text, filename) => {
   // Honda part description lookup (common service parts)
   const DESC_MAP = {
     '08233-2MA-F1LG1': 'ENGINE OIL ILIN 900ML 5W30MA',
-    '08233-2MB-F0LG1': 'ENGINE OIL 600ML 5W30MA', 
+    '08233-2MB-F0LG1': 'ENGINE OIL 600ML 5W30MA',
     '15412-K0N-D01':   'FILTER COMP ENGINE OIL',
     '17220-K0N-D00':   'ELEMENT COMP AIR CLEANER',
     '17210-K0N-D00':   'ELEMENT COMP AIR CLEANER',
@@ -190,12 +190,12 @@ const parseVPHondaInvoice = (text, filename) => {
   // PRIMARY STRATEGY: Match VP Honda table rows (browser pdfjs-dist format)
   const rowPat = /\b(\d{1,2})\s+([\w\-()]{3,25})\s+(\d{4,10}|NA)\s+(\d{1,6})\s+(\d{1,3})\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+(\d+)\s+(?:No|Nos|Pc|Pcs|Set)[,]?\w*\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+(\d{1,3})\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+[₹Rs.\s]*([\d,]+\.\d{2})/g;
   
-  // STRATEGY B: pdfjs backend — page text is one long string
-  // FIX: Use TAX SUMMARY HSN→TaxableAmount + find all part numbers by position
+  // STRATEGY B: pdfjs backend — whole page joins into one line
+  // FIX: Use TAX SUMMARY HSN→TaxableAmt map + find all part numbers by position
   if (items.length === 0) {
 
-    // Step 1: Extract HSN → TaxableAmount from TAX SUMMARY section
-    // Format: HSN  TaxableAmt  SGSTRate  SGSTAmt  CGSTRate  CGSTAmt
+    // Step 1: Extract HSN→TaxableAmount from TAX SUMMARY
+    // Format: HSN TaxableAmt SGSTRate SGSTAmt CGSTRate CGSTAmt
     const hsnTaxable = {};
     const tsRe = /\b(\d{5,10}|NA)\s+([\d,]+\.\d{2})\s+\d{1,2}\s+([\d,]+\.\d{2})\s+\d{1,2}\s+([\d,]+\.\d{2})/g;
     let tsm;
@@ -206,8 +206,7 @@ const parseVPHondaInvoice = (text, filename) => {
     }
     console.log('📊 TAX SUMMARY:', hsnTaxable);
 
-    // Step 2: Find ALL part numbers in flat text with their positions
-    // Matches: 08233-2MA-F1LG1, 32213850-764007020, CONSUM, P05
+    // Step 2: Find ALL part numbers with their position in flat text
     const PART_RE = /\b((?:\d{4,8}-[A-Z0-9]{2,4}-[A-Z0-9]{2,6})|(?:\d{8,12}-\d{6,9})|(?:94109-\d{5})|(?:91307-[A-Z0-9]{3}-\d{3})|CONSUM|P05(?:\s*\(B\))?)\b/g;
     const NOISE_PN = /^(GSTIN|BCYPD|STATE|PHONE|EMAIL|SGST|CGST|IGST|TOTAL|HSN|SAC)/i;
     let pm;
@@ -219,20 +218,19 @@ const parseVPHondaInvoice = (text, filename) => {
       }
     }
 
-    // Step 3: Per-part segment — get HSN from segment, taxable from TAX SUMMARY
+    // Step 3: For each part, get HSN from its segment, taxable from TAX SUMMARY
     const taxSumStart = flat.search(/TAX\s*SUMMARY/i);
     for (let i = 0; i < foundParts.length; i++) {
       const { partNo, index } = foundParts[i];
-      // Segment ends at next part or TAX SUMMARY
       let segEnd = i < foundParts.length - 1 ? foundParts[i+1].index : flat.length;
       if (taxSumStart > index && taxSumStart < segEnd) segEnd = taxSumStart;
       const seg = flat.slice(index, segEnd);
 
-      // HSN: 7-10 digit number in this segment (not part of phone/amount)
+      // HSN: 7-10 digit number in segment
       const hsnM = seg.match(/\b(\d{7,10})\b/);
       const hsn  = hsnM ? hsnM[1] : (partNo === 'CONSUM' ? 'NA' : '');
 
-      // Taxable: from TAX SUMMARY HSN map (most accurate)
+      // Taxable from TAX SUMMARY (most accurate)
       let taxable = (hsn && hsnTaxable[hsn]) ? hsnTaxable[hsn] : 0;
 
       // MRP: first ₹ amount in segment
@@ -240,7 +238,7 @@ const parseVPHondaInvoice = (text, filename) => {
                        .map(a => parseFloat(a[1].replace(/,/g,'')));
       const mrp = segAmts[0] || 0;
 
-      // Fallback taxable if HSN not in TAX SUMMARY and segment is short
+      // Fallback if HSN not in TAX SUMMARY
       if (!taxable && segAmts.length >= 2 && seg.length < 300) {
         taxable = segAmts[segAmts.length - 1];
       }
