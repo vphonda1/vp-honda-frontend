@@ -6,30 +6,20 @@ import { Input } from "@/components/ui/input";
 import { Search, Trash2, Download, ArrowLeft, Eye, FileText, FolderOpen, RefreshCw, Clock } from 'lucide-react';
 import { api } from '../utils/apiConfig';
 
-// ── NO pdfjs-dist needed! PDF parsing happens on backend (Node.js) ──────────
-// Backend route: POST /api/parse-pdf (see pdfRoutes.js)
-
+// PDF text extraction — backend only (pdfjs-dist Node.js mode, no worker needed)
 const getLS = (k, fb=[]) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;} };
 
-// Extract PDF text via backend API — zero browser worker issues
 const extractPDFText = async (file) => {
-  const formData = new FormData();
-  formData.append('pdf', file);
-
-  const res = await fetch(api('/api/parse-pdf'), {
-    method: 'POST',
-    body: formData,
-  });
-
+  const fd = new FormData();
+  fd.append('pdf', file);
+  const res = await fetch(api('/api/invoices/parse-pdf'), { method: 'POST', body: fd });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Server error' }));
     throw new Error(err.error || 'PDF parse failed');
   }
-
   const data = await res.json();
-  if (!data.text) throw new Error(data.error || 'No text extracted');
-
-  console.log('📄 PDF extracted via backend, length:', data.text.length);
+  if (!data.text || data.text.trim().length < 20) throw new Error(data.error || 'No text extracted');
+  console.log('📄 Backend extracted:', data.text.length, 'chars');
   return data.text;
 };
 
@@ -50,7 +40,7 @@ const parseVPHondaInvoice = (text, filename) => {
 
   // Invoice No
   const invoiceNumber = find([
-    /Invoice\s*No\s*[:-]+\s*(\d+)/i,
+    /Invoice\s*No\s*[:-]+\s*(?:[A-Z\/\-]*\d{2}-\d{2}\s+)?(\d+)/i,
     /Invoice\s*#\s*(\d+)/i,
     /INV[- ](\d+)/i,
   ], String(Math.floor(Math.random()*900000+100000)));
@@ -73,13 +63,16 @@ const parseVPHondaInvoice = (text, filename) => {
     } catch {}
   }
 
-  // Customer name — filename is most reliable (e.g. _522_SANJAY_JATAV.pdf)
+  // Customer name — filename is most reliable
+  // Formats: _550_NIKITA BAI.pdf | 13-04-2026_JYOTI.pdf | _13-04-2026_JYOTI_1.pdf | 543_RAMGOPAL.pdf
   let customerName = '';
-  // Step 1: Extract from filename (remove invoice number, underscores, .pdf)
-  const fnClean = filename.replace(/\.pdf$/i,'').replace(/^[_\d]+/,'').replace(/[_]+/g,' ').trim();
-  if (fnClean && fnClean.length > 2 && !/^unknown$/i.test(fnClean)) {
-    customerName = fnClean.toUpperCase();
-  }
+  const fnClean = filename
+    .replace(/\.pdf$/i, '')
+    .replace(/^_?[\d][\d\-]*_/, '')   // remove "_550_" or "13-04-2026_" or "_13-04-2026_"
+    .replace(/_\d+$/, '')              // remove trailing "_1"
+    .replace(/_/g, ' ')                // underscores → spaces
+    .trim();
+  if (fnClean && fnClean.length > 1) customerName = fnClean.toUpperCase();
   // Step 2: If filename didn't work, try Leagal Name from PDF (skip V P HONDA / Dealer Name)
   if (!customerName) {
     const allLN = [];
@@ -93,22 +86,21 @@ const parseVPHondaInvoice = (text, filename) => {
   // Phone
   const customerPhone = find([
     /Phone\s*\(M\)\s*[:-]?\s*([6-9]\d{9})/i,
+    /Mobile\s*[:-]?\s*([6-9]\d{9})/i,
     /\b([6-9]\d{9})\b/,
   ]);
 
   // Vehicle model — "Model No : SP125 DLX DISK"
   const vehicle = find([
     /Model\s*No\s*[:-]*\s*([A-Z][A-Z0-9 ]{3,30}?)(?=\s+(?:Colour|Color|Engine|Frame|Jobcard|Service|Sale|Model\s*Code))/i,
-    /(?:Activa|Shine|Hornet|SP\s*125|CB\d|NXR|Dio|Grazia|Unicorn|Livo|Dream)\s*[A-Z0-9 ]{0,20}/i,
+    /(?:SHINE|Activa|Shine|Hornet|SP\s*125|CB\d|NXR|Dio|Grazia|Unicorn|Livo|Dream|XBlade)\s*[A-Z0-9 ]{0,20}/i,
   ]);
 
-  // Reg No — "Veh Number :- MP04WA9535" or "Veh Number :- MP 04 WB 4094"
-  const rawRegNo = find([
-    /Veh(?:icle)?\s*Number\s*[:-]+\s*([A-Z]{2}[\s]?\d{2}[\s]?[A-Z]{1,3}[\s]?\d{4})/i,
-    /Registration\s*No\s*[:-]+\s*([A-Z]{2}[\s]?\d{2}[\s]?[A-Z]{1,3}[\s]?\d{4})/i,
-    /\b([A-Z]{2}\s?\d{2}\s?[A-Z]{1,3}\s?\d{4})\b/,
+  // Reg No — "Veh Number :- MP04WA9535"
+  const regNo = find([
+    /Veh(?:icle)?\s*Number\s*[:-]+\s*([A-Z]{2}\s*\d{2}\s*[A-Z]{1,3}\s*\d{4})/i,
+    /\b([A-Z]{2}\d{2}[A-Z]{1,3}\d{4})\b/,
   ]);
-  const regNo = rawRegNo.replace(/\s+/g,'').toUpperCase();
 
   const frameNo  = find([/Frame\s*No\s*[:-]*\s*([A-Z0-9]{10,})/i]);
   const engineNo = find([/Engine\s*No\s*[:-]*\s*([A-Z0-9]{10,})/i]);
@@ -154,19 +146,10 @@ const parseVPHondaInvoice = (text, filename) => {
     '08233-2MB-F0LG1': 'ENGINE OIL 600ML 5W30MA', 
     '15412-K0N-D01':   'FILTER COMP ENGINE OIL',
     '17220-K0N-D00':   'ELEMENT COMP AIR CLEANER',
-    '17210-K0N-D00':   'ELEMENT COMP AIR CLEANER',
     '94109-12000':     'WASHER 12MM DRAIN',
     '91307-KRM-840':   'O-RING 18X31',
-    '91307-KRM-841':   'O-RING 18X31',
     '06455-KYJ-930':   'PAD SET FR',
     '06435-KYJ-930':   'SHOE SET RR BRAKE',
-    '06430-KWP-900':   'SHOE SET BRAKE',
-    '06430-KYJ-930':   'SHOE SET BRAKE',
-    '06430-K44-D01':   'SHOE SET BRAKE',
-    '06410-K67-900':   'DAMPER SET WHEEL',
-    '06410-KYJ-901':   'DAMPER SET WHEEL',
-    '32213850-764007020': 'HONDA CHAIN CLEANER & LUBE 400ML',
-    '32213850-784007020': 'HONDA CHAIN CLEANER & LUBE 400ML',
     'P05':             'NO. PLATE COVER',
     'P05 (B)':         'NO. PLATE COVER',
     'CONSUM':          'CONSUMABLE CHARGES',
@@ -196,7 +179,7 @@ const parseVPHondaInvoice = (text, filename) => {
   // Example line: "108233-2MA-F1LG12710197348352₹ 431.321No,s₹ 431.325₹ 3.04₹ 409.75"
   // Decoded: SrNo=1, Part=08233-2MA-F1LG1, HSN=27101973, MRP=483, Disc=52, ₹431.32, Qty=1, ...
   if (items.length === 0) {
-    // Known Honda part numbers (expanded)
+    // Known Honda part numbers (add more as needed)
     const KNOWN_PARTS = [
       '08233-2MA-F1LG1','08233-2MB-F0LG1','15412-K0N-D01','17220-K0N-D00',
       '94109-12000','91307-KRM-840','06455-KYJ-930','06435-KYJ-930',
@@ -204,22 +187,9 @@ const parseVPHondaInvoice = (text, filename) => {
       '06455-KYJ-940','42711-K0N-D01','42711-KYJ-901','42711-K44-D01',
       '15412-KRM-840','17220-KRM-840','06455-K44-D01','06435-K44-D01',
       '91307-KRM-841','94109-14000','22401-K0N-D01','23100-K0N-D01',
-      '32213850-784007020','32213850-764007020',
-      // Brake & suspension parts
-      '06430-KWP-900','06430-KYJ-930','06430-K44-D01','06430-KRM-840',
-      '06410-K67-900','06410-KYJ-901','06410-K44-D01',
-      '06452-KYJ-901','06452-K44-D01','06452-KRM-840',
-      '45105-K0N-D01','45105-KYJ-901',
-      // Chain & lube
-      '06450-KPH-900','06450-KRM-840',
-      // Wheel & damper
-      '44830-K0N-D01','44830-KYJ-901',
-      // Air cleaner
-      '17210-K0N-D00','17210-KYJ-901',
-      // Spark plug
-      '98079-56846','98079-55846',
-      // General
-      '91305-KRM-840','91305-KYJ-901',
+      '15412-K0N-D01842','5412-K0N-D01','15412-K0N-D01',
+      '32213850-784007020','17220-K0N-D00','06455-KYJ-940',
+      '42711-K0N-D01','23100-K0N-D01','22401-K0N-D01',
     ];
     
     const allLines = text.split('\n').map(l => l.trim()).filter(Boolean);
@@ -279,17 +249,9 @@ const parseVPHondaInvoice = (text, filename) => {
       if (!partNo) continue;
       if (items.find(i => i.partNo === partNo)) continue; // Skip duplicates
       
-      // amounts pattern: [₹UnitPrice, ₹TotalAmt, ₹DiscAmt, ₹TaxableAmt]
-      // Validate: taxable amount must be < unitPrice (after discount)
-      // If last amount seems like invoice total (> 5x unitPrice), use second-to-last
-      const unitPrice  = amounts[0] || 0;
-      let taxableAmt   = amounts[amounts.length - 1] || 0;
-      // Safety: if taxableAmt > unitPrice*2 and we have more amounts, try previous
-      if (taxableAmt > unitPrice * 2 && amounts.length >= 2) {
-        // Check if second-to-last makes more sense
-        const candidate = amounts[amounts.length - 2];
-        if (candidate > 0 && candidate <= unitPrice) taxableAmt = candidate;
-      }
+      // amounts: [unitPrice, totalAmt, discAmt, taxableAmt] — last one is taxable
+      const unitPrice = amounts[0]; // First ₹ = Unit Price
+      const taxableAmt = amounts[amounts.length - 1]; // Last ₹ = Taxable Amount
       
       // Determine GST: CONSUM has 20% disc = 0% GST, others have 5% disc = 18% GST (9+9)
       // From TAX SUMMARY: items with HSN "NA" have 0% GST rate
@@ -517,7 +479,6 @@ export default function InvoiceManagementDashboard() {
   const [activeTab,      setActiveTab]      = useState('all'); // 'all' | 'vehicle' | 'service'
   const [currentPage,   setCurrentPage]   = useState(1);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
-  const [editInvoice,    setEditInvoice]    = useState(null);
   const INVOICES_PER_PAGE = 5;
   const intervalRef = useRef(null);
 
@@ -550,7 +511,7 @@ export default function InvoiceManagementDashboard() {
     setLoading(false);
   };
 
-  const processPDFFiles = async (files) => {
+  const processPDFFiles = async (files, forcedType = null) => {
     if (!files.length) return;
     setImporting(true);
     setProgress({ current:0, total:files.length });
@@ -563,27 +524,23 @@ export default function InvoiceManagementDashboard() {
       if (file.type !== 'application/pdf') continue;
       try {
         const text = await extractPDFText(file);
-        console.log(`📄 ${file.name} — Extracted text (first 500):`, text.slice(0,500));
+        console.log(`📄 ${file.name} — first 300:`, text.slice(0,300));
         const parsed = parseVPHondaInvoice(text, file.name);
-        console.log(`✅ ${file.name} — Parsed:`, { 
-          invoiceNo: parsed.invoiceNumber, 
-          customer: parsed.customerName, 
-          items: parsed.items.length, 
-          total: parsed.totals.totalAmount 
-        });
+        if (forcedType) parsed.invoiceType = forcedType;
+        console.log(`✅ Parsed:`, { no: parsed.invoiceNumber, cust: parsed.customerName, items: parsed.items.length, total: parsed.totals.totalAmount });
         added.push(parsed);
       } catch (err) {
-        console.error(`❌ ${file.name} Error:`, err);
+        console.error(`❌ ${file.name}:`, err.message);
         errors.push(file.name + ': ' + err.message);
         added.push({
           invoiceNumber: Math.floor(Math.random()*900000+100000),
-          customerName: file.name.replace(/[_\-\d]+/g,' ').replace(/\.pdf$/i,'').trim().slice(0,40)||'Unknown',
+          customerName: file.name.replace(/^_?[\d][\d\-]*_/,'').replace(/_\d+$/,'').replace(/_/g,' ').replace(/\.pdf$/i,'').trim().toUpperCase().slice(0,40)||'Unknown',
           customerPhone:'', vehicle:'', regNo:'', items:[], parts:[],
-          invoiceDate:new Date().toISOString().split('T')[0],
+          invoiceDate: new Date().toISOString().split('T')[0],
           totals:{subtotal:0,gstRate:18,gstAmount:0,totalAmount:0},
+          invoiceType: forcedType || 'service',
           importedFrom:file.name, importedAt:new Date().toISOString(),
-          customerId:'imported-'+Date.now(), status:'Active',
-          importError: err.message,
+          customerId:'imported-'+Date.now(), status:'Active', importError:err.message,
         });
       }
     }
@@ -665,42 +622,48 @@ export default function InvoiceManagementDashboard() {
     setTimeout(()=>setMessage(''), 6000);
   };
 
-  const handleSingleFile  = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.onchange=e=>processPDFFiles(Array.from(e.target.files)); i.click(); };
-  const handleMultiFile   = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files)); i.click(); };
-  const handleDelete = (no) => {
+  // Vehicle button → type forced 'vehicle' | Service button → type forced 'service'
+  const handleSingleFile = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'vehicle'); i.click(); };
+  const handleMultiFile  = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'service'); i.click(); };
+  const handleDelete = async (no) => {
     if (!window.confirm('Delete?')) return;
+    try { await fetch(api(`/api/invoices/${no}`), { method:'DELETE' }); } catch(e) {}
     const upd = invoices.filter(i=>String(i.invoiceNumber||i.id)!==String(no));
-    localStorage.setItem('invoices', JSON.stringify(upd.filter(i=>!i._s)));
+    localStorage.setItem('invoices', JSON.stringify(upd.filter(i=>i._s!=='db')));
     loadInvoices(); setMessage('✅ Deleted!'); setTimeout(()=>setMessage(''),2000);
   };
-  const handleClearAll = () => {
+  const handleClearAll = async () => {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     if (!window.confirm(`⚠️ सभी ${invoices.length} invoices delete होंगे!`)) return;
+    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'all'}) }); } catch(e) {}
     localStorage.setItem('invoices', JSON.stringify([]));
+    localStorage.setItem('generatedInvoices', JSON.stringify([]));
     loadInvoices(); setMessage('✅ सभी clear!'); setTimeout(()=>setMessage(''),3000);
   };
 
   const vehicleInvoices = invoices.filter(i => getInvoiceType(i) === 'vehicle');
   const serviceInvoices = invoices.filter(i => getInvoiceType(i) === 'service');
 
-  const handleClearVehicle = () => {
+  const handleClearVehicle = async () => {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     const vCount = vehicleInvoices.length;
     if (!window.confirm(`⚠️ ${vCount} Vehicle Tax Invoices delete होंगे!`)) return;
+    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'vehicle'}) }); } catch(e) {}
     const remaining = invoices.filter(i => getInvoiceType(i) !== 'vehicle');
-    localStorage.setItem('invoices', JSON.stringify(remaining));
+    localStorage.setItem('invoices', JSON.stringify(remaining.filter(i=>i._s!=='db')));
     loadInvoices(); setMessage(`✅ ${vCount} Vehicle invoices deleted!`); setTimeout(()=>setMessage(''),3000);
   };
 
-  const handleClearService = () => {
+  const handleClearService = async () => {
     const pwd = prompt('Admin password:');
     if (pwd !== 'vphonda@123') { alert('❌ गलत password!'); return; }
     const sCount = serviceInvoices.length;
     if (!window.confirm(`⚠️ ${sCount} Service/Parts Invoices delete होंगे!`)) return;
+    try { await fetch(api('/api/invoices/clear'), { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'service'}) }); } catch(e) {}
     const remaining = invoices.filter(i => getInvoiceType(i) !== 'service');
-    localStorage.setItem('invoices', JSON.stringify(remaining));
+    localStorage.setItem('invoices', JSON.stringify(remaining.filter(i=>i._s!=='db')));
     loadInvoices(); setMessage(`✅ ${sCount} Service invoices deleted!`); setTimeout(()=>setMessage(''),3000);
   };
 
@@ -951,18 +914,10 @@ export default function InvoiceManagementDashboard() {
                             : <span className="bg-blue-900 text-blue-300 px-1.5 py-0.5 rounded">📋 Manual</span>}
                         </td>
                         <td className="px-3 py-2">
-                          <div className="flex gap-1 flex-wrap">
+                          <div className="flex gap-1.5">
                             <Button onClick={()=>setSelectedInvoice(inv)}
                               className="bg-blue-600 hover:bg-blue-700 text-white h-7 px-2 text-xs flex items-center gap-1">
                               <Eye size={12}/> View
-                            </Button>
-                            <Button onClick={()=>setEditInvoice({...inv})}
-                              className="bg-yellow-600 hover:bg-yellow-500 text-white h-7 px-2 text-xs flex items-center gap-1">
-                              ✏️
-                            </Button>
-                            <Button onClick={()=>exportInvoicesAsPDF([inv])}
-                              className="bg-purple-700 hover:bg-purple-600 text-white h-7 px-2 text-xs flex items-center gap-1">
-                              <Download size={12}/>
                             </Button>
                             <Button onClick={()=>handleDelete(inv.invoiceNumber||inv.id)}
                               className="bg-red-700 hover:bg-red-600 text-white h-7 px-2 text-xs">
@@ -1084,64 +1039,6 @@ export default function InvoiceManagementDashboard() {
             {selectedInvoice.importedFrom && (
               <p className="text-xs text-slate-500 mt-3">📄 Source: {selectedInvoice.importedFrom}</p>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* ═══ EDIT INVOICE MODAL ═══ */}
-      {editInvoice && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={()=>setEditInvoice(null)}>
-          <div className="bg-slate-800 rounded-xl max-w-lg w-full p-6 border border-yellow-600" onClick={e=>e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-bold text-white">✏️ Edit Invoice #{editInvoice.invoiceNumber}</h2>
-              <Button onClick={()=>setEditInvoice(null)} className="bg-red-600 hover:bg-red-700 text-white h-8 px-3">✕</Button>
-            </div>
-            <div className="space-y-3">
-              {[
-                ['Customer Name','customerName'],
-                ['Phone','customerPhone'],
-                ['Vehicle','vehicle'],
-                ['Reg No','regNo'],
-                ['Invoice Date','invoiceDate'],
-              ].map(([label, key]) => (
-                <div key={key}>
-                  <p className="text-xs text-slate-400 mb-1">{label}</p>
-                  <input
-                    value={editInvoice[key]||''}
-                    onChange={e=>setEditInvoice(prev=>({...prev,[key]:e.target.value}))}
-                    className="w-full bg-slate-700 border border-slate-600 text-white rounded px-3 py-1.5 text-sm"
-                  />
-                </div>
-              ))}
-              <div>
-                <p className="text-xs text-slate-400 mb-1">Total Amount (₹)</p>
-                <input
-                  type="number"
-                  value={editInvoice.totals?.totalAmount||editInvoice.totalAmount||0}
-                  onChange={e=>setEditInvoice(prev=>({...prev,totals:{...(prev.totals||{}),totalAmount:parseFloat(e.target.value)||0}}))}
-                  className="w-full bg-slate-700 border border-slate-600 text-white rounded px-3 py-1.5 text-sm"
-                />
-              </div>
-            </div>
-            <div className="flex gap-3 mt-5">
-              <Button onClick={async()=>{
-                // Save to MongoDB
-                try {
-                  await fetch(api(`/api/invoices/${editInvoice.invoiceNumber||editInvoice._id}`), {
-                    method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(editInvoice)
-                  });
-                } catch(e){}
-                // Save to localStorage
-                const upd = invoices.map(i=>String(i.invoiceNumber||i.id)===String(editInvoice.invoiceNumber||editInvoice.id)?editInvoice:i);
-                localStorage.setItem('invoices', JSON.stringify(upd.filter(i=>i._s!=='db')));
-                setEditInvoice(null); loadInvoices(); setMessage('✅ Invoice updated!'); setTimeout(()=>setMessage(''),3000);
-              }} className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-2">
-                💾 Save
-              </Button>
-              <Button onClick={()=>setEditInvoice(null)} className="bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 px-6">
-                Cancel
-              </Button>
-            </div>
           </div>
         </div>
       )}
