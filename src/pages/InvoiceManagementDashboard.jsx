@@ -125,7 +125,7 @@ const parseVPHondaInvoice = (text, filename) => {
     /Total\s*Invoice\s*Value\s*\([Ii]n\s*[Ff]igure\)\s*[₹Rs.\s]*([\d,]+\.\d{2})/i,
     /Total\s*Invoice\s*Value[^₹]*[₹]\s*([\d,]+\.\d{2})/i,
     /Invoice\s*Value\(?[Ii]n\s*[Ff]igure\)?[₹Rs.\s]*([\d,]+\.\d{2})/i,
-    /Invoice\s*Total\s*[₹Rs.\s]*([\d,]+\.\d{2})/i,      // Vehicle invoice format
+    /Invoice\s*Total\s*[₹Rs.\s]*([\d,]+\.\d{2})/i,
     /Grand\s*Total[^₹]*[₹]\s*([\d,]+\.\d{2})/i,
     /Total\s*Parts\s*Amount[^₹]*[₹]\s*([\d,]+\.\d{2})/i,
     /₹\s*([\d,]+\.\d{2})\s*Total\s*Labour/i,
@@ -165,8 +165,9 @@ const parseVPHondaInvoice = (text, filename) => {
     '22401-K0N-D01':   'CLUTCH CABLE',
     '23100-K0N-D01':   'CHAIN DRIVE',
     '32213850-784007020': 'HONDA CHAIN CLEANER & LUBE 400ML',
-    '06430-KWP-900879': 'BRAKE SHOE SET',
-    '06410-K67-900401': 'PAD SET FR BRAKE',
+    '32213850-764007020': 'HONDA CHAIN CLEANER & LUBE 400ML',
+    '06430-KWP-900':   'SHOE SET BRAKE',
+    '06410-K67-900':   'DAMPER SET WHEEL',
     '91306-KYJ-840':   'O-RING',
     '18291-K0N-D00':   'GASKET EX PIPE',
     '17210-K0N-D00':   'ELEMENT AIR CLEANER',
@@ -197,11 +198,39 @@ const parseVPHondaInvoice = (text, filename) => {
   // PRIMARY STRATEGY: Match VP Honda table rows (browser pdfjs-dist format)
   const rowPat = /\b(\d{1,2})\s+([\w\-()]{3,25})\s+(\d{4,10}|NA)\s+(\d{1,6})\s+(\d{1,3})\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+(\d+)\s+(?:No|Nos|Pc|Pcs|Set)[,]?\w*\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+(\d{1,3})\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+[₹Rs.\s]*([\d,]+\.\d{2})/g;
   
-  // STRATEGY B: pdf-parse format (backend) — text is compressed, SrNo+PartNo+HSN merged
-  // Example line: "108233-2MA-F1LG12710197348352₹ 431.321No,s₹ 431.325₹ 3.04₹ 409.75"
-  // Decoded: SrNo=1, Part=08233-2MA-F1LG1, HSN=27101973, MRP=483, Disc=52, ₹431.32, Qty=1, ...
+  // STRATEGY B: pdfjs/pdf-parse backend — text may or may not have ₹ symbol
   if (items.length === 0) {
-    // Known Honda part numbers (add more as needed)
+
+    // ── Step 1: TAX SUMMARY section → HSN→TaxableAmount map ─────────────────
+    // Section-based: extract between "TAX SUMMARY" and "Total Tax"
+    // Works with or without ₹ symbol
+    const hsnTaxable = {};
+    const tsSect = flat.match(/TAX\s*SUMMARY([\s\S]*?)(?:Total\s*Tax|Invoice\s*Value|Payment\s*Mode)/i);
+    if (tsSect) {
+      const tsText = tsSect[1];
+      // Each TAX SUMMARY row: (S.No) HSN TaxableAmt ...
+      // Match HSN (7-10 digits or NA) followed by first decimal number = TaxableAmt
+      const tsRe = /\b(\d{7,10}|NA)\s+([\d,]+\.\d{2})/g;
+      let tsm;
+      while ((tsm = tsRe.exec(tsText)) !== null) {
+        const h = tsm[1].trim();
+        const a = parseFloat(tsm[2].replace(/,/g,''));
+        if (a > 0 && !hsnTaxable[h]) hsnTaxable[h] = a;
+      }
+    }
+    // Fallback: try whole flat if section not found
+    if (Object.keys(hsnTaxable).length === 0) {
+      const tsRe2 = /\b(\d{7,10}|NA)\s+([\d,]+\.\d{2})\s+\d{1,2}\s+([\d,]+\.\d{2})\s+\d{1,2}\s+([\d,]+\.\d{2})/g;
+      let tsm2;
+      while ((tsm2 = tsRe2.exec(flat)) !== null) {
+        const h = tsm2[1].trim();
+        const a = parseFloat(tsm2[2].replace(/,/g,''));
+        if (a > 0 && !hsnTaxable[h]) hsnTaxable[h] = a;
+      }
+    }
+    console.log('📊 TAX SUMMARY HSN map:', hsnTaxable);
+
+    // Known Honda part numbers — FIXED (correct, no extra digits)
     const KNOWN_PARTS = [
       '08233-2MA-F1LG1','08233-2MB-F0LG1','15412-K0N-D01','17220-K0N-D00',
       '94109-12000','91307-KRM-840','06455-KYJ-930','06435-KYJ-930',
@@ -209,8 +238,9 @@ const parseVPHondaInvoice = (text, filename) => {
       '06455-KYJ-940','42711-K0N-D01','42711-KYJ-901','42711-K44-D01',
       '15412-KRM-840','17220-KRM-840','06455-K44-D01','06435-K44-D01',
       '91307-KRM-841','94109-14000','22401-K0N-D01','23100-K0N-D01',
-      '32213850-784007020','06410-K67-900401','06430-KWP-900879',
-      '17220-K0N-D00','91306-KYJ-840','18291-K0N-D00','18392-K0N-D00',
+      '32213850-784007020','32213850-764007020',
+      '06430-KWP-900','06410-K67-900',   // FIXED — no extra digits
+      '91306-KYJ-840','18291-K0N-D00','18392-K0N-D00',
       '22870-K0N-D00','43150-K0N-D01','06455-K0N-D01','06435-K0N-D01',
       '45126-K0N-D01','45351-K0N-D01','45451-K0N-D01','51400-K0N-D01',
       '51500-K0N-D01','50713-K0N-D00','53100-K0N-D01','53205-K0N-D01',
@@ -220,117 +250,115 @@ const parseVPHondaInvoice = (text, filename) => {
       '16010-KYJ-901','16211-K0N-D00','22100-K0N-D01','50530-K0N-D01',
       '08232-99907','08232-99904','08C35-K0020','08C35-K0010',
     ];
-    
+
     const allLines = text.split('\n').map(l => l.trim()).filter(Boolean);
-    
+
     for (const line of allLines) {
-      // Skip non-parts lines
       if (/^(Total|HSN|SAC|GSTIN|SGST|CGST|IGST|Rate|Amount|Cess|Narsin|Phone|Email|Address|Dealer|State|PIN|Dist|City|PAN|Frame|Engine|Model|Colour|Jobcard|Service|Menu|Pick|Sale|Selling|Invoice|Order|Document|Customer|Leagal|Father|Aadhar|Bill|Place)/i.test(line)) continue;
-      
-      // Count ₹ amounts in line
+
+      // ── Detect amounts: try ₹-prefixed first, then plain decimals ───────────
       const amounts = [];
       const amRe = /₹\s*([\d,]+\.\d{2})/g;
       let am;
-      while ((am = amRe.exec(line)) !== null) {
-        amounts.push(parseFloat(am[1].replace(/,/g, '')));
-      }
-      if (amounts.length < 2) continue; // Need at least 2 ₹ values for a parts row
-      
-      // Extract part number: strip leading SrNo (1-2 digits), then match Honda pattern
-      // Line starts with: SrNo(1-2d) + PartNo + HSN(7-8d) + MRP(1-3d) + Disc(1-3d) + ₹
-      const beforeFirstRupee = line.split('₹')[0].trim();
-      let partNo = '';
-      
-      // Method 1: Match against known parts
-      for (const known of KNOWN_PARTS) {
-        if (beforeFirstRupee.includes(known)) {
-          partNo = known;
-          break;
+      while ((am = amRe.exec(line)) !== null) amounts.push(parseFloat(am[1].replace(/,/g,'')));
+
+      // If no ₹ found (pdf-parse without ₹), try plain decimal amounts
+      if (amounts.length < 2) {
+        amounts.length = 0;
+        const amRe2 = /\b(\d{1,6}\.\d{2})\b/g;
+        while ((am = amRe2.exec(line)) !== null) {
+          const v = parseFloat(am[1]);
+          if (v >= 1) amounts.push(v); // filter near-zero noise
         }
       }
-      
-      // Method 2: Smart extraction — Honda parts: various lengths
+      if (amounts.length < 2) continue;
+
+      const beforeFirstRupee = line.split(/₹|\b\d+\.\d{2}\b/)[0].trim();
+      let partNo = '';
+
+      // Method 1: Known parts list
+      const lineUpper = line.toUpperCase();
+      for (const known of KNOWN_PARTS) {
+        if (lineUpper.includes(known.toUpperCase())) { partNo = known; break; }
+      }
+
+      // Method 2: Smart extraction
       if (!partNo) {
         let cleaned = beforeFirstRupee;
         const dashIdx = cleaned.indexOf('-');
         if (dashIdx >= 4) {
           const digitsBeforeDash = cleaned.slice(0, dashIdx);
           if (/^\d+$/.test(digitsBeforeDash)) {
-            // Strip SrNo: 1-digit if 6 chars (1+5), 2-digit if 7 chars (2+5), etc.
-            const partStartLen = 5; // Honda parts start with 5 digits typically
+            const partStartLen = 5;
             const srNoLen = digitsBeforeDash.length - partStartLen;
-            if (srNoLen >= 1 && srNoLen <= 2) {
-              cleaned = cleaned.slice(srNoLen);
-            } else if (digitsBeforeDash.length >= 9) {
-              // 8-digit part (like 32213850): SrNo = total - 8
+            if (srNoLen >= 1 && srNoLen <= 2) cleaned = cleaned.slice(srNoLen);
+            else if (digitsBeforeDash.length >= 9) {
               const srNo8 = digitsBeforeDash.length - 8;
               if (srNo8 >= 1 && srNo8 <= 2) cleaned = cleaned.slice(srNo8);
-              else cleaned = cleaned.slice(1); // default: strip 1 digit SrNo
+              else cleaned = cleaned.slice(1);
             }
           }
-          // Match Honda part patterns:
-          // A: 5dig-3alphanum-4to6alphanum (08233-2MA-F1LG1)
-          // B: 5dig-5to6dig (94109-12000)
-          // C: 8dig-9dig (32213850-784007020)
           const partMatch = cleaned.match(/^(\d{4,8}-[A-Z0-9]{1,4}-[A-Z0-9]{1,6}|\d{4,8}-\d{4,9})/);
-          if (partMatch) {
-            partNo = partMatch[1];
-          }
+          if (partMatch) partNo = partMatch[1];
         }
       }
-      
-      // Method 3: CONSUM / Labour / P05
+
+      // Method 3: CONSUM / P05 / Labour
       if (!partNo) {
         if (/CONSUM/i.test(line)) partNo = 'CONSUM';
         else if (/P05/i.test(beforeFirstRupee)) partNo = 'P05';
         else if (/Labour|Labor/i.test(line)) partNo = 'LABOUR';
       }
-      
-      // Method 4: Any alphanumeric with dash pattern not yet matched
+
+      // Method 4: Generic dash pattern
       if (!partNo && beforeFirstRupee.match(/[A-Z]/i)) {
         const genMatch = beforeFirstRupee.match(/\d*([A-Z0-9]{2,5}-[A-Z0-9]{2,10}(?:-[A-Z0-9]{2,8})?)/i);
         if (genMatch && genMatch[1].length >= 5) partNo = genMatch[1];
       }
-      
+
       if (!partNo) continue;
-      if (items.find(i => i.partNo === partNo)) continue; // Skip duplicates
-      
-      // amounts: [unitPrice, totalAmt, discAmt, taxableAmt] — last one is taxable
-      const taxableAmt = amounts[amounts.length - 1]; // Last ₹ = Taxable Amount
-      const unitPrice = amounts[0]; // First ₹ = Unit Price
-      
-      // Extract MRP from text between part number and first ₹
-      let mrp = unitPrice; // default fallback
-      if (partNo && beforeFirstRupee.length > partNo.length + 5) {
-        // After partNo, text has: HSN(7-8 digits) + MRP(2-6 digits) + Disc%(1-3 digits)
-        const afterPart = beforeFirstRupee.slice(beforeFirstRupee.indexOf(partNo) + partNo.length);
+      if (items.find(i => i.partNo === partNo)) continue;
+
+      // ── Taxable amount: TAX SUMMARY first (accurate), else last amount ──────
+      // Extract HSN from text after partNo
+      const partIdx = line.indexOf(partNo);
+      const afterPart = partIdx >= 0 ? line.slice(partIdx + partNo.length) : '';
+      const hsnM = afterPart.match(/\b(\d{7,10})\b/);
+      const hsn  = hsnM ? hsnM[1] : (partNo === 'CONSUM' ? 'NA' : '');
+
+      let taxableAmt;
+      if (hsn && hsnTaxable[hsn]) {
+        taxableAmt = hsnTaxable[hsn]; // Use TAX SUMMARY (most accurate)
+      } else {
+        taxableAmt = amounts[amounts.length - 1]; // fallback: last amount in line
+      }
+      const unitPrice = amounts[0];
+
+      // MRP extraction
+      let mrp = unitPrice;
+      if (partNo && afterPart) {
         const nums = afterPart.match(/\d+/g);
         if (nums && nums.length >= 2) {
-          // First number = HSN (7-8 digits), second = MRP, third = disc%
           const possibleMRP = nums.find((n, i) => i > 0 && n.length >= 2 && n.length <= 6 && parseInt(n) > 5);
           if (possibleMRP) mrp = parseFloat(possibleMRP);
         }
       }
-      
-      // Detect quantity from line
+
       let qty = 1;
       const qtyMatch = line.match(/(\d+)\s*(?:No|Nos|Pc|Pcs|Set)[,]?/i);
       if (qtyMatch) qty = parseInt(qtyMatch[1]) || 1;
-      
-      // Determine GST: CONSUM has 20% disc = 0% GST, others have 5% disc = 18% GST (9+9)
-      // From TAX SUMMARY: items with HSN "NA" have 0% GST rate
-      const isZeroGST = partNo === 'CONSUM';
+
+      const isZeroGST = partNo === 'CONSUM' || hsn === 'NA';
       const gstRate = isZeroGST ? 0 : 18;
-      
       const desc = findDescription(partNo);
       items.push({
-        srNo: items.length + 1, partNo, hsn: '', description: desc,
+        srNo: items.length + 1, partNo, hsn, description: desc,
         mrp, unitPrice, quantity: qty,
         total: taxableAmt, gstRate, gstAmount: isZeroGST ? 0 : +(taxableAmt * 0.18).toFixed(2),
       });
     }
-    
-    if (items.length > 0) console.log('📦 Parts extracted:', items.length, items.map(i => i.partNo + ': ₹' + i.total));
+
+    if (items.length > 0) console.log('📦 Parts extracted:', items.length, items.map(i => i.partNo + ':₹' + i.total));
   }
   
   let m;
@@ -590,7 +618,7 @@ export default function InvoiceManagementDashboard() {
         const text = await extractPDFText(file);
         console.log(`📄 ${file.name} — Extracted text (first 500):`, text.slice(0,500));
         const parsed = parseVPHondaInvoice(text, file.name);
-        // forcedType: Vehicle button='vehicle', Service button='service' — overrides auto-detection
+        // forcedType overrides auto-detection: Vehicle button='vehicle', Service button='service'
         if (forcedType) parsed.invoiceType = forcedType;
         console.log(`✅ ${file.name} — Parsed:`, { 
           invoiceNo: parsed.invoiceNumber, 
