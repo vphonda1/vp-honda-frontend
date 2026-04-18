@@ -7,7 +7,7 @@ import { Search, Trash2, Download, ArrowLeft, Eye, FileText, FolderOpen, Refresh
 import { api } from '../utils/apiConfig';
 
 // ── NO pdfjs-dist needed! PDF parsing happens on backend (Node.js) ──────────
-// Backend route: POST /api/parse-pdf (see pdfRoutes.js)
+// Backend route: POST /api/invoice/parse-pdf (see pdfRoutes.js)
 
 const getLS = (k, fb=[]) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;} };
 
@@ -16,7 +16,7 @@ const extractPDFText = async (file) => {
   const formData = new FormData();
   formData.append('pdf', file);
 
-  const res = await fetch(api('/api/parse-pdf'), {
+  const res = await fetch(api('/api/invoices/parse-pdf'), {
     method: 'POST',
     body: formData,
   });
