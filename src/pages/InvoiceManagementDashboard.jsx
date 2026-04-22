@@ -37,10 +37,8 @@ const extractPDFText = async (file) => {
 // VP HONDA INVOICE PARSER
 // ═══════════════════════════════════════════════════════════════════════════
 const parseVPHondaInvoice = (text, filename) => {
-  // Normalize split part numbers across lines (e.g. "32213850-\n764007020" → "32213850-764007020")
-  const textNorm = text.replace(/(\d{6,10})-\s*\n\s*(\d{5,10})/g, '$1-$2');
-  const flat = textNorm.replace(/\n/g,' ').replace(/(\d{6,10})-\s+(\d{5,10})/g,'$1-$2').replace(/\s+/g,' ');
-  const lines = textNorm.split('\n').map(l=>l.trim()).filter(Boolean);
+  const flat = text.replace(/\n/g,' ').replace(/\s+/g,' ');
+  const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
 
   const find = (patterns, fb='') => {
     for (const p of patterns) {
@@ -51,10 +49,8 @@ const parseVPHondaInvoice = (text, filename) => {
   };
 
   // Invoice No
-  // Vehicle format: "Invoice No : SMH/25-26 152" (last number = invoice no)
-  // Service format: "Invoice No :- 550"
   const invoiceNumber = find([
-    /Invoice\s*No\s*[:-]+\s*(?:\S+\s+)?(\d+)/i,  // handles both formats + garbled chars
+    /Invoice\s*No\s*[:-]+\s*(\d+)/i,
     /Invoice\s*#\s*(\d+)/i,
     /INV[- ](\d+)/i,
   ], String(Math.floor(Math.random()*900000+100000)));
@@ -101,14 +97,10 @@ const parseVPHondaInvoice = (text, filename) => {
   ]);
 
   // Vehicle model — "Model No : SP125 DLX DISK"
-  let vehicle = find([
-    /Model\s*No\s*[:-]\s([A-Z][A-Z0-9 ]{3,30}?)(?=\s+(?:Colour|Color|Engine|Frame|Jobcard|Service|Sale|Model\s*Code))/i,
+  const vehicle = find([
+    /Model\s*No\s*[:-]*\s*([A-Z][A-Z0-9 ]{3,30}?)(?=\s+(?:Colour|Color|Engine|Frame|Jobcard|Service|Sale|Model\s*Code))/i,
     /(?:Activa|Shine|Hornet|SP\s*125|CB\d|NXR|Dio|Grazia|Unicorn|Livo|Dream)\s*[A-Z0-9 ]{0,20}/i,
   ]);
-  // Remove dealer name suffix appended by pdfjs
-  if (vehicle) {
-    vehicle = vehicle.replace(/\s*V\s*\.?\s*P\s*\.?\s*HONDA.*$/i, '').replace(/\s+L\s*$/, '').trim();
-  }
 
   // Reg No — "Veh Number :- MP04WA9535"
   const regNo = find([
@@ -128,17 +120,14 @@ const parseVPHondaInvoice = (text, filename) => {
   if (svcM) serviceNumber = svcM[1];
   if (!serviceNumber) { const smh = flat.match(/SMH\s*\/\s*(\d+)/i); if (smh) serviceNumber = smh[1]; }
 
-  // Total — "Total Invoice Value(In Figure) ₹ 861.00" (service) | "₹ 84,291.00" (vehicle)
+  // Total — "Total Invoice Value(In Figure) ₹ 861.00"
   const rawTotal = find([
     /Total\s*Invoice\s*Value\s*\([Ii]n\s*[Ff]igure\)\s*[₹Rs.\s]*([\d,]+\.\d{2})/i,
     /Total\s*Invoice\s*Value[^₹]*[₹]\s*([\d,]+\.\d{2})/i,
     /Invoice\s*Value\(?[Ii]n\s*[Ff]igure\)?[₹Rs.\s]*([\d,]+\.\d{2})/i,
-    /Invoice\s*Total\s*[₹Rs.\s]*([\d,]+\.\d{2})/i,
     /Grand\s*Total[^₹]*[₹]\s*([\d,]+\.\d{2})/i,
     /Total\s*Parts\s*Amount[^₹]*[₹]\s*([\d,]+\.\d{2})/i,
     /₹\s*([\d,]+\.\d{2})\s*Total\s*Labour/i,
-    // Vehicle invoice: last ₹ amount before "Key No" or "Amount in Words"
-    /[₹]\s*([\d,]+\.\d{2})\s*(?:-[₹][\d,.]+\s*)?[₹]\s*[\d,]+\.\d{2}\s*(?:Key\s*No|Amount\s*in\s*Words|Eighty|Seventy|Sixty|Fifty|Forty|Thirty|Twenty|Ten|Nine|Eight|Seven|Six|Five|Four|Three|Two|One)/i,
   ]);
   const pdfTotal = parseFloat((rawTotal||'0').replace(/,/g,'')) || 0;
 
@@ -160,27 +149,34 @@ const parseVPHondaInvoice = (text, filename) => {
   // Honda part description lookup (common service parts)
   const DESC_MAP = {
     '08233-2MA-F1LG1': 'ENGINE OIL ILIN 900ML 5W30MA',
-    '08233-2MB-F0LG1': 'ENGINE OIL 600ML 5W30MA', 
+    '08233-2MB-F0LG1': 'ENGINE OIL 600ML 5W30MA',
     '15412-K0N-D01':   'FILTER COMP ENGINE OIL',
     '17220-K0N-D00':   'ELEMENT COMP AIR CLEANER',
+    '17210-K0N-D00':   'ELEMENT AIR CLEANER',
     '94109-12000':     'WASHER 12MM DRAIN',
+    '94109-14000':     'WASHER 14MM DRAIN',
     '91307-KRM-840':   'O-RING 18X31',
+    '91307-KRM-841':   'O-RING 18X31',
     '06455-KYJ-930':   'PAD SET FR',
     '06455-KYJ-940':   'PAD SET FR',
     '06455-K0N-D01':   'PAD SET FR',
+    '06455-K44-D01':   'PAD SET FR',
     '06435-KYJ-930':   'SHOE SET RR BRAKE',
     '06435-K0N-D01':   'SHOE SET RR BRAKE',
+    '06430-KWP-900':   'SHOE SET BRAKE',
+    '06410-K67-900':   'DAMPER SET WHEEL',
     '42711-K0N-D01':   'TIRE RR',
     '42711-KYJ-901':   'TIRE RR',
     '22401-K0N-D01':   'CLUTCH CABLE',
     '23100-K0N-D01':   'CHAIN DRIVE',
     '32213850-784007020': 'HONDA CHAIN CLEANER & LUBE 400ML',
-    '06430-KWP-900879': 'BRAKE SHOE SET',
-    '06410-K67-900401': 'PAD SET FR BRAKE',
+    '32213850-764007020': 'HONDA CHAIN CLEANER & LUBE 400ML',
     '91306-KYJ-840':   'O-RING',
     '18291-K0N-D00':   'GASKET EX PIPE',
-    '17210-K0N-D00':   'ELEMENT AIR CLEANER',
     '30410-K0N-D01':   'SPARK PLUG',
+    '88210-K38-041ZA': 'MIRROR COMP R*NH1*',
+    '50661-K0N-D00':   'RUBBER MAIN STEP',
+    '50661-KYJ-900':   'RUBBER MAIN STEP',
     'P05':             'NO. PLATE COVER',
     'P05 (B)':         'NO. PLATE COVER',
     'CONSUM':          'CONSUMABLE CHARGES',
@@ -204,44 +200,39 @@ const parseVPHondaInvoice = (text, filename) => {
     return partNo; // fallback to part number
   };
 
-  // PRIMARY STRATEGY: Match VP Honda table rows (browser pdfjs-dist format)
-  // Part number group allows optional space+digits for split parts like "32213850- 764007020"
-  const rowPat = /\b(\d{1,2})\s+([\w\-()]{3,19}(?:\s+\d{5,10})?)\s+(\d{4,10}|NA)\s+(\d{1,6})\s+(\d{1,3})\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+(\d+)\s+(?:No|Nos|Pc|Pcs|Set)[,'\.s]?\w*\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+(\d{1,3})\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+[₹Rs.\s]*([\d,]+\.\d{2})/g;
+  // PRIMARY STRATEGY: rowPat runs FIRST — exact taxable from PDF columns
+  // Part number allows optional space+digits for split parts: "32213850- 764007020"
+  const rowPat = /\b(\d{1,2})\s+([\w\-()]{3,19}(?:\s+\d{5,10})?)\s+(\d{4,10}|NA)\s+(\d{1,6})\s+(\d{1,3})\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+(\d+)\s+(?:No|Nos|Pc|Pcs|Set)[,'\.\s]?\w*\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+(\d{1,3})\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+[₹Rs.\s]*([\d,]+\.\d{2})/g;
 
-  // ── Run rowPat FIRST — gives exact taxable amounts from PDF columns ──────
   let m;
   while ((m = rowPat.exec(flat)) !== null) {
-    const partNo = m[2].replace(/\s+/g,'').trim(); // normalize split part nos
+    const partNo = m[2].replace(/\s+/g,'').trim();
     if (NOISE.test(partNo)) continue;
-    const mrp        = parseFloat(m[4]) || 0;
-    const mrpDisc    = parseFloat(m[5]) || 0;
-    const unitPrice  = parseFloat(m[6].replace(/,/g,'')) || 0;
-    const qty        = parseInt(m[7]) || 1;
-    const discPct    = parseFloat(m[9]) || 0;
-    const discAmt    = parseFloat(m[10].replace(/,/g,'')) || 0;
-    const taxableAmt = parseFloat(m[11].replace(/,/g,'')) || 0; // column 11 = Taxable Amount
+    if (items.find(i => i.partNo === partNo)) continue;
+    const taxableAmt = parseFloat(m[11].replace(/,/g,'')) || 0;
     items.push({
       partNo, description: findDescription(partNo), hsn: m[3],
-      mrp, mrpDisc, unitPrice, quantity: qty,
-      total: taxableAmt, taxableAmt, discPct, discAmt,
+      mrp: parseFloat(m[4])||0, unitPrice: parseFloat(m[6].replace(/,/g,''))||0,
+      quantity: parseInt(m[7])||1,
+      total: taxableAmt, taxableAmt,
+      discPct: parseFloat(m[9])||0, discAmt: parseFloat(m[10].replace(/,/g,''))||0,
     });
   }
-  if (items.length > 0) console.log('📦 rowPat:', items.length, 'parts →', items.map(i=>i.partNo+':₹'+i.total));
+  if (items.length > 0) console.log('📦 rowPat:', items.length, items.map(i=>i.partNo+':₹'+i.total));
 
-  // STRATEGY B: fallback — only if rowPat found nothing (garbled/no ₹ symbol)
-  // Example compressed line: "108233-2MA-F1LG12710197348352₹431.321No,s₹431.325₹3.04₹409.75"
+  // STRATEGY B: fallback — only if rowPat found nothing
   if (items.length === 0) {
-    // Known Honda part numbers (add more as needed)
     const KNOWN_PARTS = [
       '08233-2MA-F1LG1','08233-2MB-F0LG1','15412-K0N-D01','17220-K0N-D00',
-      '94109-12000','91307-KRM-840','06455-KYJ-930','06435-KYJ-930',
-      '15412-K0N-D00','17210-K0N-D00','15410-KYJ-901','91302-KRM-840',
-      '06455-KYJ-940','42711-K0N-D01','42711-KYJ-901','42711-K44-D01',
-      '15412-KRM-840','17220-KRM-840','06455-K44-D01','06435-K44-D01',
-      '91307-KRM-841','94109-14000','22401-K0N-D01','23100-K0N-D01',
+      '94109-12000','94109-14000','91307-KRM-840','91307-KRM-841',
+      '06455-KYJ-930','06435-KYJ-930','15412-K0N-D00','17210-K0N-D00',
+      '15410-KYJ-901','91302-KRM-840','06455-KYJ-940','42711-K0N-D01',
+      '42711-KYJ-901','42711-K44-D01','15412-KRM-840','17220-KRM-840',
+      '06455-K44-D01','06435-K44-D01','22401-K0N-D01','23100-K0N-D01',
       '32213850-784007020','32213850-764007020',
-      '06410-K67-900','06430-KWP-900',   // FIXED — no extra digits
-      '17220-K0N-D00','91306-KYJ-840','18291-K0N-D00','18392-K0N-D00',
+      '06430-KWP-900','06410-K67-900',  // FIXED: no extra digits
+      '91306-KYJ-840','18291-K0N-D00','18392-K0N-D00',
+      '88210-K38-041ZA','50661-K0N-D00','50661-KYJ-900', // NEW: Mirror, Rubber Step
       '22870-K0N-D00','43150-K0N-D01','06455-K0N-D01','06435-K0N-D01',
       '45126-K0N-D01','45351-K0N-D01','45451-K0N-D01','51400-K0N-D01',
       '51500-K0N-D01','50713-K0N-D00','53100-K0N-D01','53205-K0N-D01',
@@ -267,15 +258,14 @@ const parseVPHondaInvoice = (text, filename) => {
       }
       if (amounts.length < 2) continue; // Need at least 2 ₹ values for a parts row
       
-      // Normalize split part numbers (e.g. "32213850- 764007020" → "32213850-764007020")
-      const lineNorm = line.replace(/(\d{6,10})-\s+(\d{5,10})/g, '$1-$2');
-      const beforeFirstRupee = lineNorm.split('₹')[0].trim();
+      // Extract part number: strip leading SrNo (1-2 digits), then match Honda pattern
+      // Line starts with: SrNo(1-2d) + PartNo + HSN(7-8d) + MRP(1-3d) + Disc(1-3d) + ₹
+      const beforeFirstRupee = line.split('₹')[0].trim();
       let partNo = '';
       
-      // Method 1: Match against known parts (search in full normalized line)
-      const lineUpper = lineNorm.toUpperCase();
+      // Method 1: Match against known parts
       for (const known of KNOWN_PARTS) {
-        if (lineUpper.includes(known.toUpperCase())) {
+        if (beforeFirstRupee.includes(known)) {
           partNo = known;
           break;
         }
@@ -362,7 +352,7 @@ const parseVPHondaInvoice = (text, filename) => {
       });
     }
     
-    if (items.length > 0) console.log('📦 Parts extracted:', items.length, items.map(i => i.partNo + ': ₹' + i.total));
+    if (items.length > 0) console.log('📦 Strategy B:', items.length, items.map(i => i.partNo + ':₹' + i.total));
   }
 
   // Deduplicate by partNo
@@ -435,12 +425,10 @@ const parseVPHondaInvoice = (text, filename) => {
 
   console.log('📊 Totals:', { itemsTotal, pdfTotal, taxAmount, itemsGst, subtotal, gstRate: gstRate+'%', gstAmount, finalTotal });
 
-  // Invoice type detection
-  // SMH = Sale booking (vehicle), not service. Jobcard/Service KM = service
-  const _isVehicle = /Sale\s*Date|Selling\s*Dealer|HMSI|Chassis\s*No|Bill\s*book|IRN\s*:|Key\s*No/i.test(flat)
-                     || (pdfTotal > 50000);
-  const _isService = !_isVehicle && /Service\s*Type|Jobcard|1st\s*Service|2nd\s*Service|3rd\s*Service|AMC\s*NO|Service\s*KM|FREE\s*SERVICE/i.test(flat);
-  const invoiceType = _isVehicle ? 'vehicle' : 'service';
+  // Invoice type — compute before return (no IIFE)
+  const _isService = /Service\s*Type|Jobcard|1st\s*Service|2nd\s*Service|3rd\s*Service|SMH\/|AMC\s*NO|Service\s*KM|FREE\s*SERVICE/i.test(flat);
+  const _isVehicle = /Sale\s*Date|Selling\s*Dealer|HMSI/i.test(flat) || (finalTotal > 50000 && !_isService);
+  const invoiceType = _isService ? 'service' : _isVehicle ? 'vehicle' : finalTotal > 50000 ? 'vehicle' : 'service';
 
   return {
     invoiceNumber,
@@ -550,13 +538,13 @@ export default function InvoiceManagementDashboard() {
     const unique = all.filter(i => {
       const k = String(i.invoiceNumber||i.id||i._id||Math.random());
       if (seen.has(k)) return false; seen.add(k); return true;
-    }).sort((a,b)=>new Date(b.importedAt||b.createdAt||b.invoiceDate||b.date||0)-new Date(a.importedAt||a.createdAt||a.invoiceDate||a.date||0));
+    }).sort((a,b)=>new Date(b.invoiceDate||b.importedAt||b.createdAt||b.date||0)-new Date(a.invoiceDate||a.importedAt||a.createdAt||a.date||0));
     setInvoices(unique);
     setLastRefresh(new Date());
     setLoading(false);
   };
 
-  const processPDFFiles = async (files, forcedType = null) => {
+  const processPDFFiles = async (files) => {
     if (!files.length) return;
     setImporting(true);
     setProgress({ current:0, total:files.length });
@@ -571,14 +559,11 @@ export default function InvoiceManagementDashboard() {
         const text = await extractPDFText(file);
         console.log(`📄 ${file.name} — Extracted text (first 500):`, text.slice(0,500));
         const parsed = parseVPHondaInvoice(text, file.name);
-        // forcedType: Vehicle button='vehicle', Service button='service'
-        if (forcedType) parsed.invoiceType = forcedType;
         console.log(`✅ ${file.name} — Parsed:`, { 
           invoiceNo: parsed.invoiceNumber, 
           customer: parsed.customerName, 
           items: parsed.items.length, 
-          total: parsed.totals.totalAmount,
-          type: parsed.invoiceType,
+          total: parsed.totals.totalAmount 
         });
         added.push(parsed);
       } catch (err) {
@@ -586,11 +571,10 @@ export default function InvoiceManagementDashboard() {
         errors.push(file.name + ': ' + err.message);
         added.push({
           invoiceNumber: Math.floor(Math.random()*900000+100000),
-          customerName: file.name.replace(/^[_\s]*\d[\d\-]*[_\s]+/,'').replace(/_\d+$/,'').replace(/_/g,' ').replace(/\.pdf$/i,'').trim().toUpperCase().slice(0,40)||'Unknown',
+          customerName: file.name.replace(/[_\-\d]+/g,' ').replace(/\.pdf$/i,'').trim().slice(0,40)||'Unknown',
           customerPhone:'', vehicle:'', regNo:'', items:[], parts:[],
           invoiceDate:new Date().toISOString().split('T')[0],
           totals:{subtotal:0,gstRate:18,gstAmount:0,totalAmount:0},
-          invoiceType: forcedType || 'service',
           importedFrom:file.name, importedAt:new Date().toISOString(),
           customerId:'imported-'+Date.now(), status:'Active',
           importError: err.message,
@@ -675,7 +659,7 @@ export default function InvoiceManagementDashboard() {
     setTimeout(()=>setMessage(''), 6000);
   };
 
-  const handleSingleFile  = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'vehicle'); i.click(); };
+  const handleSingleFile  = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'vehicle'); i.click(); };
   const handleMultiFile   = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'service'); i.click(); };
   const handleDelete = async (no) => {
     if (!window.confirm('Delete?')) return;
