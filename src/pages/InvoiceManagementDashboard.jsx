@@ -675,7 +675,7 @@ export default function InvoiceManagementDashboard() {
     setTimeout(()=>setMessage(''), 6000);
   };
 
-  const handleSingleFile  = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'vehicle'); i.click(); };
+  const handleSingleFile  = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'vehicle'); i.click(); };
   const handleMultiFile   = () => { const i=document.createElement('input'); i.type='file'; i.accept='.pdf'; i.multiple=true; i.onchange=e=>processPDFFiles(Array.from(e.target.files),'service'); i.click(); };
   const handleDelete = async (no) => {
     if (!window.confirm('Delete?')) return;
