@@ -102,10 +102,9 @@ const parseVPHondaInvoice = (text, filename) => {
 
   // Vehicle model — "Model No : SP125 DLX DISK"
   const vehicle = find([
-    /Model\s*No\s*[:-]*\s*([A-Z][A-Z0-9 ]{3,30}?)(?=\s+(?:Colour|Color|Engine|Frame|Jobcard|Service|Sale|Model\s*Code))/i,
+    /Model\s*No\s*[:-]\s([A-Z][A-Z0-9 ]{3,30}?)(?=\s+(?:Colour|Color|Engine|Frame|Jobcard|Service|Sale|Model\s*Code))/i,
     /(?:Activa|Shine|Hornet|SP\s*125|CB\d|NXR|Dio|Grazia|Unicorn|Livo|Dream)\s*[A-Z0-9 ]{0,20}/i,
   ]);
-   
   // Remove dealer name suffix appended by pdfjs
   if (vehicle) {
     vehicle = vehicle.replace(/\s*V\s*\.?\s*P\s*\.?\s*HONDA.*$/i, '').replace(/\s+L\s*$/, '').trim();
