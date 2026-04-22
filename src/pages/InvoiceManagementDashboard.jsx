@@ -550,7 +550,7 @@ export default function InvoiceManagementDashboard() {
     const unique = all.filter(i => {
       const k = String(i.invoiceNumber||i.id||i._id||Math.random());
       if (seen.has(k)) return false; seen.add(k); return true;
-    }).sort((a,b)=>new Date(b.importedAt||b.invoiceDate||b.date||0)-new Date(a.importedAt||a.invoiceDate||a.date||0));
+    }).sort((a,b)=>new Date(b.importedAt||b.createdAt||b.invoiceDate||b.date||0)-new Date(a.importedAt||a.createdAt||a.invoiceDate||a.date||0));
     setInvoices(unique);
     setLastRefresh(new Date());
     setLoading(false);
