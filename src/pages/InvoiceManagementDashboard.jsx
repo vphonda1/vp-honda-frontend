@@ -203,10 +203,29 @@ const parseVPHondaInvoice = (text, filename) => {
   // PRIMARY STRATEGY: Match VP Honda table rows (browser pdfjs-dist format)
   // Part number group allows optional space+digits for split parts like "32213850- 764007020"
   const rowPat = /\b(\d{1,2})\s+([\w\-()]{3,19}(?:\s+\d{5,10})?)\s+(\d{4,10}|NA)\s+(\d{1,6})\s+(\d{1,3})\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+(\d+)\s+(?:No|Nos|Pc|Pcs|Set)[,'\.s]?\w*\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+(\d{1,3})\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+[₹Rs.\s]*([\d,]+\.\d{2})/g;
-  
-  // STRATEGY B: pdf-parse format (backend) — text is compressed, SrNo+PartNo+HSN merged
-  // Example line: "108233-2MA-F1LG12710197348352₹ 431.321No,s₹ 431.325₹ 3.04₹ 409.75"
-  // Decoded: SrNo=1, Part=08233-2MA-F1LG1, HSN=27101973, MRP=483, Disc=52, ₹431.32, Qty=1, ...
+
+  // ── Run rowPat FIRST — gives exact taxable amounts from PDF columns ──────
+  let m;
+  while ((m = rowPat.exec(flat)) !== null) {
+    const partNo = m[2].replace(/\s+/g,'').trim(); // normalize split part nos
+    if (NOISE.test(partNo)) continue;
+    const mrp        = parseFloat(m[4]) || 0;
+    const mrpDisc    = parseFloat(m[5]) || 0;
+    const unitPrice  = parseFloat(m[6].replace(/,/g,'')) || 0;
+    const qty        = parseInt(m[7]) || 1;
+    const discPct    = parseFloat(m[9]) || 0;
+    const discAmt    = parseFloat(m[10].replace(/,/g,'')) || 0;
+    const taxableAmt = parseFloat(m[11].replace(/,/g,'')) || 0; // column 11 = Taxable Amount
+    items.push({
+      partNo, description: findDescription(partNo), hsn: m[3],
+      mrp, mrpDisc, unitPrice, quantity: qty,
+      total: taxableAmt, taxableAmt, discPct, discAmt,
+    });
+  }
+  if (items.length > 0) console.log('📦 rowPat:', items.length, 'parts →', items.map(i=>i.partNo+':₹'+i.total));
+
+  // STRATEGY B: fallback — only if rowPat found nothing (garbled/no ₹ symbol)
+  // Example compressed line: "108233-2MA-F1LG12710197348352₹431.321No,s₹431.325₹3.04₹409.75"
   if (items.length === 0) {
     // Known Honda part numbers (add more as needed)
     const KNOWN_PARTS = [
@@ -340,58 +359,6 @@ const parseVPHondaInvoice = (text, filename) => {
     }
     
     if (items.length > 0) console.log('📦 Parts extracted:', items.length, items.map(i => i.partNo + ': ₹' + i.total));
-  }
-  
-  let m;
-  while ((m = rowPat.exec(flat)) !== null) {
-    // Normalize partNo: remove internal spaces (handles "32213850- 764007020" → "32213850-764007020")
-    const partNo = m[2].replace(/\s+/g,'').trim();
-    if (NOISE.test(partNo)) continue;
-    if (items.find(i => i.partNo === partNo)) continue; // skip duplicates
-    
-    const mrp        = parseFloat(m[4]) || 0;
-    const mrpDisc    = parseFloat(m[5]) || 0;
-    const unitPrice  = parseFloat(m[6].replace(/,/g,'')) || 0;
-    const qty        = parseInt(m[7]) || 1;
-    const totalAmt   = parseFloat(m[8].replace(/,/g,'')) || 0;
-    const discPct    = parseFloat(m[9]) || 0;
-    const discAmt    = parseFloat(m[10].replace(/,/g,'')) || 0;
-    const taxableAmt = parseFloat(m[11].replace(/,/g,'')) || 0;
-    
-    items.push({
-      partNo,
-      description:  findDescription(partNo),
-      hsn:          m[3],
-      mrp, mrpDisc, unitPrice,
-      quantity:     qty,
-      total:        taxableAmt,
-      taxableAmt, discPct, discAmt,
-    });
-  }
-  if (items.length > 0) console.log('📦 rowPat found:', items.length, items.map(i => i.partNo + ':₹' + i.total));
-
-  // FALLBACK: Simpler pattern if above missed some rows (e.g., CONSUM with NA HSN)
-  if (items.length === 0) {
-    const simpleRowPat = /\b(\d{1,2})\s+([\w\-() ]{3,25}?)\s+(?:\d{4,10}|NA)\s+(\d{1,6})\s+\d{1,3}\s+[₹Rs.\s]*([\d,]+\.\d{2})\s+(\d+)\s+\w+/g;
-    let sm;
-    while ((sm = simpleRowPat.exec(flat)) !== null) {
-      const partNo = sm[2].trim();
-      if (NOISE.test(partNo)) continue;
-      const allAmts = [];
-      const ctx = flat.slice(sm.index, sm.index + 200);
-      const amtRe = /[₹]\s*([\d,]+\.\d{2})/g;
-      let am;
-      while ((am = amtRe.exec(ctx)) !== null) allAmts.push(parseFloat(am[1].replace(/,/g,'')));
-      
-      items.push({
-        partNo,
-        description: findDescription(partNo),
-        mrp:         parseFloat(sm[3]) || 0,
-        unitPrice:   parseFloat(sm[4].replace(/,/g,'')) || 0,
-        quantity:    parseInt(sm[5]) || 1,
-        total:       allAmts.length > 0 ? allAmts[allAmts.length - 1] : parseFloat(sm[4].replace(/,/g,'')) || 0,
-      });
-    }
   }
 
   // Deduplicate by partNo
