@@ -391,6 +391,13 @@ export default function RemindersPage() {
           ))}
         </div>
 
+         {/* ═══ NAV BUTTONS ═══ */}
+        <div className="grid grid-cols-3 gap-2">
+          <Button onClick={() => navigate('/customer-data-manager')} className="bg-purple-600/80 hover:bg-purple-600 text-white font-bold py-2.5 text-xs">📊 Data Manager</Button>
+          <Button onClick={() => navigate('/diagnostic')} className="bg-cyan-600/80 hover:bg-cyan-600 text-white font-bold py-2.5 text-xs">🔍 Diagnostic</Button>
+          <Button onClick={() => navigate('/invoice-management')} className="bg-orange-600/80 hover:bg-orange-600 text-white font-bold py-2.5 text-xs">📁 Invoices</Button>
+        </div>
+
         {/* FILTERS */}
         <div style={{display:'flex',flexWrap:'wrap',gap:'7px',marginBottom:'14px'}}>
           {FILTERS.map(f=>(

@@ -119,20 +119,51 @@ export default function CustomerServiceProfile() {
   const saveData = async () => {
     setSaving(true);
     try {
-      // Save to localStorage
+      // Save to localStorage by customerId
       const allServiceData = JSON.parse(localStorage.getItem('customerServiceData')) || {};
       allServiceData[customerId] = serviceData;
-      localStorage.setItem('customerServiceData', JSON.stringify(allServiceData));
 
-      // Try to save to backend
+      // ALSO save by regNo (for RemindersPage cross-device sync)
+      const regNo = (customer?.linkedVehicle?.regNo || serviceData.regNo || '').trim().toUpperCase();
+      if (regNo && regNo !== '—' && regNo !== '-') {
+        allServiceData[regNo] = {
+          ...serviceData,
+          regNo,
+          customerName: customer?.name || serviceData.customerName,
+          phone: customer?.phone || serviceData.phone,
+          vehicle: customer?.linkedVehicle?.name || serviceData.vehicle,
+        };
+      }
+
+      localStorage.setItem('customerServiceData', JSON.stringify(allServiceData));
+      window.dispatchEvent(new Event('storage'));
+
+      // ── MongoDB sync (cross-device) ──────────────────────────────────
+      const syncKey = regNo || customerId;
       try {
+        await fetch(api(`/api/service-data/${syncKey}`), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...serviceData,
+            regNo: regNo || undefined,
+            customerId,
+            customerName: customer?.name || serviceData.customerName,
+            phone: customer?.phone || serviceData.phone,
+            vehicle: customer?.linkedVehicle?.name || serviceData.vehicle,
+          }),
+        });
+        setSaving(false);
+        alert('✅ Data saved & synced! सभी devices पर दिखेगा।');
+      } catch {
+        // Backend offline — local save is done
         await fetch(api(`/api/customers/${customerId}/service-data`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(serviceData)
-        });
-      } catch (e) {
-        console.warn('Backend save failed, using localStorage');
+        }).catch(() => {});
+        setSaving(false);
+        alert('✅ Saved locally. Internet आने पर sync होगा।');
       }
 
       setMessage('✅ Data saved successfully!');

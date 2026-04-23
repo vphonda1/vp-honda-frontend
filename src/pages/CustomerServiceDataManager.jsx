@@ -45,8 +45,30 @@ export default function CustomerServiceDataManager() {
     custData.sort((a, b) => new Date(b.createdAt || b._id || 0) - new Date(a.createdAt || a._id || 0));
     setCustomers(custData);
 
-    const savedServiceData = getLS('customerServiceData', {});
-    setServiceData(savedServiceData);
+    // ── Fetch service-data from MongoDB (cross-device sync) ──────────
+    let merged = getLS('customerServiceData', {});
+    try {
+      const sdRes = await fetch(api('/api/service-data'));
+      if (sdRes.ok) {
+        const dbSD = await sdRes.json();
+        dbSD.forEach(rec => {
+          const key = rec.regNo || rec.customerId || rec._id;
+          if (!key) return;
+          if (!merged[key]) merged[key] = {};
+          // MongoDB data takes priority for service/payment/insurance fields
+          ['pendingAmount','paymentDueDate','paymentReceivedDate','insuranceDate','rtoDoneDate',
+           'firstServiceDate','secondServiceDate','thirdServiceDate','fourthServiceDate',
+           'fifthServiceDate','sixthServiceDate','seventhServiceDate','purchaseDate'].forEach(f => {
+            if (rec[f] !== undefined && rec[f] !== null && rec[f] !== '') merged[key][f] = rec[f];
+          });
+          if (rec.customerName) merged[key].customerName = rec.customerName;
+          if (rec.phone)        merged[key].phone        = rec.phone;
+          if (rec.vehicle)      merged[key].vehicle      = rec.vehicle;
+        });
+        localStorage.setItem('customerServiceData', JSON.stringify(merged));
+      }
+    } catch {}
+    setServiceData(merged);
 
     // Invoice count from ALL sources
     const allInv = [...getLS('invoices',[]), ...getLS('generatedInvoices',[]), ...getLS('jobCards',[])];
@@ -60,14 +82,37 @@ export default function CustomerServiceDataManager() {
     setServiceData(prev => ({ ...prev, [custId]: { ...(prev[custId]||{}), [field]: value } }));
   };
 
-  const saveCustomerData = (custId) => {
+  const saveCustomerData = async (custId) => {
     try {
       const all = getLS('customerServiceData', {});
-      all[custId] = serviceData[custId];
+      const data = { ...serviceData[custId] };
+
+      // Save by customer._id (original key)
+      all[custId] = data;
+
+      // ALSO save by regNo (for RemindersPage cross-device sync)
+      const cust = customers.find(c => c._id === custId);
+      const regNo = (cust?.linkedVehicle?.regNo || data.regNo || '').trim().toUpperCase();
+      if (regNo && regNo !== '—' && regNo !== '-') {
+        all[regNo] = { ...data, regNo, customerName: cust?.name||data.customerName, phone: cust?.phone||data.phone, vehicle: cust?.linkedVehicle?.name||data.vehicle };
+      }
+
       localStorage.setItem('customerServiceData', JSON.stringify(all));
       window.dispatchEvent(new Event('storage'));
-      setMessage('✅ Data saved!');
-      setTimeout(() => setMessage(''), 3000);
+
+      // ── MongoDB sync (cross-device) ──────────────────────────────────
+      const syncKey = regNo || custId;
+      try {
+        await fetch(api(`/api/service-data/${syncKey}`), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...data, regNo: regNo||undefined, customerId: custId, customerName: cust?.name||data.customerName, phone: cust?.phone||data.phone, vehicle: cust?.linkedVehicle?.name||data.vehicle }),
+        });
+        setMessage('✅ Data saved & synced! सभी devices पर दिखेगा।');
+      } catch {
+        setMessage('✅ Data saved (offline — internet आने पर sync होगा)');
+      }
+      setTimeout(() => setMessage(''), 4000);
     } catch { setMessage('❌ Error saving!'); }
   };
 
