@@ -58,37 +58,72 @@ export default function DiagnosticPage() {
   };
 
   // ── Auto-Fix: delete ALL unmatched that have no service history ──
-  const autoFix = () => {
+  const autoFix = async () => {
     const empty = unmatched.filter(x=>!x.useful);
-    const keep = unmatched.filter(x=>x.useful);
+    const keep  = unmatched.filter(x=>x.useful);
     if(!window.confirm(`🔧 Auto-Fix:\n\n✅ DELETE: ${empty.length} empty entries (no service data)\n⚠️ KEEP: ${keep.length} entries (have service data)\n\nContinue?`)) return;
+
+    // 1. Delete from localStorage
     const svc = getLS('customerServiceData', {});
     empty.forEach(e => delete svc[e.id]);
     localStorage.setItem('customerServiceData', JSON.stringify(svc));
+
+    // 2. ALSO delete from MongoDB (prevents data coming back on sync)
+    for (const e of empty) {
+      try {
+        await fetch(api(`/api/service-data/${e.id}`), { method: 'DELETE' }).catch(()=>{});
+      } catch {}
+    }
+
     window.dispatchEvent(new Event('storage'));
-    setMsg(`✅ ${empty.length} empty entries deleted!`);
-    setTimeout(()=>setMsg(''),4000); run();
+    setMsg(`✅ ${empty.length} empty entries deleted from localStorage & MongoDB!`);
+    setTimeout(()=>setMsg(''),5000);
+    run();
   };
 
   // ── Delete ALL unmatched (admin) ──
-  const deleteAllUnmatched = () => {
+  const deleteAllUnmatched = async () => {
     const pwd = prompt('Admin password (Delete All Unmatched):');
     if(pwd !== 'vphonda@123') { alert('❌ Wrong password!'); return; }
     if(!window.confirm(`⚠️ ${unmatched.length} unmatched entries DELETE करें?\n\nयह action undo नहीं होगा!`)) return;
+
     const svc = getLS('customerServiceData', {});
-    unmatched.forEach(e => delete svc[e.id]);
+    for (const e of unmatched) {
+      delete svc[e.id];
+      // Delete from MongoDB too
+      try { await fetch(api(`/api/service-data/${e.id}`), { method: 'DELETE' }).catch(()=>{}); } catch {}
+    }
     localStorage.setItem('customerServiceData', JSON.stringify(svc));
     window.dispatchEvent(new Event('storage'));
-    setMsg(`✅ ${unmatched.length} entries deleted! System Health improved.`);
-    setTimeout(()=>setMsg(''),4000); run();
+    setMsg(`✅ ${unmatched.length} entries deleted from localStorage & MongoDB!`);
+    setTimeout(()=>setMsg(''),5000);
+    run();
+  };
+
+  // ── Full Cache Clear (nuclear option) ──
+  const clearAllCache = async () => {
+    const pwd = prompt('Admin password (Full Cache Clear):');
+    if(pwd !== 'vphonda@123') { alert('❌ Wrong password!'); return; }
+    if(!window.confirm('⚠️ पूरा localStorage cache clear होगा!\n\nसिर्फ MongoDB data बचेगा।\n\nContinue?')) return;
+
+    // Clear all cache keys (keep auth/login)
+    const keepKeys = ['userToken','adminAuth','staffPin'];
+    const allKeys = Object.keys(localStorage);
+    allKeys.forEach(k => { if(!keepKeys.includes(k)) localStorage.removeItem(k); });
+
+    window.dispatchEvent(new Event('storage'));
+    setMsg('✅ Cache cleared! Page reload हो रहा है...');
+    setTimeout(()=>window.location.reload(), 1500);
   };
 
   // ── Delete single entry ──
-  const deleteOne = (entryId) => {
+  const deleteOne = async (entryId) => {
     if(!window.confirm('Delete this entry?')) return;
     const svc = getLS('customerServiceData', {});
     delete svc[entryId];
     localStorage.setItem('customerServiceData', JSON.stringify(svc));
+    // Also delete from MongoDB
+    try { await fetch(api(`/api/service-data/${entryId}`), { method: 'DELETE' }).catch(()=>{}); } catch {}
     window.dispatchEvent(new Event('storage'));
     run();
   };
@@ -145,6 +180,9 @@ export default function DiagnosticPage() {
                   </Button>
                   <Button onClick={deleteAllUnmatched} disabled={unmatched.length===0} className="bg-red-700 hover:bg-red-600 text-white text-[10px] h-7 px-3">
                     <Trash2 size={11} className="mr-1"/> Delete All ({unmatched.length})
+                  </Button>
+                  <Button onClick={clearAllCache} className="bg-slate-600 hover:bg-slate-500 text-white text-[10px] h-7 px-3">
+                    🧹 Full Cache Clear
                   </Button>
                 </div>
               </div>

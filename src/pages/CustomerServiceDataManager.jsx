@@ -45,30 +45,8 @@ export default function CustomerServiceDataManager() {
     custData.sort((a, b) => new Date(b.createdAt || b._id || 0) - new Date(a.createdAt || a._id || 0));
     setCustomers(custData);
 
-    // ── Fetch service-data from MongoDB (cross-device sync) ──────────
-    let merged = getLS('customerServiceData', {});
-    try {
-      const sdRes = await fetch(api('/api/service-data'));
-      if (sdRes.ok) {
-        const dbSD = await sdRes.json();
-        dbSD.forEach(rec => {
-          const key = rec.regNo || rec.customerId || rec._id;
-          if (!key) return;
-          if (!merged[key]) merged[key] = {};
-          // MongoDB data takes priority for service/payment/insurance fields
-          ['pendingAmount','paymentDueDate','paymentReceivedDate','insuranceDate','rtoDoneDate',
-           'firstServiceDate','secondServiceDate','thirdServiceDate','fourthServiceDate',
-           'fifthServiceDate','sixthServiceDate','seventhServiceDate','purchaseDate'].forEach(f => {
-            if (rec[f] !== undefined && rec[f] !== null && rec[f] !== '') merged[key][f] = rec[f];
-          });
-          if (rec.customerName) merged[key].customerName = rec.customerName;
-          if (rec.phone)        merged[key].phone        = rec.phone;
-          if (rec.vehicle)      merged[key].vehicle      = rec.vehicle;
-        });
-        localStorage.setItem('customerServiceData', JSON.stringify(merged));
-      }
-    } catch {}
-    setServiceData(merged);
+    const savedServiceData = getLS('customerServiceData', {});
+    setServiceData(savedServiceData);
 
     // Invoice count from ALL sources
     const allInv = [...getLS('invoices',[]), ...getLS('generatedInvoices',[]), ...getLS('jobCards',[])];
@@ -76,43 +54,23 @@ export default function CustomerServiceDataManager() {
     setLastRefresh(new Date());
   };
 
-  const toggleCustomer = (id) => setExpandedCustomers(prev => ({ ...prev, [id]: !prev[id] }));
+  // Helper: get display name from customer object (handles all field variants)
+  const getName = (c) => c?.name || c?.customerName || c?.fullName || '—';
+  const getRegNo = (c) => c?.linkedVehicle?.regNo || c?.regNo || c?.vehicleNo || '';
+  const getVehicle = (c) => c?.linkedVehicle?.name || c?.vehicleModel || c?.vehicle || '';
 
   const updateServiceData = (custId, field, value) => {
     setServiceData(prev => ({ ...prev, [custId]: { ...(prev[custId]||{}), [field]: value } }));
   };
 
-  const saveCustomerData = async (custId) => {
+  const saveCustomerData = (custId) => {
     try {
       const all = getLS('customerServiceData', {});
-      const data = { ...serviceData[custId] };
-
-      // Save by customer._id (original key)
-      all[custId] = data;
-
-      // ALSO save by regNo (for RemindersPage cross-device sync)
-      const cust = customers.find(c => c._id === custId);
-      const regNo = (cust?.linkedVehicle?.regNo || data.regNo || '').trim().toUpperCase();
-      if (regNo && regNo !== '—' && regNo !== '-') {
-        all[regNo] = { ...data, regNo, customerName: cust?.name||data.customerName, phone: cust?.phone||data.phone, vehicle: cust?.linkedVehicle?.name||data.vehicle };
-      }
-
+      all[custId] = serviceData[custId];
       localStorage.setItem('customerServiceData', JSON.stringify(all));
       window.dispatchEvent(new Event('storage'));
-
-      // ── MongoDB sync (cross-device) ──────────────────────────────────
-      const syncKey = regNo || custId;
-      try {
-        await fetch(api(`/api/service-data/${syncKey}`), {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...data, regNo: regNo||undefined, customerId: custId, customerName: cust?.name||data.customerName, phone: cust?.phone||data.phone, vehicle: cust?.linkedVehicle?.name||data.vehicle }),
-        });
-        setMessage('✅ Data saved & synced! सभी devices पर दिखेगा।');
-      } catch {
-        setMessage('✅ Data saved (offline — internet आने पर sync होगा)');
-      }
-      setTimeout(() => setMessage(''), 4000);
+      setMessage('✅ Data saved!');
+      setTimeout(() => setMessage(''), 3000);
     } catch { setMessage('❌ Error saving!'); }
   };
 
@@ -226,9 +184,14 @@ export default function CustomerServiceDataManager() {
             </Card>
           ) : (
             pageCustomers.map(customer => {
-              const custData = serviceData[customer._id] || {};
+              // Look up service data by _id first, then regNo, then phone
+              const regNo = getRegNo(customer).toUpperCase();
+              const custData = serviceData[customer._id]
+                || (regNo ? serviceData[regNo] : null)
+                || (customer.phone ? Object.values(serviceData).find(d => d.phone === customer.phone) : null)
+                || {};
               const isExpanded = expandedCustomers[customer._id];
-              const hasData = Object.keys(custData).length > 0;
+              const hasData = !!(custData.pendingAmount || custData.insuranceDate || custData.firstServiceDate || custData.secondServiceDate || custData.purchaseDate);
               const hasPending = parseFloat(custData.pendingAmount||0) > 0;
 
               return (
@@ -240,10 +203,11 @@ export default function CustomerServiceDataManager() {
                         {isExpanded ? <ChevronUp size={22}/> : <ChevronDown size={22}/>}
                       </div>
                       <div>
-                        <h3 className="text-white font-bold">{customer.name}</h3>
+                        <h3 className="text-white font-bold">{getName(customer)}</h3>
                         <div className="flex flex-wrap gap-3 mt-0.5 text-xs text-slate-400">
-                          <span>📞 {customer.phone}</span>
-                          <span>🚗 {customer.linkedVehicle?.regNo || 'N/A'}</span>
+                          <span>📞 {customer.phone || '—'}</span>
+                          <span>🚗 {getRegNo(customer) || custData.regNo || 'N/A'}</span>
+                          {getVehicle(customer) && <span>🏍️ {getVehicle(customer)}</span>}
                           {hasPending && <span className="text-yellow-400 font-bold">💳 ₹{parseFloat(custData.pendingAmount).toLocaleString('en-IN')} बकाया</span>}
                         </div>
                       </div>
@@ -261,10 +225,11 @@ export default function CustomerServiceDataManager() {
                       <div className="bg-slate-700/50 p-3 rounded-xl">
                         <h4 className="text-white font-bold text-sm mb-2">📱 Customer Details</h4>
                         <div className="grid grid-cols-2 gap-2 text-xs text-slate-300">
-                          <div><span className="text-slate-500">Name:</span> {customer.name}</div>
-                          <div><span className="text-slate-500">Phone:</span> {customer.phone}</div>
+                          <div><span className="text-slate-500">Name:</span> {getName(customer)}</div>
+                          <div><span className="text-slate-500">Phone:</span> {customer.phone || '—'}</div>
                           <div><span className="text-slate-500">Address:</span> {customer.address || 'N/A'}</div>
-                          <div><span className="text-slate-500">Vehicle:</span> {customer.linkedVehicle?.regNo || 'N/A'}</div>
+                          <div><span className="text-slate-500">Vehicle:</span> {getRegNo(customer) || custData.regNo || 'N/A'}</div>
+                          {getVehicle(customer) && <div><span className="text-slate-500">Model:</span> {getVehicle(customer)}</div>}
                         </div>
                       </div>
 
