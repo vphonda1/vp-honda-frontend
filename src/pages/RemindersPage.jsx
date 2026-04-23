@@ -107,24 +107,61 @@ export default function RemindersPage() {
         if(seen.has(k))return false;seen.add(k);return true;
       }).sort((a,b)=>new Date(b.invoiceDate||0)-new Date(a.invoiceDate||0));
       setInvoices(all);
+
+      // 2. SERVICE DATA sync — fetch from MongoDB first, merge with localStorage, then rebuild from invoices
+      try {
+        const sdRes = await fetch(api('/api/service-data'));
+        if (sdRes.ok) {
+          const dbSD = await sdRes.json(); // array of service records
+          const merged = { ...getLS('customerServiceData', {}) };
+          // Merge MongoDB records INTO localStorage (MongoDB is source of truth for service dates)
+          dbSD.forEach(rec => {
+            const reg = rec.regNo;
+            if (!reg) return;
+            if (!merged[reg]) merged[reg] = {};
+            // Merge: MongoDB fields take priority for service dates
+            const fields = ['purchaseDate','firstServiceDate','firstServiceKm','secondServiceDate','secondServiceKm',
+              'thirdServiceDate','thirdServiceKm','fourthServiceDate','fourthServiceKm',
+              'fifthServiceDate','fifthServiceKm','sixthServiceDate','sixthServiceKm',
+              'seventhServiceDate','seventhServiceKm','pendingAmount','paymentDueDate','insuranceDate'];
+            fields.forEach(f => { if (rec[f]) merged[reg][f] = rec[f]; });
+            if (rec.customerName) merged[reg].customerName = rec.customerName;
+            if (rec.phone)        merged[reg].phone        = rec.phone;
+            if (rec.vehicle)      merged[reg].vehicle      = rec.vehicle;
+            merged[reg].regNo = reg;
+          });
+          setLS('customerServiceData', merged);
+        }
+      } catch(e) { console.log('service-data fetch failed:', e.message); }
+
+      // 3. Build service data from invoices (fills in any gaps)
       buildServiceData(all);
 
-      // 2. Follow-up logs from MongoDB (cross-device sync) — MERGE with localStorage
+      // 4. Sync updated service data back to MongoDB (so other devices get it)
+      try {
+        const sdToSync = getLS('customerServiceData', {});
+        if (Object.keys(sdToSync).length > 0) {
+          fetch(api('/api/service-data/sync'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sdToSync),
+          }).catch(() => {});  // fire and forget
+        }
+      } catch {}
+
+      // 5. Follow-up logs from MongoDB
       try {
         const fuRes = await fetch(api('/api/follow-ups'));
         if (fuRes.ok) {
-          const dbFU = await fuRes.json(); // [{reminderId, date, status, note, nextCallDate, by}, ...]
+          const dbFU = await fuRes.json();
           const merged = { ...getLS('followUpLog', {}) };
-          // Group by reminderId and merge
           dbFU.forEach(entry => {
             const rid = entry.reminderId;
             if (!rid) return;
             if (!merged[rid]) merged[rid] = [];
-            // Add if not already present (compare by date)
             const exists = merged[rid].some(e => e.date === entry.date);
             if (!exists) merged[rid].push({ date:entry.date, status:entry.status, note:entry.note, nextCallDate:entry.nextCallDate, by:entry.by||'Admin' });
           });
-          // Sort each by date
           Object.keys(merged).forEach(k => merged[k].sort((a,b)=>new Date(a.date)-new Date(b.date)));
           setFollowUps(merged);
           setLS('followUpLog', merged);
@@ -232,9 +269,12 @@ export default function RemindersPage() {
     u[activeR.id].push({date:new Date().toISOString(),status:'done',note:`Service Done. KM:${doneForm.km}. ${doneForm.remarks}`,by:'Admin'});
     setFollowUps(u);setLS('followUpLog',u);
     try{
-      await fetch(api('/api/service-records'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({regNo:activeR.regNo,customerName:activeR.customerName,serviceType:activeR.serviceType,serviceDate:doneForm.date,km:doneForm.km,remarks:doneForm.remarks})});
-      setSyncMsg('✅ MongoDB में save हुआ');
-    }catch{setSyncMsg('⚠️ Local save');}
+      // Save to service-data (for cross-device sync of service dates)
+      await fetch(api(`/api/service-data/${activeR.regNo}`),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(sd[activeR.regNo])});
+      // Also save follow-up log
+      await fetch(api('/api/follow-ups'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reminderId:activeR.id,customerName:activeR.customerName,phone:activeR.customerPhone,regNo:activeR.regNo,date:new Date().toISOString(),status:'done',note:`Service Done. KM:${doneForm.km}. ${doneForm.remarks}`,by:'Admin'})});
+      setSyncMsg('✅ MongoDB sync हुआ — सभी devices पर दिखेगा');
+    }catch{setSyncMsg('⚠️ Local save only');}
     setTimeout(()=>setSyncMsg(''),3000);
     setShowDone(false);setActiveR(null);setDoneForm({km:'',date:new Date().toISOString().split('T')[0],remarks:''});
     window.dispatchEvent(new Event('storage'));loadAll();
