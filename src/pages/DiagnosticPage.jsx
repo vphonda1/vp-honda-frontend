@@ -37,21 +37,39 @@ export default function DiagnosticPage() {
     const inv = [...(JSON.parse(localStorage.getItem('invoices')||'[]')), ...(JSON.parse(localStorage.getItem('generatedInvoices')||'[]'))];
     setSvcCount(Object.keys(svc).length);
 
+    // Build invoice lookup maps
+    const invByRegNo = {};
+    const invByPhone = {};
+    inv.forEach(i => {
+      if (i.regNo)         invByRegNo[(i.regNo||'').toUpperCase()] = i;
+      if (i.customerPhone) invByPhone[i.customerPhone] = i;
+    });
+
     const m=[], u=[];
     Object.entries(svc).forEach(([id, d]) => {
+      // Try to find customer by _id
       let c = db.find(x=>x._id===id);
-      if(!c && (d.phone)) c = db.find(x=>x.phone===d.phone);
-      const i = inv.find(x=>x.customerId===id);
-      if(!c && i?.customerPhone) c = db.find(x=>x.phone===i.customerPhone);
-      const nm = d.customerName||i?.customerName||'';
-      if(!c && nm && !/V.?P.?HONDA|DEALER|Unknown/i.test(nm)) c = db.find(x=>x.name?.toUpperCase()===nm.toUpperCase());
+      // Try by phone
+      if(!c && d.phone) c = db.find(x=>x.phone===d.phone || x.phone===d.phone?.split('/')?.[0]?.trim());
+      // Try by regNo (id might be regNo)
+      if(!c) c = db.find(x=>(x.linkedVehicle?.regNo||x.regNo||'').toUpperCase()===id.toUpperCase());
+      // Try by regNo stored in data
+      if(!c && d.regNo) c = db.find(x=>(x.linkedVehicle?.regNo||x.regNo||'').toUpperCase()===d.regNo.toUpperCase());
+
+      // Get invoice info
+      const invByReg  = invByRegNo[id.toUpperCase()] || (d.regNo ? invByRegNo[d.regNo.toUpperCase()] : null);
+      const invByPh   = d.phone ? invByPhone[d.phone] : null;
+      const i = inv.find(x=>x.customerId===id) || invByReg || invByPh;
+
+      // Best name: serviceData > customer DB > invoice > phone number
+      const nm = d.customerName || c?.name || c?.customerName || i?.customerName || (d.phone ? `📞 ${d.phone}` : id.slice(0,15));
 
       if(c) {
-        m.push({ id, dbId:c._id, name:c.name, phone:c.phone, veh:c.linkedVehicle?.name||i?.vehicle||'', reg:c.linkedVehicle?.regNo||i?.regNo||'', via:c._id===id?'ID':c.phone===(d.phone||i?.customerPhone)?'Phone':'Name', d });
+        m.push({ id, dbId:c._id, name:nm, phone:c.phone||d.phone||'', veh:c.linkedVehicle?.name||d.vehicle||i?.vehicle||'', reg:c.linkedVehicle?.regNo||d.regNo||i?.regNo||'', via:c._id===id?'ID':d.regNo&&(c.linkedVehicle?.regNo||'').toUpperCase()===d.regNo.toUpperCase()?'RegNo':c.phone===(d.phone||i?.customerPhone)?'Phone':'Name', d });
       } else {
-        const hasSvc = !!(d.firstServiceDate||d.secondServiceDate||d.thirdServiceDate||d.fourthServiceDate);
+        const hasSvc = !!(d.firstServiceDate||d.secondServiceDate||d.thirdServiceDate||d.fourthServiceDate||d.purchaseDate);
         const hasPay = (parseFloat(d.pendingAmount)||0) > 0;
-        u.push({ id, name:nm||id.slice(0,15), phone:d.phone||i?.customerPhone||'', veh:d.vehicle||i?.vehicle||'', reg:d.regNo||i?.regNo||'', d, hasSvc, hasPay, useful:hasSvc||hasPay });
+        u.push({ id, name:nm, phone:d.phone||i?.customerPhone||'', veh:d.vehicle||i?.vehicle||'', reg:d.regNo||i?.regNo||'', d, hasSvc, hasPay, useful:hasSvc||hasPay });
       }
     });
     setMatched(m); setUnmatched(u); setRefresh(new Date()); setLoading(false);

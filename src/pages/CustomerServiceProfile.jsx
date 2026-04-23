@@ -76,17 +76,61 @@ export default function CustomerServiceProfile() {
         }
       }
 
-      // ✅ TRY 6: customerServiceData से build करो
+      // ✅ TRY 6: customerServiceData से build करो (by _id OR regNo)
       if (!foundCustomer) {
         const svcData = JSON.parse(localStorage.getItem('customerServiceData')) || {};
+        // Try exact key match first
         const svc = svcData[customerId];
         if (svc) {
           foundCustomer = {
             _id: customerId,
             name: svc.customerName || 'Unknown',
             phone: svc.phone || '',
-            linkedVehicle: { name: svc.vehicle || '', regNo: svc.regNo || '' },
+            linkedVehicle: { name: svc.vehicle || '', regNo: svc.regNo || customerId },
           };
+        }
+      }
+
+      // ✅ TRY 7: customerId might be a regNo — search all customers by regNo
+      if (!foundCustomer) {
+        try {
+          const allRes = await fetch(api('/api/customers'));
+          if (allRes.ok) {
+            const allCusts = await allRes.json();
+            // Match by regNo / linkedVehicle.regNo
+            foundCustomer = allCusts.find(c =>
+              (c.linkedVehicle?.regNo || c.regNo || '').toUpperCase() === customerId.toUpperCase()
+            );
+            // Also try by phone
+            if (!foundCustomer) {
+              foundCustomer = allCusts.find(c => c.phone === customerId);
+            }
+          }
+        } catch {}
+      }
+
+      // ✅ TRY 8: localStorage customers search by regNo/phone
+      if (!foundCustomer) {
+        const lsCusts = [
+          ...(JSON.parse(localStorage.getItem('sharedCustomerData')) || []),
+          ...(JSON.parse(localStorage.getItem('customerData')) || []),
+        ];
+        foundCustomer = lsCusts.find(c =>
+          (c.linkedVehicle?.regNo || '').toUpperCase() === customerId.toUpperCase()
+          || c.phone === customerId
+        );
+        // If still not found, build a minimal record from serviceData by regNo
+        if (!foundCustomer) {
+          const svcData = JSON.parse(localStorage.getItem('customerServiceData')) || {};
+          const svc = Object.values(svcData).find(d => (d.regNo || '').toUpperCase() === customerId.toUpperCase());
+          if (svc) {
+            foundCustomer = {
+              _id: customerId,
+              name: svc.customerName || customerId,
+              phone: svc.phone || '',
+              linkedVehicle: { name: svc.vehicle || '', regNo: svc.regNo || customerId },
+            };
+          }
         }
       }
 

@@ -191,13 +191,15 @@ export default function RemindersPage() {
         const ph=data.phone||cust?.phone||'';
         const vh=data.vehicle||cust?.vehicleModel||'';
         const lastCS=fu[`pay-${regNo}`]?.slice(-1)[0]?.status||null;
+        // ✅ Use actual MongoDB _id for View button navigation; fall back to regNo
+        const custId = cust?._id || regNo;
 
         const pend=parseFloat(data.pendingAmount||0);
         if(pend>0&&!data.paymentReceivedDate){
           let dr=999,dd=new Date();
           if(data.paymentDueDate){dd=new Date(data.paymentDueDate);dd.setHours(0,0,0,0);dr=Math.floor((dd-today)/86400000);}
           dbg.payment++;
-          all.push({id:`pay-${regNo}`,type:'payment',serviceType:null,customerId:regNo,customerName:nm,customerPhone:ph,vehicle:vh,regNo,
+          all.push({id:`pay-${regNo}`,type:'payment',serviceType:null,customerId:custId,customerName:nm,customerPhone:ph,vehicle:vh,regNo,
             title:'💳 Payment Due',description:`बकाया: ₹${pend.toLocaleString('en-IN')}`,
             daysRemaining:dr,status:dr<=3?'critical':'warning',dueDate:dd,amount:pend,
             lastCallStatus:fu[`pay-${regNo}`]?.slice(-1)[0]?.status||null,
@@ -208,7 +210,7 @@ export default function RemindersPage() {
           const ins=new Date(data.insuranceDate);ins.setHours(0,0,0,0);
           const rto=new Date(ins.getTime()+7*864e5);const dr=Math.floor((rto-today)/864e5);
           if(dr>=0&&dr<=7){dbg.insurance++;
-            all.push({id:`ins-${regNo}`,type:'insurance',serviceType:null,customerId:regNo,customerName:nm,customerPhone:ph,vehicle:vh,regNo,
+            all.push({id:`ins-${regNo}`,type:'insurance',serviceType:null,customerId:custId,customerName:nm,customerPhone:ph,vehicle:vh,regNo,
               title:'🚗 RTO Pending',description:`Insurance: ${fmtDate(data.insuranceDate)} | Deadline: ${fmtDate(rto)}`,
               daysRemaining:dr,status:dr<=1?'critical':'warning',dueDate:rto,
               lastCallStatus:fu[`ins-${regNo}`]?.slice(-1)[0]?.status||null,callCount:0});}
@@ -219,7 +221,7 @@ export default function RemindersPage() {
           const due=new Date(pd.getTime()+30*864e5);const dr=Math.floor((due-today)/864e5);
           const rid=`svc-1st-${regNo}`;
           if(dr>=-30){dbg.service++;
-            all.push({id:rid,type:'service',serviceType:'1st',customerId:regNo,customerName:nm,customerPhone:ph,vehicle:vh,regNo,
+            all.push({id:rid,type:'service',serviceType:'1st',customerId:custId,customerName:nm,customerPhone:ph,vehicle:vh,regNo,
               title:'🔧 1st Service Due',description:`खरीद: ${fmtDate(data.purchaseDate)} | Due: ${fmtDate(due)}`,
               daysRemaining:dr,status:dr<=0?'critical':'warning',dueDate:due,
               lastCallStatus:fu[rid]?.slice(-1)[0]?.status||null,callCount:fu[rid]?.length||0});}
@@ -233,7 +235,7 @@ export default function RemindersPage() {
             const due=new Date(prev.getTime()+svc.days*864e5);const dr=Math.floor((due-today)/864e5);
             const rid=`svc-${svc.next}-${regNo}`;
             if(dr>=-30){dbg.service++;
-              all.push({id:rid,type:'service',serviceType:svc.next,customerId:regNo,customerName:nm,customerPhone:ph,vehicle:vh,regNo,
+              all.push({id:rid,type:'service',serviceType:svc.next,customerId:custId,customerName:nm,customerPhone:ph,vehicle:vh,regNo,
                 title:`🔧 ${svc.label} Due`,description:`पिछली: ${fmtDate(doneDate)} | Due: ${fmtDate(due)}`,
                 daysRemaining:dr,status:dr<=0?'critical':'warning',dueDate:due,
                 lastCallStatus:fu[rid]?.slice(-1)[0]?.status||null,callCount:fu[rid]?.length||0});}
@@ -391,11 +393,21 @@ export default function RemindersPage() {
           ))}
         </div>
 
-         {/* ═══ NAV BUTTONS ═══ */}
-        <div className="grid grid-cols-3 gap-2">
-          <Button onClick={() => navigate('/customer-data-manager')} className="bg-purple-600/80 hover:bg-purple-600 text-white font-bold py-2.5 text-xs">📊 Data Manager</Button>
-          <Button onClick={() => navigate('/diagnostic')} className="bg-cyan-600/80 hover:bg-cyan-600 text-white font-bold py-2.5 text-xs">🔍 Diagnostic</Button>
-          <Button onClick={() => navigate('/invoice-management')} className="bg-orange-600/80 hover:bg-orange-600 text-white font-bold py-2.5 text-xs">📁 Invoices</Button>
+        {/* ── QUICK NAVIGATION BUTTONS ── */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'8px',marginBottom:'14px'}}>
+          {[
+            {label:'📊 Data Manager',  path:'/customer-data-manager', grad:'linear-gradient(135deg,#7c3aed,#6d28d9)', shadow:'rgba(124,58,237,0.3)'},
+            {label:'🔍 Diagnostic',    path:'/diagnostic',             grad:'linear-gradient(135deg,#0284c7,#0369a1)', shadow:'rgba(2,132,199,0.3)'},
+            {label:'📁 Invoices',      path:'/invoice-management',     grad:'linear-gradient(135deg,#ea580c,#c2410c)', shadow:'rgba(234,88,12,0.3)'},
+            {label:'👥 Service List',  path:'/service-customer-list',  grad:'linear-gradient(135deg,#059669,#047857)', shadow:'rgba(5,150,105,0.3)'},
+            {label:'👤 Customers',     path:'/customers',              grad:'linear-gradient(135deg,#0891b2,#0e7490)', shadow:'rgba(8,145,178,0.3)'},
+            {label:'🏍️ Veh Dashboard', path:'/veh-dashboard',         grad:'linear-gradient(135deg,#dc2626,#b91c1c)', shadow:'rgba(220,38,38,0.3)'},
+          ].map((btn,i)=>(
+            <button key={i} onClick={()=>navigate(btn.path)} className="hov"
+              style={{background:btn.grad,border:'none',borderRadius:'12px',padding:'10px 12px',color:'#fff',fontSize:'12px',fontWeight:'700',cursor:'pointer',boxShadow:`0 3px 14px ${btn.shadow}`,textAlign:'center',letterSpacing:'0.2px'}}>
+              {btn.label}
+            </button>
+          ))}
         </div>
 
         {/* FILTERS */}

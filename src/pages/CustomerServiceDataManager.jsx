@@ -42,7 +42,14 @@ export default function CustomerServiceDataManager() {
     const lsC = [...getLS('sharedCustomerData',[]), ...getLS('customerData',[])];
     const seen = new Set(custData.map(c => c._id));
     lsC.forEach(c => { if (!seen.has(c._id)) { custData.push(c); seen.add(c._id); } });
-    custData.sort((a, b) => new Date(b.createdAt || b._id || 0) - new Date(a.createdAt || a._id || 0));
+    custData.sort((a, b) => {
+      // Sort by createdAt descending (latest first)
+      const dateA = new Date(a.createdAt || a._id?.toString().substring(0,8) || 0);
+      const dateB = new Date(b.createdAt || b._id?.toString().substring(0,8) || 0);
+      if (dateB - dateA !== 0) return dateB - dateA;
+      // If same date, sort by name
+      return (a.name || a.customerName || '').localeCompare(b.name || b.customerName || '');
+    });
     setCustomers(custData);
 
     const savedServiceData = getLS('customerServiceData', {});
