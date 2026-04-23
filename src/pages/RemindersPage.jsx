@@ -91,7 +91,7 @@ export default function RemindersPage() {
   useEffect(()=>{
     loadAll();
     window.addEventListener('storage',loadAll);
-    intervalRef.current=setInterval(loadAll,30000);
+    intervalRef.current=setInterval(loadAll,10000); // 10 seconds — cross-device sync
     return()=>{window.removeEventListener('storage',loadAll);clearInterval(intervalRef.current);};
   },[]);
 
