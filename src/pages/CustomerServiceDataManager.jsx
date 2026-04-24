@@ -91,6 +91,21 @@ export default function CustomerServiceDataManager() {
         localStorage.setItem('customerServiceData', JSON.stringify(merged));
       }
     } catch {}
+
+    // ⭐ NOW re-sort customers by LAST ACTIVITY (latest service OR purchase OR createdAt)
+    const getLastActivity = (c) => {
+      const sd = findServiceData(c, merged);
+      const dates = [
+        sd.seventhServiceDate, sd.sixthServiceDate, sd.fifthServiceDate,
+        sd.fourthServiceDate, sd.thirdServiceDate, sd.secondServiceDate,
+        sd.firstServiceDate, sd.purchaseDate, c.createdAt,
+      ].filter(Boolean).map(d => new Date(d).getTime()).filter(t => !isNaN(t));
+      if (dates.length) return Math.max(...dates);
+      // Fallback to ObjectId timestamp
+      return parseInt((c._id||'').substring(0,8), 16) * 1000 || 0;
+    };
+    custData.sort((a, b) => getLastActivity(b) - getLastActivity(a));
+    setCustomers([...custData]);
     setServiceData(merged);
 
     const allInv = [...getLS('invoices',[]), ...getLS('generatedInvoices',[]), ...getLS('jobCards',[])];

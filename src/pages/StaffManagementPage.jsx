@@ -132,7 +132,7 @@ export default function StaffManagementPage() {
         if (res.ok) { const db = await res.json(); if (db.length > 0) { setStaffList(db); localStorage.setItem('staffData', JSON.stringify(db)); return; } }
       } catch {}
       try { const s = localStorage.getItem('staffData'); if (s) setStaffList(JSON.parse(s)); } catch {}
-    })()
+    })();   // ⚠️ semicolon MUST be here - prevents next IIFE from being interpreted as function call
 
     // ⭐ Salary payments — MongoDB sync (cross-device)
     (async () => {

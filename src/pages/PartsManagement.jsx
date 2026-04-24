@@ -112,17 +112,24 @@ export default function PartsManagement({ user }) {
       const histRes = await fetch(api('/api/parts/history/all'));
       if (histRes.ok) {
         const dbHistory = await histRes.json();
-        // Convert to invoiceUsage format
+        // Convert to invoiceUsage format expected by stats UI
         const usage = dbHistory.map(c => ({
-          partId: c.partId,
-          partNumber: c.partNumber,
-          partName: c.partName,
-          quantity: c.quantity,
-          invoiceNumber: c.invoiceNumber,
-          customerName: c.customerName,
-          regNo: c.regNo,
-          date: c.consumedAt || c.createdAt,
-          totalValue: c.totalValue,
+          partNo: c.partNumber || '',               // for grouping
+          partNumber: c.partNumber || '',
+          partName: c.partName || '',
+          description: c.partName || '',            // stats UI uses this
+          hsn: '',
+          quantity: c.quantity || 1,
+          total: c.totalValue || 0,                 // stats UI uses this
+          totalValue: c.totalValue || 0,
+          invoiceNo: c.invoiceNumber || '',         // stats UI uses this
+          invoiceNumber: c.invoiceNumber || '',
+          invoiceDate: c.consumedAt || c.createdAt || '',
+          date: c.consumedAt || c.createdAt || '',
+          customer: c.customerName || '—',
+          customerName: c.customerName || '',
+          regNo: c.regNo || '—',
+          vehicle: c.regNo || '—',                  // stats UI uses this for grouping
         }));
         setInvoiceUsage(usage);
         setLoading(false);
