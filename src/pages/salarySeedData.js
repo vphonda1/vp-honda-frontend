@@ -9,11 +9,11 @@ export const SEED_PAYMENTS = [{"person":"Azzam","date":"2024-01-09","amount":610
 // - 19/4/2026: Rent → "New House" (higher rent)
 export const SEED_ENTITIES = [
   // ── STAFF ────────────────────────────────────────────────────────────────
-  { name: 'Azzam',    type: 'staff', monthlyAmount: 12000, startDate: '2024-12-15', endDate: '2025-11-17', active: false, replacedBy: 'Farhan', replaces: null,
+  { name: 'Azzam',    type: 'staff', monthlyAmount: 10000, startDate: '2024-12-15', endDate: '2025-11-17', active: false, replacedBy: 'Farhan', replaces: null,
     notes: 'Original staff — replaced by Farhan on 17 Nov 2025' },
   { name: 'Farhan',   type: 'staff', monthlyAmount: 11000, startDate: '2025-11-17', endDate: null, active: true, replacedBy: null, replaces: 'Azzam',
     notes: 'Replaces Azzam' },
-  { name: 'Durgesh',  type: 'staff', monthlyAmount: 0000,  startDate: '2024-11-20', endDate: '2025-09-17', active: false, replacedBy: 'Priya', replaces: null,
+  { name: 'Durgesh',  type: 'staff', monthlyAmount: null,  startDate: '2024-11-20', endDate: '2025-09-17', active: false, replacedBy: 'Priya', replaces: null,
     notes: 'Original staff — replaced by Priya on 17 Sep 2025' },
   { name: 'Priya',    type: 'staff', monthlyAmount: 8000,  startDate: '2025-09-17', endDate: null, active: true, replacedBy: null, replaces: 'Durgesh',
     notes: 'Replaces Durgesh' },
@@ -26,7 +26,7 @@ export const SEED_ENTITIES = [
     notes: 'Senior staff' },
 
   // ── RENT / HOUSES ────────────────────────────────────────────────────────
-  { name: 'Premmla',  type: 'rent', monthlyAmount: 0000,  startDate: '2024-09-20', endDate: '2026-03-08', active: false, replacedBy: 'Vishnu', replaces: null,
+  { name: 'Premmla',  type: 'rent', monthlyAmount: null,  startDate: '2024-09-20', endDate: '2026-03-08', active: false, replacedBy: 'Vishnu', replaces: null,
     notes: 'Original house — replaced by Vishnu on 8 Mar 2026' },
   { name: 'Vishnu',   type: 'rent', monthlyAmount: 3000,  startDate: '2026-03-08', endDate: null, active: true, replacedBy: null, replaces: 'Premmla',
     notes: 'Replaces Premmla house' },
@@ -34,7 +34,7 @@ export const SEED_ENTITIES = [
     notes: 'Original rental — replaced by New House on 19 Apr 2026' },
   { name: 'New House',type: 'rent', monthlyAmount: 3500,  startDate: '2026-04-19', endDate: null, active: true, replacedBy: null, replaces: 'Rent',
     notes: 'New house with higher rent' },
-  { name: 'Home',     type: 'rent', monthlyAmount: 00000, startDate: '2024-09-20', endDate: null, active: true, replacedBy: null, replaces: null,
+  { name: 'Home',     type: 'rent', monthlyAmount: null, startDate: '2024-09-20', endDate: null, active: true, replacedBy: null, replaces: null,
     notes: 'Main residence' },
   { name: 'Gajender', type: 'rent', monthlyAmount: 9000, startDate: '2024-09-20', endDate: 2025-10-20, active: false, replacedBy: 'Gajender', replaces: null,
     notes: 'rent change by 20 Oct 2025' },
