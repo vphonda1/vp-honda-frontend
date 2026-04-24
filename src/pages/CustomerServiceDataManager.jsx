@@ -168,10 +168,27 @@ export default function CustomerServiceDataManager() {
     if (filterView === 'without-data') result = customersWithoutData;
     if (filterView === 'with-invoices') {
       const allInv = [...getLS('invoices',[]), ...getLS('generatedInvoices',[]), ...getLS('jobCards',[])];
-      const custIds = new Set(allInv.map(i => i.customerId));
-      const phones = new Set(allInv.map(i => i.customerPhone).filter(Boolean));
-      const regs = new Set(allInv.map(i => (i.regNo||'').toUpperCase()).filter(Boolean));
-      result = result.filter(c => custIds.has(c._id) || phones.has(c.phone) || regs.has(getRegNo(c).toUpperCase()));
+      // Build comprehensive lookup sets
+      const custIds = new Set(allInv.map(i => i.customerId).filter(Boolean));
+      const phones  = new Set();
+      const regs    = new Set();
+      const names   = new Set();
+      allInv.forEach(i => {
+        if (i.customerPhone) phones.add(String(i.customerPhone).replace(/\D/g,''));
+        if (i.phone)         phones.add(String(i.phone).replace(/\D/g,''));
+        if (i.regNo)         regs.add(String(i.regNo).toUpperCase().trim());
+        if (i.customerName)  names.add(i.customerName.toLowerCase().trim());
+      });
+      result = result.filter(c => {
+        if (custIds.has(c._id)) return true;
+        const cphone = String(c.phone||'').replace(/\D/g,'');
+        if (cphone && phones.has(cphone)) return true;
+        const creg = getRegNo(c).toUpperCase().trim();
+        if (creg && regs.has(creg)) return true;
+        const cname = getName(c).toLowerCase().trim();
+        if (cname && names.has(cname)) return true;
+        return false;
+      });
     }
     if (searchTerm) {
       const s = searchTerm.toLowerCase();

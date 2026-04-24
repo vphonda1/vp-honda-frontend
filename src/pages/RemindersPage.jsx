@@ -43,26 +43,76 @@ const getWAMessage = (r) => {
   );
 };
 
+// Detect service number from invoice description/items text
+const detectServiceNumber = (inv) => {
+  // 1. If explicit serviceNumber field exists
+  if (inv.serviceNumber && inv.serviceNumber >= 1 && inv.serviceNumber <= 7) return inv.serviceNumber;
+  // 2. Search description, items, particulars for "1st service", "2nd service" etc.
+  const txt = JSON.stringify({
+    desc: inv.description || '',
+    items: inv.items || inv.particulars || [],
+    notes: inv.notes || '',
+    type: inv.serviceType || inv.type || '',
+  }).toLowerCase();
+  if (/\b(1st|first|i\s*st)\s*(free\s*)?service\b/.test(txt)) return 1;
+  if (/\b(2nd|second|ii\s*nd)\s*(free\s*)?service\b/.test(txt)) return 2;
+  if (/\b(3rd|third|iii\s*rd)\s*(free\s*)?service\b/.test(txt)) return 3;
+  if (/\b(4th|fourth|iv\s*th)\s*service\b/.test(txt)) return 4;
+  if (/\b(5th|fifth|v\s*th)\s*service\b/.test(txt)) return 5;
+  if (/\b(6th|sixth|vi\s*th)\s*service\b/.test(txt)) return 6;
+  if (/\b(7th|seventh|vii\s*th)\s*service\b/.test(txt)) return 7;
+  return null;
+};
+
+// Detect if invoice is for vehicle purchase (not service)
+const isVehiclePurchase = (inv) => {
+  if (inv.invoiceType === 'vehicle') return true;
+  const txt = JSON.stringify({
+    desc: inv.description || '',
+    items: inv.items || inv.particulars || [],
+    type: inv.invoiceType || inv.type || '',
+  }).toLowerCase();
+  // Vehicle purchase patterns
+  if (/\b(new\s*vehicle|vehicle\s*sale|chassis|engine\s*no|frame\s*no)\b/.test(txt)) return true;
+  // High value (vehicle costs ≥ 50000) and no service mention
+  const total = parseFloat(inv.totalAmount || inv.total || inv.grandTotal || 0);
+  if (total >= 50000 && !/service/i.test(txt)) return true;
+  return false;
+};
+
 const buildServiceData = (invoices) => {
   const sd = getLS('customerServiceData',{});
   // ── BLACKLIST: skip entries that were explicitly deleted via Diagnostic ──
   const deletedKeys = new Set(getLS('deletedServiceKeys', []));
+
   invoices.forEach(inv => {
     const regNo = (inv.regNo||'').trim().toUpperCase();
     if (!regNo||regNo==='—'||regNo==='-') return;
-    if (deletedKeys.has(regNo)) return; // ← skip if user deleted via Diagnostic
+    if (deletedKeys.has(regNo)) return;
     if (!sd[regNo]) sd[regNo]={};
     const e=sd[regNo];
     if(inv.customerName) e.customerName=inv.customerName;
     if(inv.customerPhone) e.phone=inv.customerPhone;
     if(inv.vehicle) e.vehicle=inv.vehicle;
     e.regNo=regNo;
-    const d=inv.invoiceDate||'', sn=inv.serviceNumber;
-    if(inv.invoiceType==='vehicle'&&d&&!e.purchaseDate) e.purchaseDate=d;
-    if(inv.invoiceType==='service'&&d&&sn) {
+    const d=inv.invoiceDate||'';
+    if (!d) return;
+
+    // Vehicle purchase → set purchaseDate (oldest one)
+    if (isVehiclePurchase(inv)) {
+      if (!e.purchaseDate || new Date(d) < new Date(e.purchaseDate)) e.purchaseDate = d;
+    }
+
+    // Service detection — auto-detect service number even if not explicit
+    const sn = detectServiceNumber(inv);
+    if (sn) {
       const km={1:'firstServiceDate',2:'secondServiceDate',3:'thirdServiceDate',4:'fourthServiceDate',5:'fifthServiceDate',6:'sixthServiceDate',7:'seventhServiceDate'};
-      const k=km[sn];
-      if(k&&!e[k]){e[k]=d;if(inv.serviceKm)e[k.replace('Date','Km')]=inv.serviceKm;}
+      const k = km[sn];
+      // Set if not present, OR if this date is later (latest service wins)
+      if (k && (!e[k] || new Date(d) > new Date(e[k]))) {
+        e[k] = d;
+        if (inv.serviceKm || inv.km) e[k.replace('Date','Km')] = inv.serviceKm || inv.km;
+      }
     }
   });
   setLS('customerServiceData',sd);
@@ -402,7 +452,6 @@ export default function RemindersPage() {
             {label:'📊 Data Manager',  path:'/customer-data-manager', grad:'linear-gradient(135deg,#7c3aed,#6d28d9)', shadow:'rgba(124,58,237,0.3)'},
             {label:'🔍 Diagnostic',    path:'/diagnostic',             grad:'linear-gradient(135deg,#0284c7,#0369a1)', shadow:'rgba(2,132,199,0.3)'},
             {label:'📁 Invoices',      path:'/invoice-management',     grad:'linear-gradient(135deg,#ea580c,#c2410c)', shadow:'rgba(234,88,12,0.3)'},
-            {label:'👥 Service List',  path:'/service-customer-list',  grad:'linear-gradient(135deg,#059669,#047857)', shadow:'rgba(5,150,105,0.3)'},
           ].map((btn,i)=>(
             <button key={i} onClick={()=>navigate(btn.path)} className="hov"
               style={{background:btn.grad,border:'none',borderRadius:'12px',padding:'11px 14px',color:'#fff',fontSize:'12px',fontWeight:'700',cursor:'pointer',boxShadow:`0 3px 14px ${btn.shadow}`,textAlign:'center',letterSpacing:'0.2px'}}>
