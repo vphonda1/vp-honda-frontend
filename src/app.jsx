@@ -26,7 +26,7 @@ import AddServiceCustomerPage from './pages/AddServiceCustomerPage';
 import ServiceCustomerListPage from './pages/ServiceCustomerListPage';
 import Dashboardwebpage from './pages/Dashboardwebpage';
 import Navbar from './components/Navbar';
-import SalaryManagementPage from './components/SalaryManagementPage';
+import SalaryManagementPage from './pages/SalaryManagementPage';
 
 function ProtectedRoute({ children, user }) {
   return user ? children : <Navigate to="/login" />;
