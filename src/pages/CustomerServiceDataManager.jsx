@@ -167,8 +167,8 @@ export default function CustomerServiceDataManager() {
     if (filterView === 'with-data')    result = customersWithData;
     if (filterView === 'without-data') result = customersWithoutData;
     if (filterView === 'with-invoices') {
+      // Combine localStorage + state invoices for accurate count
       const allInv = [...getLS('invoices',[]), ...getLS('generatedInvoices',[]), ...getLS('jobCards',[])];
-      // Build comprehensive lookup sets
       const custIds = new Set(allInv.map(i => i.customerId).filter(Boolean));
       const phones  = new Set();
       const regs    = new Set();

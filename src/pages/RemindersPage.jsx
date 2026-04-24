@@ -43,11 +43,9 @@ const getWAMessage = (r) => {
   );
 };
 
-// Detect service number from invoice description/items text
+// ⭐ Detect service number from invoice description/items text
 const detectServiceNumber = (inv) => {
-  // 1. If explicit serviceNumber field exists
   if (inv.serviceNumber && inv.serviceNumber >= 1 && inv.serviceNumber <= 7) return inv.serviceNumber;
-  // 2. Search description, items, particulars for "1st service", "2nd service" etc.
   const txt = JSON.stringify({
     desc: inv.description || '',
     items: inv.items || inv.particulars || [],
@@ -64,25 +62,17 @@ const detectServiceNumber = (inv) => {
   return null;
 };
 
-// Detect if invoice is for vehicle purchase (not service)
 const isVehiclePurchase = (inv) => {
   if (inv.invoiceType === 'vehicle') return true;
-  const txt = JSON.stringify({
-    desc: inv.description || '',
-    items: inv.items || inv.particulars || [],
-    type: inv.invoiceType || inv.type || '',
-  }).toLowerCase();
-  // Vehicle purchase patterns
+  const txt = JSON.stringify({ desc: inv.description||'', items: inv.items||inv.particulars||[], type: inv.invoiceType||inv.type||'' }).toLowerCase();
   if (/\b(new\s*vehicle|vehicle\s*sale|chassis|engine\s*no|frame\s*no)\b/.test(txt)) return true;
-  // High value (vehicle costs ≥ 50000) and no service mention
-  const total = parseFloat(inv.totalAmount || inv.total || inv.grandTotal || 0);
+  const total = parseFloat(inv.totalAmount || inv.total || inv.grandTotal || (inv.totals?.totalAmount) || 0);
   if (total >= 50000 && !/service/i.test(txt)) return true;
   return false;
 };
 
 const buildServiceData = (invoices) => {
   const sd = getLS('customerServiceData',{});
-  // ── BLACKLIST: skip entries that were explicitly deleted via Diagnostic ──
   const deletedKeys = new Set(getLS('deletedServiceKeys', []));
 
   invoices.forEach(inv => {
@@ -98,17 +88,14 @@ const buildServiceData = (invoices) => {
     const d=inv.invoiceDate||'';
     if (!d) return;
 
-    // Vehicle purchase → set purchaseDate (oldest one)
     if (isVehiclePurchase(inv)) {
       if (!e.purchaseDate || new Date(d) < new Date(e.purchaseDate)) e.purchaseDate = d;
     }
 
-    // Service detection — auto-detect service number even if not explicit
     const sn = detectServiceNumber(inv);
     if (sn) {
       const km={1:'firstServiceDate',2:'secondServiceDate',3:'thirdServiceDate',4:'fourthServiceDate',5:'fifthServiceDate',6:'sixthServiceDate',7:'seventhServiceDate'};
       const k = km[sn];
-      // Set if not present, OR if this date is later (latest service wins)
       if (k && (!e[k] || new Date(d) > new Date(e[k]))) {
         e[k] = d;
         if (inv.serviceKm || inv.km) e[k.replace('Date','Km')] = inv.serviceKm || inv.km;
@@ -452,6 +439,7 @@ export default function RemindersPage() {
             {label:'📊 Data Manager',  path:'/customer-data-manager', grad:'linear-gradient(135deg,#7c3aed,#6d28d9)', shadow:'rgba(124,58,237,0.3)'},
             {label:'🔍 Diagnostic',    path:'/diagnostic',             grad:'linear-gradient(135deg,#0284c7,#0369a1)', shadow:'rgba(2,132,199,0.3)'},
             {label:'📁 Invoices',      path:'/invoice-management',     grad:'linear-gradient(135deg,#ea580c,#c2410c)', shadow:'rgba(234,88,12,0.3)'},
+            {label:'👥 Service List',  path:'/service-customers',  grad:'linear-gradient(135deg,#059669,#047857)', shadow:'rgba(5,150,105,0.3)'},
           ].map((btn,i)=>(
             <button key={i} onClick={()=>navigate(btn.path)} className="hov"
               style={{background:btn.grad,border:'none',borderRadius:'12px',padding:'11px 14px',color:'#fff',fontSize:'12px',fontWeight:'700',cursor:'pointer',boxShadow:`0 3px 14px ${btn.shadow}`,textAlign:'center',letterSpacing:'0.2px'}}>

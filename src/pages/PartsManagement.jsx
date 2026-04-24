@@ -92,14 +92,13 @@ export default function PartsManagement({ user }) {
     }
   }, [formData.hsnCode, formData.description]);
 
-  // ── ORIGINAL: Load parts from backend API ──────────────────────────────────
+  // ── ENHANCED: Load parts + consumption history from MongoDB ────────────────
   const loadParts = async () => {
     try {
       const response = await fetch(api('/api/parts'));
       const data = await response.json();
       setParts(data);
     } catch (error) {
-      // Fallback: load from localStorage if backend unavailable
       const lsParts = getLS('partsInventory', [
         { _id: '1', partNo: '08233-2MB-F0LG1', description: 'Engine Oil 600ML', hsnCode: '27101973', category: 'Consumables', mrp: 347, unitPrice: 287, stock: 45 },
         { _id: '2', partNo: '91307-KRM-840', description: 'O-Ring 18x31', hsnCode: '40169320', category: 'Engine', mrp: 11, unitPrice: 9.10, stock: 120 },
@@ -107,7 +106,31 @@ export default function PartsManagement({ user }) {
       ]);
       setParts(lsParts);
     }
-    // ── NEW: Load invoice usage data ─────────────────────────────────────────
+
+    // ⭐ Load consumption history from MongoDB (new endpoint)
+    try {
+      const histRes = await fetch(api('/api/parts/history/all'));
+      if (histRes.ok) {
+        const dbHistory = await histRes.json();
+        // Convert to invoiceUsage format
+        const usage = dbHistory.map(c => ({
+          partId: c.partId,
+          partNumber: c.partNumber,
+          partName: c.partName,
+          quantity: c.quantity,
+          invoiceNumber: c.invoiceNumber,
+          customerName: c.customerName,
+          regNo: c.regNo,
+          date: c.consumedAt || c.createdAt,
+          totalValue: c.totalValue,
+        }));
+        setInvoiceUsage(usage);
+        setLoading(false);
+        return;
+      }
+    } catch {}
+
+    // Fallback: scan localStorage invoices
     loadInvoiceUsage();
     setLoading(false);
   };

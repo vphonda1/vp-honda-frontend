@@ -1,330 +1,561 @@
+// ════════════════════════════════════════════════════════════════════════════
+// DiagnosticPage.jsx — VP Honda Smart System Diagnostic
+// ════════════════════════════════════════════════════════════════════════════
+// Real-time system health check covering:
+// • Customer DB ↔ Service Data sync
+// • Invoice ↔ Customer link integrity
+// • Parts inventory (low stock, out of stock)
+// • Pending payments overview
+// • Pending insurance/RTO follow-ups
+// • Reminder generation health
+// • Cross-device sync status
+// • Localstorage size and orphan keys
+// • Auto-fix actions for each category
+// ════════════════════════════════════════════════════════════════════════════
+
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, RefreshCw, Clock, Search, Zap, Trash2, Shield, CheckCircle } from 'lucide-react';
+import {
+  RefreshCw, ArrowLeft, AlertTriangle, CheckCircle, XCircle, AlertCircle,
+  Activity, Database, Package, CreditCard, FileWarning, Trash2, Zap,
+  Search, Eye, Wrench, ChevronDown, ChevronUp, Server, Wifi, WifiOff
+} from 'lucide-react';
 import { api } from '../utils/apiConfig';
 
-const getLS = (k, fb={}) => { try { return JSON.parse(localStorage.getItem(k)||'null')||fb; } catch { return fb; } };
+const getLS = (k, fb) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch { return fb; } };
+
+// ── HEALTH SECTIONS ─────────────────────────────────────────────────────────
+const SECTIONS = [
+  { id: 'sync',      label: '🔄 Cross-Device Sync',      color: '#3b82f6' },
+  { id: 'data',      label: '📊 Customer Service Data',   color: '#a855f7' },
+  { id: 'invoice',   label: '📁 Invoice Integrity',       color: '#ea580c' },
+  { id: 'parts',     label: '📦 Parts Inventory',         color: '#0891b2' },
+  { id: 'payment',   label: '💳 Pending Payments',        color: '#facc15' },
+  { id: 'reminder',  label: '🔔 Reminder Generation',     color: '#22c55e' },
+  { id: 'storage',   label: '💾 LocalStorage Health',     color: '#94a3b8' },
+];
 
 export default function DiagnosticPage() {
   const navigate = useNavigate();
-  const [customers, setCustomers]   = useState([]);
-  const [svcCount, setSvcCount]     = useState(0);
-  const [matched, setMatched]       = useState([]);
-  const [unmatched, setUnmatched]   = useState([]);
-  const [filter, setFilter]         = useState('all');
-  const [loading, setLoading]       = useState(true);
-  const [refresh, setRefresh]       = useState(new Date());
-  const [page, setPage]             = useState(0);
-  const [search, setSearch]         = useState('');
-  const [msg, setMsg]               = useState('');
-  const SIZE = 8;
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [report, setReport] = useState(null);
+  const [activeSection, setActiveSection] = useState('all');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [expandedItems, setExpandedItems] = useState(new Set());
+  const [msg, setMsg] = useState('');
+  const [serverOnline, setServerOnline] = useState(true);
+  const [lastRefresh, setLastRefresh] = useState(new Date());
+  const intervalRef = useRef(null);
 
-  useEffect(() => { run(); const fn=()=>run(); window.addEventListener('storage',fn); const t=setInterval(fn,30000); return()=>{window.removeEventListener('storage',fn);clearInterval(t);}; }, []);
-  useEffect(() => { setPage(0); }, [filter, search]);
+  useEffect(() => {
+    runDiagnostic();
+    intervalRef.current = setInterval(runDiagnostic, 30000); // 30s refresh
+    return () => clearInterval(intervalRef.current);
+  }, []);
 
-  const run = async () => {
-    let db = [];
-    try { const r = await fetch(api('/api/customers')); if(r.ok) db = await r.json(); } catch{}
-    const ls = [...(JSON.parse(localStorage.getItem('sharedCustomerData')||'[]')), ...(JSON.parse(localStorage.getItem('customerData')||'[]'))];
-    const seen = new Set(db.map(c=>c._id));
-    ls.forEach(c => { if(!seen.has(c._id)){db.push(c);seen.add(c._id);} });
-    setCustomers(db);
+  // ── MAIN DIAGNOSTIC ────────────────────────────────────────────────────────
+  const runDiagnostic = async () => {
+    setRefreshing(true);
+    const r = {
+      timestamp: new Date(),
+      sync:     { status: 'checking', items: [], score: 0, max: 100 },
+      data:     { status: 'checking', items: [], score: 0, max: 100 },
+      invoice:  { status: 'checking', items: [], score: 0, max: 100 },
+      parts:    { status: 'checking', items: [], score: 0, max: 100 },
+      payment:  { status: 'checking', items: [], score: 0, max: 100 },
+      reminder: { status: 'checking', items: [], score: 0, max: 100 },
+      storage:  { status: 'checking', items: [], score: 0, max: 100 },
+    };
 
-    const svc = getLS('customerServiceData', {});
-    const inv = [...(JSON.parse(localStorage.getItem('invoices')||'[]')), ...(JSON.parse(localStorage.getItem('generatedInvoices')||'[]'))];
-    setSvcCount(Object.keys(svc).length);
+    // ── 1. CROSS-DEVICE SYNC ─────────────────────────────────────────────────
+    let dbCustomers = [], dbInvoices = [], dbParts = [], dbServiceData = [], dbFollowUps = [];
+    let online = false;
+    try {
+      const t0 = Date.now();
+      const res = await fetch(api('/api/customers'));
+      online = res.ok;
+      setServerOnline(online);
+      const latency = Date.now() - t0;
+      r.sync.items.push({
+        kind: online ? 'ok' : 'error',
+        title: online ? `✅ Backend Online (${latency}ms)` : '❌ Backend Offline',
+        detail: online ? 'MongoDB connected, sync working' : 'Backend reachable नहीं — सिर्फ localStorage मोड में चल रहा है',
+        action: online ? null : { label: 'Retry', fn: runDiagnostic },
+      });
+      if (online) dbCustomers = await res.json();
+    } catch {
+      online = false;
+      setServerOnline(false);
+      r.sync.items.push({ kind: 'error', title: '❌ Backend Offline', detail: 'Cannot reach API server' });
+    }
 
-    // Build invoice lookup maps
-    const invByRegNo = {};
-    const invByPhone = {};
-    inv.forEach(i => {
-      if (i.regNo)         invByRegNo[(i.regNo||'').toUpperCase()] = i;
-      if (i.customerPhone) invByPhone[i.customerPhone] = i;
+    if (online) {
+      try { dbInvoices    = await (await fetch(api('/api/invoices'))).json(); } catch {}
+      try { dbParts       = await (await fetch(api('/api/parts'))).json(); } catch {}
+      try { dbServiceData = await (await fetch(api('/api/service-data'))).json(); } catch {}
+      try { dbFollowUps   = await (await fetch(api('/api/follow-ups'))).json(); } catch {}
+    }
+
+    const lsCustomers   = [...getLS('sharedCustomerData',[]), ...getLS('customerData',[])];
+    const lsInvoices    = [...getLS('invoices',[]), ...getLS('generatedInvoices',[])];
+    const lsServiceData = getLS('customerServiceData', {});
+    const lsFollowUps   = getLS('followUpLog', {});
+
+    if (online) {
+      // Compare counts
+      if (lsCustomers.length !== dbCustomers.length) {
+        r.sync.items.push({
+          kind: 'warning',
+          title: `⚠️ Customer count mismatch`,
+          detail: `MongoDB: ${dbCustomers.length} | localStorage: ${lsCustomers.length} — ${Math.abs(dbCustomers.length - lsCustomers.length)} difference`,
+        });
+      } else {
+        r.sync.items.push({ kind: 'ok', title: `✅ Customer sync OK`, detail: `${dbCustomers.length} customers in both stores` });
+      }
+
+      if (Math.abs(lsInvoices.length - dbInvoices.length) > 5) {
+        r.sync.items.push({ kind: 'warning', title: `⚠️ Invoice count mismatch`, detail: `MongoDB: ${dbInvoices.length} | localStorage: ${lsInvoices.length}` });
+      } else {
+        r.sync.items.push({ kind: 'ok', title: `✅ Invoice sync OK`, detail: `${dbInvoices.length} invoices` });
+      }
+
+      const lsSDCount = Object.keys(lsServiceData).length;
+      r.sync.items.push({
+        kind: 'info',
+        title: `🔄 Service Data: ${dbServiceData.length} (DB) | ${lsSDCount} (Local)`,
+        detail: `Cross-device में change यहाँ reflect होगा`,
+      });
+
+      r.sync.score = r.sync.items.filter(i => i.kind === 'ok').length * 30 + 10;
+    } else {
+      r.sync.score = 0;
+    }
+    r.sync.status = online ? (r.sync.items.some(i => i.kind === 'warning') ? 'warning' : 'healthy') : 'critical';
+
+    // ── 2. CUSTOMER SERVICE DATA HEALTH ──────────────────────────────────────
+    const allCustomers = online ? dbCustomers : lsCustomers;
+    const deletedKeys = new Set(getLS('deletedServiceKeys', []));
+
+    let withData = 0, withoutData = 0, orphans = [];
+    allCustomers.forEach(c => {
+      const reg = (c.linkedVehicle?.regNo || c.regNo || c.registrationNo || '').toUpperCase();
+      const sd = lsServiceData[c._id] || (reg && lsServiceData[reg]) || null;
+      if (sd && Object.keys(sd).length > 0) withData++;
+      else withoutData++;
     });
 
-    const m=[], u=[];
-    Object.entries(svc).forEach(([id, d]) => {
-      // Try to find customer by _id
-      let c = db.find(x=>x._id===id);
-      // Try by phone
-      if(!c && d.phone) c = db.find(x=>x.phone===d.phone || x.phone===d.phone?.split('/')?.[0]?.trim());
-      // Try by regNo (id might be regNo)
-      if(!c) c = db.find(x=>(x.linkedVehicle?.regNo||x.regNo||'').toUpperCase()===id.toUpperCase());
-      // Try by regNo stored in data
-      if(!c && d.regNo) c = db.find(x=>(x.linkedVehicle?.regNo||x.regNo||'').toUpperCase()===d.regNo.toUpperCase());
-
-      // Get invoice info
-      const invByReg  = invByRegNo[id.toUpperCase()] || (d.regNo ? invByRegNo[d.regNo.toUpperCase()] : null);
-      const invByPh   = d.phone ? invByPhone[d.phone] : null;
-      const i = inv.find(x=>x.customerId===id) || invByReg || invByPh;
-
-      // Best name: serviceData > customer DB > invoice > phone number
-      const nm = d.customerName || c?.name || c?.customerName || i?.customerName || (d.phone ? `📞 ${d.phone}` : id.slice(0,15));
-
-      if(c) {
-        m.push({ id, dbId:c._id, name:nm, phone:c.phone||d.phone||'', veh:c.linkedVehicle?.name||d.vehicle||i?.vehicle||'', reg:c.linkedVehicle?.regNo||d.regNo||i?.regNo||'', via:c._id===id?'ID':d.regNo&&(c.linkedVehicle?.regNo||'').toUpperCase()===d.regNo.toUpperCase()?'RegNo':c.phone===(d.phone||i?.customerPhone)?'Phone':'Name', d });
-      } else {
-        const hasSvc = !!(d.firstServiceDate||d.secondServiceDate||d.thirdServiceDate||d.fourthServiceDate||d.purchaseDate);
-        const hasPay = (parseFloat(d.pendingAmount)||0) > 0;
-        u.push({ id, name:nm, phone:d.phone||i?.customerPhone||'', veh:d.vehicle||i?.vehicle||'', reg:d.regNo||i?.regNo||'', d, hasSvc, hasPay, useful:hasSvc||hasPay });
+    // Find orphan service data entries (no matching customer)
+    Object.entries(lsServiceData).forEach(([key, data]) => {
+      if (deletedKeys.has(key)) return;
+      const matchById  = allCustomers.find(c => c._id === key);
+      const matchByReg = allCustomers.find(c => (c.linkedVehicle?.regNo || c.regNo || c.registrationNo || '').toUpperCase() === key.toUpperCase());
+      const matchByPhone = data.phone && allCustomers.find(c => c.phone === data.phone);
+      if (!matchById && !matchByReg && !matchByPhone) {
+        orphans.push({ key, data, hasUseful: !!(data.purchaseDate || data.firstServiceDate || data.pendingAmount) });
       }
     });
-    setMatched(m); setUnmatched(u); setRefresh(new Date()); setLoading(false);
-  };
 
-  // ── Auto-Fix: delete ALL unmatched that have no service history ──
-  const autoFix = async () => {
-    const empty = unmatched.filter(x=>!x.useful);
-    const keep  = unmatched.filter(x=>x.useful);
-    if(!window.confirm(`🔧 Auto-Fix:\n\n✅ DELETE: ${empty.length} empty entries (no service data)\n⚠️ KEEP: ${keep.length} entries (have service data)\n\nContinue?`)) return;
-
-    // 1. Delete from localStorage
-    const svc = getLS('customerServiceData', {});
-    empty.forEach(e => delete svc[e.id]);
-    localStorage.setItem('customerServiceData', JSON.stringify(svc));
-
-    // 2. ⭐ ADD to blacklist — prevents rebuild from invoices
-    const blacklist = new Set(getLS('deletedServiceKeys', []));
-    empty.forEach(e => blacklist.add(e.id));
-    localStorage.setItem('deletedServiceKeys', JSON.stringify([...blacklist]));
-
-    // 3. ALSO delete from MongoDB (cross-device sync)
-    for (const e of empty) {
-      try { await fetch(api(`/api/service-data/${e.id}`), { method: 'DELETE' }).catch(()=>{}); } catch {}
+    r.data.items.push({ kind: 'info', title: `Total Customers: ${allCustomers.length}`, detail: `With service data: ${withData} | Without: ${withoutData}` });
+    if (orphans.length > 0) {
+      r.data.items.push({
+        kind: 'warning',
+        title: `⚠️ ${orphans.length} orphan service entries`,
+        detail: `Service data exists but कोई customer match नहीं — Auto-Fix से safely delete हो सकते हैं`,
+        action: { label: '🔧 Auto-Fix Orphans', fn: () => autoFixOrphans(orphans, deletedKeys) },
+        items: orphans.slice(0, 10).map(o => ({ name: o.data.customerName || o.key, detail: `${o.data.phone || '—'} ${o.hasUseful ? '⚠️ has data' : '(empty)'}` })),
+      });
+    } else {
+      r.data.items.push({ kind: 'ok', title: '✅ No orphan service entries', detail: 'सभी service data customers से linked' });
     }
 
-    window.dispatchEvent(new Event('storage'));
-    setMsg(`✅ ${empty.length} empty entries deleted permanently! (localStorage + MongoDB + blacklist)`);
-    setTimeout(()=>setMsg(''),5000);
-    run();
+    if (deletedKeys.size > 0) {
+      r.data.items.push({
+        kind: 'info',
+        title: `🚫 Blacklist: ${deletedKeys.size} entries`,
+        detail: 'पहले delete किए गए entries — invoice import से वापस नहीं बनेंगे',
+        action: { label: 'Reset Blacklist', fn: resetBlacklist },
+      });
+    }
+
+    r.data.score = orphans.length === 0 ? 100 : Math.max(20, 100 - orphans.length * 2);
+    r.data.status = orphans.length === 0 ? 'healthy' : (orphans.length > 50 ? 'critical' : 'warning');
+
+    // ── 3. INVOICE INTEGRITY ─────────────────────────────────────────────────
+    const allInvoices = online ? dbInvoices : lsInvoices;
+    let invNoCustomer = 0, invNoRegNo = 0, invNoDate = 0, invDuplicates = [];
+    const invByNumber = {};
+    allInvoices.forEach(inv => {
+      if (!inv.customerId && !inv.customerPhone && !inv.customerName) invNoCustomer++;
+      if (!inv.regNo) invNoRegNo++;
+      if (!inv.invoiceDate) invNoDate++;
+      const key = inv.invoiceNumber || inv.invoiceNo;
+      if (key) {
+        if (invByNumber[key]) invDuplicates.push(key);
+        invByNumber[key] = (invByNumber[key] || 0) + 1;
+      }
+    });
+
+    r.invoice.items.push({ kind: 'info', title: `Total Invoices: ${allInvoices.length}`, detail: 'सभी sources combined' });
+    if (invNoCustomer > 0) r.invoice.items.push({ kind: 'warning', title: `⚠️ ${invNoCustomer} invoices without customer info`, detail: 'न customerId, न phone, न name' });
+    if (invNoRegNo > 0)    r.invoice.items.push({ kind: 'warning', title: `⚠️ ${invNoRegNo} invoices without regNo`, detail: 'Service reminders के लिए regNo जरूरी है' });
+    if (invNoDate > 0)     r.invoice.items.push({ kind: 'warning', title: `⚠️ ${invNoDate} invoices without invoice date`, detail: 'Date के बिना service timeline detect नहीं होगा' });
+    if (invDuplicates.length > 0) r.invoice.items.push({ kind: 'error', title: `❌ ${invDuplicates.length} duplicate invoice numbers`, detail: `Examples: ${invDuplicates.slice(0,3).join(', ')}` });
+    if (invNoCustomer === 0 && invNoRegNo === 0 && invNoDate === 0 && invDuplicates.length === 0) {
+      r.invoice.items.push({ kind: 'ok', title: '✅ All invoices have complete data' });
+    }
+
+    const invIssues = invNoCustomer + invNoRegNo + invNoDate + invDuplicates.length;
+    r.invoice.score = invIssues === 0 ? 100 : Math.max(20, 100 - Math.min(80, invIssues));
+    r.invoice.status = invIssues === 0 ? 'healthy' : (invDuplicates.length > 0 ? 'critical' : 'warning');
+
+    // ── 4. PARTS INVENTORY ───────────────────────────────────────────────────
+    const allParts = online ? dbParts : getLS('parts', []);
+    const outOfStock = allParts.filter(p => Number(p.stock || p.quantity || 0) <= 0);
+    const lowStock = allParts.filter(p => {
+      const s = Number(p.stock || p.quantity || 0);
+      const m = Number(p.minStock || 0);
+      return m > 0 && s > 0 && s <= m;
+    });
+
+    r.parts.items.push({ kind: 'info', title: `Total Parts: ${allParts.length}`, detail: `Categories tracked` });
+    if (outOfStock.length > 0) {
+      r.parts.items.push({
+        kind: 'error',
+        title: `🚨 ${outOfStock.length} parts OUT OF STOCK`,
+        detail: 'तुरंत reorder करें',
+        items: outOfStock.slice(0, 10).map(p => ({ name: p.partName, detail: `${p.partNumber || ''} | Min: ${p.minStock || 0}` })),
+        action: { label: 'View Parts', fn: () => navigate('/parts') },
+      });
+    }
+    if (lowStock.length > 0) {
+      r.parts.items.push({
+        kind: 'warning',
+        title: `⚠️ ${lowStock.length} parts running LOW`,
+        detail: 'Min stock से कम बचा है',
+        items: lowStock.slice(0, 10).map(p => ({ name: p.partName, detail: `Stock: ${p.stock || p.quantity || 0} (Min: ${p.minStock})` })),
+      });
+    }
+    if (outOfStock.length === 0 && lowStock.length === 0) {
+      r.parts.items.push({ kind: 'ok', title: '✅ All parts adequately stocked' });
+    }
+
+    r.parts.score = outOfStock.length === 0 && lowStock.length === 0 ? 100 :
+                    outOfStock.length === 0 ? Math.max(50, 100 - lowStock.length * 5) :
+                    Math.max(20, 50 - outOfStock.length * 5);
+    r.parts.status = outOfStock.length > 0 ? 'critical' : (lowStock.length > 0 ? 'warning' : 'healthy');
+
+    // ── 5. PENDING PAYMENTS ──────────────────────────────────────────────────
+    const today = new Date(); today.setHours(0,0,0,0);
+    let pendingPayments = [], overduePayments = [], totalPending = 0;
+    Object.entries(lsServiceData).forEach(([reg, d]) => {
+      const amt = parseFloat(d.pendingAmount || 0);
+      if (amt > 0 && !d.paymentReceivedDate) {
+        totalPending += amt;
+        const dueDate = d.paymentDueDate ? new Date(d.paymentDueDate) : null;
+        const isOverdue = dueDate && dueDate < today;
+        const item = { name: d.customerName || reg, detail: `₹${amt.toLocaleString('en-IN')} | Due: ${d.paymentDueDate || '—'}`, regNo: reg };
+        if (isOverdue) overduePayments.push(item);
+        else pendingPayments.push(item);
+      }
+    });
+
+    r.payment.items.push({ kind: 'info', title: `💰 Total Pending: ₹${totalPending.toLocaleString('en-IN')}`, detail: `${pendingPayments.length + overduePayments.length} customers` });
+    if (overduePayments.length > 0) {
+      r.payment.items.push({
+        kind: 'error',
+        title: `🚨 ${overduePayments.length} OVERDUE payments`,
+        detail: 'तुरंत follow-up करें',
+        items: overduePayments.slice(0, 10),
+        action: { label: 'Open Reminders', fn: () => navigate('/reminders') },
+      });
+    }
+    if (pendingPayments.length > 0) {
+      r.payment.items.push({
+        kind: 'warning',
+        title: `⏳ ${pendingPayments.length} pending payments`,
+        detail: 'Due date से पहले',
+        items: pendingPayments.slice(0, 10),
+      });
+    }
+    if (totalPending === 0) r.payment.items.push({ kind: 'ok', title: '✅ No pending payments' });
+
+    r.payment.score = totalPending === 0 ? 100 : (overduePayments.length === 0 ? 70 : Math.max(20, 70 - overduePayments.length * 3));
+    r.payment.status = overduePayments.length > 0 ? 'critical' : (pendingPayments.length > 0 ? 'warning' : 'healthy');
+
+    // ── 6. REMINDER GENERATION ───────────────────────────────────────────────
+    let purchaseDateMissing = 0, serviceDataMissing = 0, totalReminderable = 0;
+    Object.entries(lsServiceData).forEach(([reg, d]) => {
+      if (d.purchaseDate || d.firstServiceDate || d.pendingAmount > 0 || d.insuranceDate) totalReminderable++;
+      if (!d.purchaseDate && !d.firstServiceDate) purchaseDateMissing++;
+    });
+
+    const totalCustWithoutData = allCustomers.length - withData;
+    if (totalCustWithoutData > 0) {
+      r.reminder.items.push({
+        kind: 'warning',
+        title: `⚠️ ${totalCustWithoutData} customers से कोई reminder नहीं बन सकता`,
+        detail: 'Service data, purchase date, या pending amount नहीं भरा',
+        action: { label: 'Open Data Manager', fn: () => navigate('/customer-data-manager') },
+      });
+    }
+    r.reminder.items.push({ kind: 'info', title: `🔔 ${totalReminderable} customers से reminders बन सकते हैं`, detail: 'Service / Payment / Insurance combined' });
+
+    r.reminder.score = allCustomers.length > 0 ? Math.round((withData / allCustomers.length) * 100) : 100;
+    r.reminder.status = r.reminder.score > 80 ? 'healthy' : r.reminder.score > 50 ? 'warning' : 'critical';
+
+    // ── 7. LOCALSTORAGE HEALTH ───────────────────────────────────────────────
+    let totalSize = 0;
+    const keyDetails = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      const v = localStorage.getItem(k) || '';
+      const sz = (k.length + v.length) * 2; // UTF-16
+      totalSize += sz;
+      keyDetails.push({ key: k, size: sz });
+    }
+    keyDetails.sort((a,b) => b.size - a.size);
+    const sizeMB = (totalSize / 1024 / 1024).toFixed(2);
+    const limit = 5; // typical browser limit
+    const usagePct = Math.round((totalSize / 1024 / 1024 / limit) * 100);
+
+    r.storage.items.push({
+      kind: usagePct > 80 ? 'error' : usagePct > 50 ? 'warning' : 'ok',
+      title: `💾 LocalStorage: ${sizeMB} MB (${usagePct}% of ${limit}MB limit)`,
+      detail: `${keyDetails.length} keys`,
+      items: keyDetails.slice(0, 8).map(k => ({ name: k.key, detail: `${(k.size/1024).toFixed(1)} KB` })),
+    });
+
+    r.storage.score = Math.max(0, 100 - usagePct);
+    r.storage.status = usagePct > 80 ? 'critical' : usagePct > 50 ? 'warning' : 'healthy';
+
+    // ── OVERALL ──────────────────────────────────────────────────────────────
+    const overall = Math.round((r.sync.score + r.data.score + r.invoice.score + r.parts.score + r.payment.score + r.reminder.score + r.storage.score) / 7);
+    r.overall = overall;
+    r.overallStatus = overall > 85 ? 'healthy' : overall > 60 ? 'warning' : 'critical';
+
+    setReport(r);
+    setLastRefresh(new Date());
+    setLoading(false);
+    setRefreshing(false);
   };
 
-  // ── Delete ALL unmatched (admin) ──
-  const deleteAllUnmatched = async () => {
-    const pwd = prompt('Admin password (Delete All Unmatched):');
-    if(pwd !== 'vphonda@123') { alert('❌ Wrong password!'); return; }
-    if(!window.confirm(`⚠️ ${unmatched.length} unmatched entries DELETE करें?\n\nयह action undo नहीं होगा!`)) return;
-
+  // ── ACTIONS ──────────────────────────────────────────────────────────────
+  const autoFixOrphans = async (orphans, deletedKeys) => {
+    const empty = orphans.filter(o => !o.hasUseful);
+    if (!window.confirm(`🔧 Auto-Fix:\n\n✅ DELETE: ${empty.length} empty orphan entries\n⚠️ KEEP: ${orphans.length - empty.length} entries with data\n\nContinue?`)) return;
     const svc = getLS('customerServiceData', {});
-    const blacklist = new Set(getLS('deletedServiceKeys', []));
-    for (const e of unmatched) {
-      delete svc[e.id];
-      blacklist.add(e.id); // ⭐ blacklist to prevent rebuild
-      try { await fetch(api(`/api/service-data/${e.id}`), { method: 'DELETE' }).catch(()=>{}); } catch {}
+    const blacklist = new Set(deletedKeys);
+    for (const o of empty) {
+      delete svc[o.key];
+      blacklist.add(o.key);
+      try { await fetch(api(`/api/service-data/${o.key}`), { method: 'DELETE' }).catch(() => {}); } catch {}
     }
     localStorage.setItem('customerServiceData', JSON.stringify(svc));
     localStorage.setItem('deletedServiceKeys', JSON.stringify([...blacklist]));
     window.dispatchEvent(new Event('storage'));
-    setMsg(`✅ ${unmatched.length} entries deleted permanently! System Health बढ़ेगा।`);
-    setTimeout(()=>setMsg(''),5000);
-    run();
+    setMsg(`✅ ${empty.length} orphan entries deleted permanently`);
+    setTimeout(() => setMsg(''), 4000);
+    runDiagnostic();
   };
 
-  // ── Full Cache Clear (nuclear option) ──
-  const clearAllCache = async () => {
-    const pwd = prompt('Admin password (Full Cache Clear):');
-    if(pwd !== 'vphonda@123') { alert('❌ Wrong password!'); return; }
-    if(!window.confirm('⚠️ पूरा localStorage cache clear होगा!\n\nसिर्फ MongoDB data बचेगा।\n\nContinue?')) return;
-
-    // Clear all cache keys (keep auth/login + blacklist)
-    const keepKeys = ['userToken','adminAuth','staffPin','deletedServiceKeys'];
-    const allKeys = Object.keys(localStorage);
-    allKeys.forEach(k => { if(!keepKeys.includes(k)) localStorage.removeItem(k); });
-
-    window.dispatchEvent(new Event('storage'));
-    setMsg('✅ Cache cleared! Page reload हो रहा है...');
-    setTimeout(()=>window.location.reload(), 1500);
-  };
-
-  // ── Reset Blacklist (in case user wants to re-enable deleted entries) ──
   const resetBlacklist = () => {
-    if(!window.confirm('⚠️ Blacklist reset करें?\nDeleted entries वापस आ सकते हैं invoices से।')) return;
+    if (!window.confirm('Blacklist reset करें?\nDeleted entries वापस आ सकते हैं invoices से।')) return;
     localStorage.removeItem('deletedServiceKeys');
-    setMsg('✅ Blacklist reset! अब deleted entries वापस आ सकती हैं।');
-    setTimeout(()=>setMsg(''),3000);
-    run();
+    setMsg('✅ Blacklist reset');
+    setTimeout(() => setMsg(''), 3000);
+    runDiagnostic();
   };
 
-  // ── Delete single entry ──
-  const deleteOne = async (entryId) => {
-    if(!window.confirm('Delete this entry permanently?')) return;
-    const svc = getLS('customerServiceData', {});
-    delete svc[entryId];
-    localStorage.setItem('customerServiceData', JSON.stringify(svc));
-    // Add to blacklist
-    const blacklist = new Set(getLS('deletedServiceKeys', []));
-    blacklist.add(entryId);
-    localStorage.setItem('deletedServiceKeys', JSON.stringify([...blacklist]));
-    // Also delete from MongoDB
-    try { await fetch(api(`/api/service-data/${entryId}`), { method: 'DELETE' }).catch(()=>{}); } catch {}
-    window.dispatchEvent(new Event('storage'));
-    run();
+  const fullCacheClear = () => {
+    const pwd = prompt('Admin password:');
+    if (pwd !== 'vphonda@123') { alert('❌ Wrong password!'); return; }
+    if (!window.confirm('⚠️ पूरा localStorage cache clear होगा!\nMongoDB data unaffected रहेगा।\nContinue?')) return;
+    const keepKeys = ['vpHondaUser', 'vpSession', 'vpAdminSession', 'deletedServiceKeys'];
+    Object.keys(localStorage).forEach(k => { if (!keepKeys.includes(k)) localStorage.removeItem(k); });
+    setMsg('✅ Cache cleared! Reloading...');
+    setTimeout(() => window.location.reload(), 1500);
   };
 
-  // ── Display ──
-  const getResults = () => {
-    let r = filter==='matched' ? matched.map(x=>({...x,_t:'m'}))
-      : filter==='unmatched' ? unmatched.map(x=>({...x,_t:'u'}))
-      : filter==='db' ? customers.map(c=>({_t:'db',id:c._id,name:c.name,phone:c.phone,veh:c.linkedVehicle?.name||'',reg:c.linkedVehicle?.regNo||''}))
-      : [...matched.map(x=>({...x,_t:'m'})), ...unmatched.map(x=>({...x,_t:'u'}))];
-    if(search) { const s=search.toLowerCase(); r=r.filter(x=>[x.name,x.phone,x.id,x.veh,x.reg].some(v=>(v||'').toLowerCase().includes(s))); }
-    return r;
+  const toggleExpand = (id) => {
+    const s = new Set(expandedItems);
+    if (s.has(id)) s.delete(id); else s.add(id);
+    setExpandedItems(s);
   };
-  const all = getResults();
-  const pages = Math.ceil(all.length/SIZE);
-  const rows = all.slice(page*SIZE,(page+1)*SIZE);
-  const rate = svcCount>0 ? Math.round(matched.length/svcCount*100) : 0;
-  const emptyCount = unmatched.filter(x=>!x.useful).length;
 
-  if(loading) return <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center"><div className="w-10 h-10 border-4 border-cyan-400 border-t-transparent rounded-full animate-spin"/></div>;
+  // ── RENDER HELPERS ──────────────────────────────────────────────────────
+  const statusColor = (status) => ({
+    healthy:  { bg: '#22c55e', text: 'Healthy',   icon: CheckCircle },
+    warning:  { bg: '#facc15', text: 'Warning',   icon: AlertTriangle },
+    critical: { bg: '#ef4444', text: 'Critical',  icon: XCircle },
+    checking: { bg: '#94a3b8', text: 'Checking…', icon: Activity },
+  }[status] || { bg: '#94a3b8', text: '—', icon: AlertCircle });
+
+  if (loading) return (
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">
+      <div className="text-center">
+        <Activity className="animate-spin mx-auto mb-3" size={48} />
+        <p>Running system diagnostic...</p>
+      </div>
+    </div>
+  );
+
+  const sectionsToShow = activeSection === 'all' ? SECTIONS : SECTIONS.filter(s => s.id === activeSection);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-5">
-      <div className="max-w-6xl mx-auto space-y-4">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4 md:p-6">
+      <div className="max-w-7xl mx-auto">
 
-        {/* Header */}
-        <div className="flex justify-between items-center">
-          <Button onClick={()=>navigate('/reminders')} className="bg-slate-700 hover:bg-slate-600 text-white h-8 px-3 text-xs"><ArrowLeft size={13} className="mr-1"/>Back</Button>
+        {/* HEADER */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <Button onClick={() => navigate('/reminders')} className="bg-red-700 hover:bg-red-600 text-white">
+            <ArrowLeft size={16} className="mr-1" /> Back
+          </Button>
           <div className="text-center">
-            <h1 className="text-lg font-black text-white">🔍 System Diagnostics</h1>
-            <p className="text-slate-500 text-[10px]"><Clock size={9} className="inline"/> {refresh.toLocaleTimeString('en-IN')}</p>
+            <h1 className="text-2xl md:text-3xl font-bold text-white flex items-center justify-center gap-2">
+              <Activity size={28} className="text-cyan-400" /> System Diagnostic
+            </h1>
+            <p className="text-slate-400 text-xs flex items-center justify-center gap-1 mt-1">
+              {serverOnline ? <Wifi size={11} className="text-green-400" /> : <WifiOff size={11} className="text-red-400" />}
+              {serverOnline ? 'Backend Online' : 'Backend Offline'} · Last check: {lastRefresh.toLocaleTimeString('en-IN')}
+            </p>
           </div>
-          <Button onClick={()=>{setLoading(true);run();}} className="bg-blue-600 hover:bg-blue-700 text-white h-8 px-3 text-xs"><RefreshCw size={13} className="mr-1"/>Refresh</Button>
+          <div className="flex gap-2">
+            <Button onClick={runDiagnostic} disabled={refreshing} className="bg-blue-600 hover:bg-blue-700 text-white">
+              <RefreshCw size={16} className={`mr-1 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
+            </Button>
+          </div>
         </div>
 
-        {/* Message */}
-        {msg && <div className="bg-green-600/20 border border-green-500 text-green-300 rounded-lg px-4 py-2 text-sm font-bold animate-pulse">{msg}</div>}
+        {msg && (
+          <div className="bg-green-600/20 border border-green-500 text-green-300 rounded-xl p-3 mb-4 font-bold text-sm">
+            {msg}
+          </div>
+        )}
 
-        {/* Health Score Card */}
-        <Card className="bg-gradient-to-r from-slate-800 to-slate-700 border-0 overflow-hidden">
-          <CardContent className="p-0">
-            <div className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <p className="text-slate-400 text-xs font-bold flex items-center gap-1"><Shield size={12}/> System Health</p>
-                  <div className="flex items-baseline gap-2 mt-1">
-                    <span className={`text-4xl font-black ${rate>70?'text-green-400':rate>30?'text-yellow-400':'text-red-400'}`}>{rate}%</span>
-                    <span className="text-slate-500 text-xs">({matched.length}/{svcCount} matched)</span>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Button onClick={autoFix} disabled={emptyCount===0} className="bg-orange-600 hover:bg-orange-500 text-white text-[10px] h-7 px-3">
-                    <Zap size={11} className="mr-1"/> Auto-Fix ({emptyCount} empty)
-                  </Button>
-                  <Button onClick={deleteAllUnmatched} disabled={unmatched.length===0} className="bg-red-700 hover:bg-red-600 text-white text-[10px] h-7 px-3">
-                    <Trash2 size={11} className="mr-1"/> Delete All ({unmatched.length})
-                  </Button>
-                  <Button onClick={clearAllCache} className="bg-slate-600 hover:bg-slate-500 text-white text-[10px] h-7 px-3">
-                    🧹 Full Cache Clear
-                  </Button>
-                </div>
-              </div>
-              {/* Progress bar */}
-              <div className="h-2.5 bg-slate-600 rounded-full overflow-hidden">
-                <div className={`h-full rounded-full transition-all duration-1000 ${rate>70?'bg-gradient-to-r from-green-500 to-green-400':rate>30?'bg-gradient-to-r from-yellow-500 to-yellow-400':'bg-gradient-to-r from-red-500 to-red-400'}`} style={{width:`${rate}%`}}/>
-              </div>
-              <div className="flex justify-between mt-1.5 text-[9px] text-slate-500">
-                <span>0%</span>
-                <span>{rate > 70 ? '✅ Healthy' : rate > 30 ? '⚠️ Needs attention' : '🚨 Critical — Auto-Fix recommended'}</span>
-                <span>100%</span>
+        {/* OVERALL HEALTH SCORE */}
+        <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 rounded-2xl p-5 mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-slate-400 text-xs font-bold uppercase tracking-wider">System Health Score</p>
+              <div className="flex items-baseline gap-2 mt-1">
+                <h2 className="text-5xl font-black" style={{ color: statusColor(report?.overallStatus).bg }}>
+                  {report?.overall || 0}%
+                </h2>
+                <span className="text-lg font-bold" style={{ color: statusColor(report?.overallStatus).bg }}>
+                  {statusColor(report?.overallStatus).text}
+                </span>
               </div>
             </div>
-            {/* Quick explanation */}
-            {rate < 50 && (
-              <div className="bg-red-900/30 px-4 py-2 border-t border-red-800/50 text-[10px] text-red-300">
-                💡 <b>Low health = orphaned data.</b> PDF import से customerServiceData में entries बनती हैं जो customer DB से match नहीं होतीं।
-                <b> Auto-Fix</b> empty entries delete करता है। <b>Delete All</b> सब unmatched delete करता है (admin password)।
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Nav */}
-        <div className="grid grid-cols-3 gap-2">
-          <Button onClick={()=>navigate('/reminders')} className="bg-orange-600/80 text-white font-bold py-2 text-xs">🔔 Reminders</Button>
-          <Button onClick={()=>navigate('/customer-data-manager')} className="bg-purple-600/80 text-white font-bold py-2 text-xs">📊 Data Mgr</Button>
-          <Button onClick={()=>navigate('/invoice-management')} className="bg-green-600/80 text-white font-bold py-2 text-xs">📋 Invoices</Button>
-        </div>
-
-        {/* Filter Cards */}
-        <div className="grid grid-cols-4 gap-2">
-          {[
-            {v:'all',l:'📊 All',n:svcCount,c:filter==='all'?'ring-2 ring-blue-400 bg-blue-600/30':'bg-blue-900/20 border-blue-800'},
-            {v:'matched',l:'✅ Match',n:matched.length,c:filter==='matched'?'ring-2 ring-green-400 bg-green-600/30':'bg-green-900/20 border-green-800'},
-            {v:'unmatched',l:'❌ Unmatch',n:unmatched.length,c:filter==='unmatched'?'ring-2 ring-red-400 bg-red-600/30':'bg-red-900/20 border-red-800'},
-            {v:'db',l:'👥 DB',n:customers.length,c:filter==='db'?'ring-2 ring-purple-400 bg-purple-600/30':'bg-purple-900/20 border-purple-800'},
-          ].map(f=>(
-            <div key={f.v} onClick={()=>setFilter(f.v)} className={`p-2.5 rounded-xl border cursor-pointer transition-all ${f.c}`}>
-              <p className="text-slate-400 text-[9px] font-bold">{f.l}</p>
-              <p className="text-white font-black text-xl mt-0.5">{f.n}</p>
+            <div className="flex gap-2 flex-wrap">
+              <Button onClick={fullCacheClear} className="bg-orange-600 hover:bg-orange-500 text-white text-xs">
+                🧹 Full Cache Clear
+              </Button>
             </div>
-          ))}
+          </div>
+          {/* Progress bar */}
+          <div className="mt-3 h-2 bg-slate-700 rounded-full overflow-hidden">
+            <div className="h-full transition-all duration-500" style={{
+              width: `${report?.overall || 0}%`,
+              background: `linear-gradient(90deg, #ef4444, #facc15, #22c55e)`,
+            }} />
+          </div>
         </div>
 
-        {/* Search */}
-        <Input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search..."
-          className="bg-slate-800/80 border-slate-700 text-white placeholder-slate-500 h-8 text-xs"/>
-
-        {/* Results */}
-        <div className="space-y-1.5">
-          <div className="flex justify-between items-center">
-            <p className="text-slate-600 text-[10px]">{all.length} results · Page {page+1}/{pages||1}</p>
-            {filter!=='all' && <button onClick={()=>setFilter('all')} className="text-[10px] text-blue-400">Clear</button>}
-          </div>
-
-          {rows.length===0 ? (
-            <div className="text-center py-12"><CheckCircle size={36} className="text-green-500 mx-auto mb-2"/><p className="text-slate-400 text-sm">All clean!</p></div>
-          ) : rows.map((r,i) => (
-            <div key={i} className={`rounded-lg p-3 border transition-all ${
-              r._t==='m' ? 'bg-green-900/15 border-green-800/50 hover:border-green-600'
-              : r._t==='u' ? 'bg-red-900/15 border-red-800/50 hover:border-red-600'
-              : 'bg-purple-900/15 border-purple-800/50 hover:border-purple-600'
+        {/* SECTION CARDS — clickable filters */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2 mb-4">
+          <button onClick={() => setActiveSection('all')}
+            className={`p-3 rounded-xl border-2 text-xs font-bold transition ${
+              activeSection === 'all' ? 'bg-cyan-600 border-cyan-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
             }`}>
-              <div className="flex items-center gap-3">
-                <span className="text-lg">{r._t==='m'?'✅':r._t==='u'?'❌':'👤'}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-white font-bold text-sm truncate">{r.name||'Unknown'}</span>
-                    {r._t==='m' && <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-bold ${r.via==='ID'?'bg-green-800 text-green-300':r.via==='Phone'?'bg-blue-800 text-blue-300':'bg-yellow-800 text-yellow-300'}`}>{r.via}</span>}
-                    {r._t==='u' && r.useful && <span className="text-[8px] bg-yellow-800 text-yellow-300 px-1.5 py-0.5 rounded-full font-bold">Has Data</span>}
-                    {r._t==='u' && !r.useful && <span className="text-[8px] bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded-full">Empty</span>}
-                  </div>
-                  <div className="flex gap-2 mt-0.5 text-[10px] text-slate-500 flex-wrap">
-                    {r.phone && <span>📞 {r.phone}</span>}
-                    {r.veh && <span>🏍️ {r.veh}</span>}
-                    {r.reg && <span className="font-mono">{r.reg}</span>}
-                  </div>
-                </div>
-                <div className="flex gap-1 flex-shrink-0">
-                  {r._t!=='u' && (
-                    <button onClick={()=>navigate(`/customer-profile/${r.dbId||r.id}`)} className="bg-blue-600 hover:bg-blue-500 text-white text-[9px] px-2 py-1 rounded font-bold">View</button>
-                  )}
-                  {r._t==='u' && (
-                    <button onClick={()=>deleteOne(r.id)} className="bg-red-700 hover:bg-red-600 text-white text-[9px] px-2 py-1 rounded font-bold">🗑 Delete</button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-
-          {/* Pagination */}
-          {pages>1 && (
-            <div className="flex items-center justify-between pt-2">
-              <button onClick={()=>setPage(p=>Math.max(0,p-1))} disabled={page===0} className="bg-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded disabled:opacity-30 font-bold">◀</button>
-              <div className="flex gap-1">
-                {Array.from({length:Math.min(7,pages)}).map((_,i)=>{
-                  const pg=Math.max(0,Math.min(pages-7,page-3))+i;
-                  if(pg>=pages) return null;
-                  return <button key={pg} onClick={()=>setPage(pg)} className={`w-6 h-6 rounded text-[9px] font-bold ${pg===page?'bg-blue-600 text-white':'bg-slate-800 text-slate-400'}`}>{pg+1}</button>;
-                })}
-              </div>
-              <button onClick={()=>setPage(p=>Math.min(pages-1,p+1))} disabled={page>=pages-1} className="bg-slate-800 text-slate-300 text-xs px-3 py-1.5 rounded disabled:opacity-30 font-bold">▶</button>
-            </div>
-          )}
+            All Sections
+          </button>
+          {SECTIONS.map(s => {
+            const sec = report?.[s.id];
+            const sc = statusColor(sec?.status);
+            return (
+              <button key={s.id} onClick={() => setActiveSection(s.id)}
+                className={`p-2 rounded-xl border-2 text-xs font-bold transition ${
+                  activeSection === s.id ? 'bg-slate-700 border-white text-white' : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                }`}>
+                <div className="text-[10px]">{s.label}</div>
+                <div className="text-base mt-1" style={{ color: sc.bg }}>{sec?.score || 0}%</div>
+              </button>
+            );
+          })}
         </div>
+
+        {/* DETAIL SECTIONS */}
+        <div className="space-y-4">
+          {sectionsToShow.map(s => {
+            const sec = report?.[s.id];
+            if (!sec) return null;
+            const sc = statusColor(sec.status);
+            const SCIcon = sc.icon;
+            return (
+              <div key={s.id} style={{ background: 'rgba(0,0,0,0.3)', border: `2px solid ${s.color}40`, borderRadius: '16px', overflow: 'hidden' }}>
+                <div style={{ background: `linear-gradient(135deg, ${s.color}33, ${s.color}11)`, padding: '14px 18px', borderBottom: `1px solid ${s.color}40` }}>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-white font-bold text-base flex items-center gap-2">
+                      {s.label}
+                      <span className="text-xs font-normal" style={{ color: sc.bg }}>
+                        ({sec.score}%) <SCIcon size={14} className="inline" />
+                      </span>
+                    </h3>
+                  </div>
+                </div>
+                <div className="p-3 space-y-2">
+                  {sec.items.map((item, idx) => {
+                    const itemId = `${s.id}-${idx}`;
+                    const isExpanded = expandedItems.has(itemId);
+                    const colors = {
+                      ok:      { bg: 'rgba(34,197,94,0.10)', border: 'rgba(34,197,94,0.3)',  text: '#86efac' },
+                      warning: { bg: 'rgba(250,204,21,0.10)', border: 'rgba(250,204,21,0.3)', text: '#fde047' },
+                      error:   { bg: 'rgba(239,68,68,0.10)',  border: 'rgba(239,68,68,0.3)',  text: '#fca5a5' },
+                      info:    { bg: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.25)', text: '#93c5fd' },
+                    }[item.kind] || { bg: '#1e293b', border: '#334155', text: '#cbd5e1' };
+                    return (
+                      <div key={idx} style={{ background: colors.bg, border: `1px solid ${colors.border}`, borderRadius: '10px', padding: '10px 12px' }}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-bold text-sm" style={{ color: colors.text }}>{item.title}</p>
+                              {item.items && item.items.length > 0 && (
+                                <button onClick={() => toggleExpand(itemId)} className="text-xs text-slate-400 hover:text-white">
+                                  {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />} {item.items.length} details
+                                </button>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-400 mt-1">{item.detail}</p>
+                            {isExpanded && item.items && (
+                              <div className="mt-2 space-y-1 pl-3 border-l-2" style={{ borderColor: colors.border }}>
+                                {item.items.map((sub, si) => (
+                                  <div key={si} className="text-xs text-slate-300 flex justify-between gap-3">
+                                    <span className="font-semibold">{sub.name}</span>
+                                    <span className="text-slate-500">{sub.detail}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          {item.action && (
+                            <Button onClick={item.action.fn} className="bg-slate-700 hover:bg-slate-600 text-white text-xs whitespace-nowrap">
+                              {item.action.label}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
       </div>
     </div>
   );

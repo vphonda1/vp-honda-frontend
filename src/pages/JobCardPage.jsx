@@ -499,8 +499,44 @@ export default function JobCardPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(invoiceData)
       });
+      let savedInvoice = null;
       if (response.ok) {
+        savedInvoice = await response.json();
         console.log('✅ Invoice saved to database successfully!');
+
+        // ⭐ DEDUCT PARTS STOCK from inventory (only if parts were used)
+        if (selectedParts.length > 0) {
+          try {
+            const consumeRes = await fetch(api('/api/parts/consume'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                invoiceId: savedInvoice._id,
+                invoiceNumber: invoiceData.invoiceNo || invoiceData.invoiceNumber || '',
+                customerId: selectedCustomer._id,
+                customerName: selectedCustomer.name,
+                regNo: vehicle.regNo || '',
+                consumedBy: (JSON.parse(localStorage.getItem('vpSession') || '{}'))?.name || 'Staff',
+                parts: selectedParts.map(p => ({
+                  partId: p._id,
+                  partNumber: p.partNo || p.partNumber,
+                  partName: p.description || p.partName,
+                  quantity: Number(p.quantity || 1),
+                  unitPrice: Number(p.unitPrice || 0),
+                })),
+              })
+            });
+            if (consumeRes.ok) {
+              const r = await consumeRes.json();
+              console.log(`✅ Stock deducted: ${r.deducted?.length || 0} parts`);
+              if (r.alerts && r.alerts.length > 0) {
+                alert(`⚠️ Low Stock Alert:\n\n${r.alerts.map(a => `${a.partName}: ${a.currentStock} left (min ${a.minStock})`).join('\n')}`);
+              }
+            }
+          } catch (e) {
+            console.warn('⚠️ Stock deduction failed:', e.message);
+          }
+        }
       }
     } catch (error) {
       console.warn('⚠️ Database not available, using localStorage only');

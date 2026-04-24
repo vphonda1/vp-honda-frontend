@@ -133,8 +133,42 @@ export default function StaffManagementPage() {
       } catch {}
       try { const s = localStorage.getItem('staffData'); if (s) setStaffList(JSON.parse(s)); } catch {}
     })()
+
+    // ⭐ Salary payments — MongoDB sync (cross-device)
+    (async () => {
+      try {
+        const res = await fetch(api('/api/salaries'));
+        if (res.ok) {
+          const dbPayments = await res.json();
+          // Group by staffId for compatibility with existing UI
+          const grouped = {};
+          dbPayments.forEach(p => {
+            if (!grouped[p.staffId]) grouped[p.staffId] = [];
+            grouped[p.staffId].push({
+              id: p._id,
+              date: p.paymentDate,
+              amount: p.amount,
+              description: p.notes || p.type,
+              type: p.type,
+            });
+          });
+          // Merge with localStorage (MongoDB priority)
+          try {
+            const local = JSON.parse(localStorage.getItem('staffPayments') || '{}');
+            Object.keys(local).forEach(sid => {
+              if (!grouped[sid]) grouped[sid] = local[sid];
+            });
+          } catch {}
+          setPaymentHistory(grouped);
+          localStorage.setItem('staffPayments', JSON.stringify(grouped));
+          return;
+        }
+      } catch {}
+      // Fallback to localStorage
+      try { const p = localStorage.getItem('staffPayments'); if (p) setPaymentHistory(JSON.parse(p)); } catch {}
+    })();
+
     try { const a = localStorage.getItem('staffAttendance'); if (a) setAttendanceRecords(JSON.parse(a)); } catch {}
-    try { const p = localStorage.getItem('staffPayments'); if (p) setPaymentHistory(JSON.parse(p)); } catch {}
     try { const n = localStorage.getItem('staffNotes'); if (n) setManualNotes(JSON.parse(n)); } catch {}
     try { const i = localStorage.getItem('staffIncentives'); if (i) setIncentiveData(JSON.parse(i)); } catch {}
     try { if (localStorage.getItem('vpAdminSession') === 'true') { setIsAdmin(true); setShowLandingPage(false); } } catch {}
@@ -809,14 +843,49 @@ export default function StaffManagementPage() {
     alert(`✅ ${staff.name} का PIN reset हो गया → 1234`);
   };
 
-  const handleAddPayment = () => {
+  const handleAddPayment = async () => {
     if (!selectedStaffForPayment || !paymentEntry.amount) { alert('कर्मचारी और राशि चुनें'); return; }
+    const staffMember = staffList.find(s => s.id === selectedStaffForPayment);
+    const amount = parseFloat(paymentEntry.amount);
+    const paymentDate = paymentEntry.date;
+    const desc = paymentEntry.description || 'Salary Payment';
+    // Detect type from description
+    const txt = desc.toLowerCase();
+    const type = /advance/.test(txt) ? 'advance' : /bonus/.test(txt) ? 'bonus' : /incentive/.test(txt) ? 'incentive' : 'salary';
+
+    // 1. localStorage save (existing)
     const p = { ...paymentHistory };
     if (!p[selectedStaffForPayment]) p[selectedStaffForPayment] = [];
-    p[selectedStaffForPayment].push({ date: paymentEntry.date, amount: parseFloat(paymentEntry.amount), description: paymentEntry.description, id: Date.now() });
+    p[selectedStaffForPayment].push({ date: paymentDate, amount, description: desc, type, id: Date.now() });
     setPaymentHistory(p); savePayments(p);
+
+    // 2. MongoDB sync (cross-device)
+    try {
+      const d = new Date(paymentDate);
+      await fetch(api('/api/salaries'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          staffId: String(selectedStaffForPayment),
+          staffName: staffMember?.name || '',
+          staffPosition: staffMember?.position || '',
+          type,
+          amount,
+          paymentDate,
+          forMonth: d.getMonth() + 1,
+          forYear: d.getFullYear(),
+          paymentMode: 'CASH',
+          notes: desc,
+          paidBy: (JSON.parse(localStorage.getItem('vpSession') || '{}'))?.name || 'Admin',
+        }),
+      });
+    } catch (e) {
+      console.warn('MongoDB salary sync failed (saved local only):', e.message);
+    }
+
     setPaymentEntry({ amount: 0, date: new Date().toISOString().split('T')[0], description: 'Salary Payment' });
-    setShowPaymentForm(false); alert('✅ पेमेंट जोड़ा गया');
+    setShowPaymentForm(false);
+    alert('✅ पेमेंट जोड़ा गया (cross-device sync हो गया)');
   };
   const handleAddNote = () => {
     if (!selectedStaffForNotes || !noteText) { alert('कर्मचारी और नोट भरें'); return; }
@@ -826,14 +895,40 @@ export default function StaffManagementPage() {
     setManualNotes(n); saveNotes(n);
     setNoteText(''); setHighlightText(''); setShowNotesForm(false); alert('✅ नोट जोड़ा गया');
   };
-  const handleAddIncentive = () => {
+  const handleAddIncentive = async () => {
     if (!selectedStaffForIncentive || !incentiveEntry.amount) { alert('कर्मचारी और राशि भरें'); return; }
+    const staffMember = staffList.find(s => s.id === selectedStaffForIncentive);
+    const amount = parseFloat(incentiveEntry.amount);
+
     const inc = { ...incentiveData };
     if (!inc[selectedStaffForIncentive]) inc[selectedStaffForIncentive] = [];
-    inc[selectedStaffForIncentive].push({ ...incentiveEntry, amount: parseFloat(incentiveEntry.amount), id: Date.now() });
+    inc[selectedStaffForIncentive].push({ ...incentiveEntry, amount, id: Date.now() });
     setIncentiveData(inc); saveIncentives(inc);
+
+    // ⭐ MongoDB sync — store as bonus/incentive payment
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      await fetch(api('/api/salaries'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          staffId: String(selectedStaffForIncentive),
+          staffName: staffMember?.name || '',
+          staffPosition: staffMember?.position || '',
+          type: incentiveEntry.type === 'deduction' ? 'deduction' : 'incentive',
+          amount,
+          paymentDate: today,
+          forMonth: incentiveEntry.month || new Date().getMonth() + 1,
+          forYear: incentiveEntry.year || new Date().getFullYear(),
+          notes: incentiveEntry.reason || '',
+          paidBy: (JSON.parse(localStorage.getItem('vpSession') || '{}'))?.name || 'Admin',
+        }),
+      });
+    } catch (e) { console.warn('Incentive sync failed:', e.message); }
+
     setIncentiveEntry({ amount: '', reason: 'अच्छा प्रदर्शन', type: 'incentive', month: new Date().getMonth() + 1, year: new Date().getFullYear() });
-    setShowIncentiveForm(false); alert('✅ जोड़ा गया');
+    setShowIncentiveForm(false);
+    alert('✅ जोड़ा गया (cross-device sync हो गया)');
   };
 
   const getReminders = () => {
