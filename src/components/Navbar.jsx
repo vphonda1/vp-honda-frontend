@@ -17,10 +17,10 @@ export default function Navbar({ user, onLogout }) {
     { label: 'Reminders',            path: '/reminders',              roles: ['admin','staff'], icon: '🔔' },
     { label: 'Reports',              path: '/reports',                roles: ['admin'],         icon: '📊' },
     { label: 'Management',           path: '/invoice-management',     roles: ['admin'],         icon: '📄' },
-    { label: 'Data Management',      path: '/data-management',        roles: ['admin'],         icon: '📊' },
     { label: 'Quotation',            path: '/quotation',              roles: ['admin','staff'], icon: '📋' },
     { label: 'Admin',                path: '/admin',                  roles: ['admin'],         icon: '⚙️' },
     { label: 'Staff Management',     path: '/staff-management',       roles: ['admin','staff'], icon: '👥' },
+    { label: 'Salary & Rent',     path: '/salary-management',       roles: ['admin''], icon: '💰' },
   ];
 
   const visibleMenuItems = menuItems.filter(item => item.roles.includes(user?.role));

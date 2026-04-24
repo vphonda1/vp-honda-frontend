@@ -92,7 +92,7 @@ export default function PartsManagement({ user }) {
     }
   }, [formData.hsnCode, formData.description]);
 
-  // ── ENHANCED: Load parts + consumption history from MongoDB ────────────────
+  // ── ENHANCED: Load parts + combine localStorage invoices + MongoDB history ─
   const loadParts = async () => {
     try {
       const response = await fetch(api('/api/parts'));
@@ -107,38 +107,70 @@ export default function PartsManagement({ user }) {
       setParts(lsParts);
     }
 
-    // ⭐ Load consumption history from MongoDB (new endpoint)
+    // ⭐ STEP 1: Scan ALL invoices (localStorage + MongoDB) for parts usage
+    let allInvoices = [...getLS('invoices', []), ...getLS('generatedInvoices', [])];
+    try {
+      const invRes = await fetch(api('/api/invoices'));
+      if (invRes.ok) {
+        const dbInv = await invRes.json();
+        const seen = new Set(allInvoices.map(i => String(i.invoiceNumber || i._id)));
+        dbInv.forEach(inv => {
+          const k = String(inv.invoiceNumber || inv._id);
+          if (!seen.has(k)) { allInvoices.push(inv); seen.add(k); }
+        });
+      }
+    } catch {}
+
+    const usage = [];
+    allInvoices.forEach(inv => {
+      (inv.items || inv.parts || []).forEach(item => {
+        if (!item.partNo && !item.description) return;
+        usage.push({
+          partNo:      item.partNo || item.partNumber || '',
+          description: item.description || item.partName || item.partNo || '',
+          mrp:         item.mrp || 0,
+          unitPrice:   item.unitPrice || 0,
+          hsn:         item.hsn || item.hsnCode || '',
+          quantity:    item.quantity || item.qty || 1,
+          total:       item.total || item.taxableAmount || 0,
+          vehicle:     inv.vehicle || inv.vehicleDetails?.name || '—',
+          regNo:       inv.regNo || inv.vehicleDetails?.regNo || '—',
+          customer:    inv.customerName || '—',
+          invoiceNo:   inv.invoiceNumber || inv.invoiceNo || '',
+          invoiceDate: inv.invoiceDate || '',
+        });
+      });
+    });
+
+    // ⭐ STEP 2: Also add MongoDB consumption history (from new JobCards via /consume route)
     try {
       const histRes = await fetch(api('/api/parts/history/all'));
       if (histRes.ok) {
         const dbHistory = await histRes.json();
-        // Convert to invoiceUsage format expected by stats UI
-        const usage = dbHistory.map(c => ({
-          partNo: c.partNumber || '',               // for grouping
-          partNumber: c.partNumber || '',
-          partName: c.partName || '',
-          description: c.partName || '',            // stats UI uses this
-          hsn: '',
-          quantity: c.quantity || 1,
-          total: c.totalValue || 0,                 // stats UI uses this
-          totalValue: c.totalValue || 0,
-          invoiceNo: c.invoiceNumber || '',         // stats UI uses this
-          invoiceNumber: c.invoiceNumber || '',
-          invoiceDate: c.consumedAt || c.createdAt || '',
-          date: c.consumedAt || c.createdAt || '',
-          customer: c.customerName || '—',
-          customerName: c.customerName || '',
-          regNo: c.regNo || '—',
-          vehicle: c.regNo || '—',                  // stats UI uses this for grouping
-        }));
-        setInvoiceUsage(usage);
-        setLoading(false);
-        return;
+        dbHistory.filter(c => !c.reverted).forEach(c => {
+          // Avoid duplicates (if we already have it from invoice scan)
+          const exists = usage.find(u => u.invoiceNo === c.invoiceNumber && u.partNo === c.partNumber);
+          if (!exists) {
+            usage.push({
+              partNo:      c.partNumber || '',
+              description: c.partName || c.partNumber || '',
+              mrp:         c.unitPrice || 0,
+              unitPrice:   c.unitPrice || 0,
+              hsn:         '',
+              quantity:    c.quantity || 1,
+              total:       c.totalValue || 0,
+              vehicle:     '—',
+              regNo:       c.regNo || '—',
+              customer:    c.customerName || '—',
+              invoiceNo:   c.invoiceNumber || '',
+              invoiceDate: c.consumedAt || c.createdAt || '',
+            });
+          }
+        });
       }
     } catch {}
 
-    // Fallback: scan localStorage invoices
-    loadInvoiceUsage();
+    setInvoiceUsage(usage);
     setLoading(false);
   };
 
