@@ -4,7 +4,7 @@ export const SEED_PAYMENTS = [{"person":"Azzam","date":"2024-01-09","amount":610
 // Based on user's instructions:
 // - 17/9/2025: Raju → Sunil, Durgesh → Priya
 // - 17/11/2025: Azzam → Farhan
-// - 20/10/2025: Gajender → Gajender
+// - 20/10/2025: Gajender → Gajender(RENT CHANGE)
 // - 8/3/2026:  Premmla → Vishnu (house rental)
 // - 19/4/2026: Rent → "New House" (higher rent)
 export const SEED_ENTITIES = [
@@ -37,7 +37,7 @@ export const SEED_ENTITIES = [
   { name: 'Home',     type: 'rent', monthlyAmount: null, startDate: '2024-09-20', endDate: null, active: true, replacedBy: null, replaces: null,
     notes: 'Main residence' },
   { name: 'Gajender', type: 'rent', monthlyAmount: 9000, startDate: '2024-09-20', endDate: 2025-10-20, active: false, replacedBy: 'Gajender', replaces: null,
-    notes: 'rent change by 20 Oct 2025' },
+    notes: 'NEW rent change by 20 Oct 2025' },
   { name: 'Gajender',    type: 'rent', monthlyAmount: 15000,  startDate: '2025-10-20', endDate: null, active: true, replacedBy: null, replaces: 'Gajender',
     notes: 'Rent change ' },
 ];

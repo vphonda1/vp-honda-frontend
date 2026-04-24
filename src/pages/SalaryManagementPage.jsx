@@ -2,8 +2,8 @@
 // SalaryManagementPage.jsx — VP Honda Salary & Rent Ledger
 // ════════════════════════════════════════════════════════════════════════════
 // All staff + rent expenses in one place:
-// • 8 staff entities (5 original + 3 replacements)
-// • 5 rent entities (3 original + 2 replacements)
+// • 8 staff entities (4 original + 3 replacements)
+// • 5 rent entities (4 original + 3 replacements)
 // • Seeded with 277 payment records from Excel (Sallery.xlsx)
 // • Per-entity: total paid, months active, expected, pending balance
 // • Staff replacements visualized with chain
