@@ -86,15 +86,18 @@ export default function DiagnosticPage() {
     empty.forEach(e => delete svc[e.id]);
     localStorage.setItem('customerServiceData', JSON.stringify(svc));
 
-    // 2. ALSO delete from MongoDB (prevents data coming back on sync)
+    // 2. ⭐ ADD to blacklist — prevents rebuild from invoices
+    const blacklist = new Set(getLS('deletedServiceKeys', []));
+    empty.forEach(e => blacklist.add(e.id));
+    localStorage.setItem('deletedServiceKeys', JSON.stringify([...blacklist]));
+
+    // 3. ALSO delete from MongoDB (cross-device sync)
     for (const e of empty) {
-      try {
-        await fetch(api(`/api/service-data/${e.id}`), { method: 'DELETE' }).catch(()=>{});
-      } catch {}
+      try { await fetch(api(`/api/service-data/${e.id}`), { method: 'DELETE' }).catch(()=>{}); } catch {}
     }
 
     window.dispatchEvent(new Event('storage'));
-    setMsg(`✅ ${empty.length} empty entries deleted from localStorage & MongoDB!`);
+    setMsg(`✅ ${empty.length} empty entries deleted permanently! (localStorage + MongoDB + blacklist)`);
     setTimeout(()=>setMsg(''),5000);
     run();
   };
@@ -106,14 +109,16 @@ export default function DiagnosticPage() {
     if(!window.confirm(`⚠️ ${unmatched.length} unmatched entries DELETE करें?\n\nयह action undo नहीं होगा!`)) return;
 
     const svc = getLS('customerServiceData', {});
+    const blacklist = new Set(getLS('deletedServiceKeys', []));
     for (const e of unmatched) {
       delete svc[e.id];
-      // Delete from MongoDB too
+      blacklist.add(e.id); // ⭐ blacklist to prevent rebuild
       try { await fetch(api(`/api/service-data/${e.id}`), { method: 'DELETE' }).catch(()=>{}); } catch {}
     }
     localStorage.setItem('customerServiceData', JSON.stringify(svc));
+    localStorage.setItem('deletedServiceKeys', JSON.stringify([...blacklist]));
     window.dispatchEvent(new Event('storage'));
-    setMsg(`✅ ${unmatched.length} entries deleted from localStorage & MongoDB!`);
+    setMsg(`✅ ${unmatched.length} entries deleted permanently! System Health बढ़ेगा।`);
     setTimeout(()=>setMsg(''),5000);
     run();
   };
@@ -124,8 +129,8 @@ export default function DiagnosticPage() {
     if(pwd !== 'vphonda@123') { alert('❌ Wrong password!'); return; }
     if(!window.confirm('⚠️ पूरा localStorage cache clear होगा!\n\nसिर्फ MongoDB data बचेगा।\n\nContinue?')) return;
 
-    // Clear all cache keys (keep auth/login)
-    const keepKeys = ['userToken','adminAuth','staffPin'];
+    // Clear all cache keys (keep auth/login + blacklist)
+    const keepKeys = ['userToken','adminAuth','staffPin','deletedServiceKeys'];
     const allKeys = Object.keys(localStorage);
     allKeys.forEach(k => { if(!keepKeys.includes(k)) localStorage.removeItem(k); });
 
@@ -134,12 +139,25 @@ export default function DiagnosticPage() {
     setTimeout(()=>window.location.reload(), 1500);
   };
 
+  // ── Reset Blacklist (in case user wants to re-enable deleted entries) ──
+  const resetBlacklist = () => {
+    if(!window.confirm('⚠️ Blacklist reset करें?\nDeleted entries वापस आ सकते हैं invoices से।')) return;
+    localStorage.removeItem('deletedServiceKeys');
+    setMsg('✅ Blacklist reset! अब deleted entries वापस आ सकती हैं।');
+    setTimeout(()=>setMsg(''),3000);
+    run();
+  };
+
   // ── Delete single entry ──
   const deleteOne = async (entryId) => {
-    if(!window.confirm('Delete this entry?')) return;
+    if(!window.confirm('Delete this entry permanently?')) return;
     const svc = getLS('customerServiceData', {});
     delete svc[entryId];
     localStorage.setItem('customerServiceData', JSON.stringify(svc));
+    // Add to blacklist
+    const blacklist = new Set(getLS('deletedServiceKeys', []));
+    blacklist.add(entryId);
+    localStorage.setItem('deletedServiceKeys', JSON.stringify([...blacklist]));
     // Also delete from MongoDB
     try { await fetch(api(`/api/service-data/${entryId}`), { method: 'DELETE' }).catch(()=>{}); } catch {}
     window.dispatchEvent(new Event('storage'));

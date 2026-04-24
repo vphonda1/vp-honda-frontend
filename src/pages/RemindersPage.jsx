@@ -45,9 +45,12 @@ const getWAMessage = (r) => {
 
 const buildServiceData = (invoices) => {
   const sd = getLS('customerServiceData',{});
+  // ── BLACKLIST: skip entries that were explicitly deleted via Diagnostic ──
+  const deletedKeys = new Set(getLS('deletedServiceKeys', []));
   invoices.forEach(inv => {
     const regNo = (inv.regNo||'').trim().toUpperCase();
     if (!regNo||regNo==='—'||regNo==='-') return;
+    if (deletedKeys.has(regNo)) return; // ← skip if user deleted via Diagnostic
     if (!sd[regNo]) sd[regNo]={};
     const e=sd[regNo];
     if(inv.customerName) e.customerName=inv.customerName;
@@ -394,17 +397,15 @@ export default function RemindersPage() {
         </div>
 
         {/* ── QUICK NAVIGATION BUTTONS ── */}
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:'8px',marginBottom:'14px'}}>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:'10px',marginBottom:'14px'}}>
           {[
             {label:'📊 Data Manager',  path:'/customer-data-manager', grad:'linear-gradient(135deg,#7c3aed,#6d28d9)', shadow:'rgba(124,58,237,0.3)'},
             {label:'🔍 Diagnostic',    path:'/diagnostic',             grad:'linear-gradient(135deg,#0284c7,#0369a1)', shadow:'rgba(2,132,199,0.3)'},
             {label:'📁 Invoices',      path:'/invoice-management',     grad:'linear-gradient(135deg,#ea580c,#c2410c)', shadow:'rgba(234,88,12,0.3)'},
             {label:'👥 Service List',  path:'/service-customer-list',  grad:'linear-gradient(135deg,#059669,#047857)', shadow:'rgba(5,150,105,0.3)'},
-            {label:'👤 Customers',     path:'/customers',              grad:'linear-gradient(135deg,#0891b2,#0e7490)', shadow:'rgba(8,145,178,0.3)'},
-            {label:'🏍️ Veh Dashboard', path:'/veh-dashboard',         grad:'linear-gradient(135deg,#dc2626,#b91c1c)', shadow:'rgba(220,38,38,0.3)'},
           ].map((btn,i)=>(
             <button key={i} onClick={()=>navigate(btn.path)} className="hov"
-              style={{background:btn.grad,border:'none',borderRadius:'12px',padding:'10px 12px',color:'#fff',fontSize:'12px',fontWeight:'700',cursor:'pointer',boxShadow:`0 3px 14px ${btn.shadow}`,textAlign:'center',letterSpacing:'0.2px'}}>
+              style={{background:btn.grad,border:'none',borderRadius:'12px',padding:'11px 14px',color:'#fff',fontSize:'12px',fontWeight:'700',cursor:'pointer',boxShadow:`0 3px 14px ${btn.shadow}`,textAlign:'center',letterSpacing:'0.2px'}}>
               {btn.label}
             </button>
           ))}
