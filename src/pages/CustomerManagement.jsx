@@ -342,9 +342,48 @@ export default function CustomerManagement({ user }) {
   };
 
   const handleEditCustomer = (customer) => {
-    setFormData(customer);
-    setEditingId('view');
+    // ⭐ Properly extract all fields - fall back to alternate field names
+    setFormData({
+      _id: customer._id,
+      name: customer.name || customer.customerName || '',
+      fatherName: customer.fatherName || '',
+      phone: customer.phone || customer.mobileNo || '',
+      aadhar: customer.aadhar || customer.aadharNo || '',
+      pan: customer.pan || customer.panNo || '',
+      address: customer.address || '',
+      district: customer.district || customer.dist || '',
+      pinCode: customer.pinCode || '',
+      state: customer.state || 'M.P.',
+      financerName: customer.financerName || customer.financeCompany || '',
+      linkedVehicle: {
+        name: customer.linkedVehicle?.name || '',
+        regNo: customer.linkedVehicle?.regNo || '',
+        frameNo: customer.linkedVehicle?.frameNo || customer.linkedVehicle?.chassisNo || '',
+        engineNo: customer.linkedVehicle?.engineNo || '',
+        color: customer.linkedVehicle?.color || '',
+        model: customer.linkedVehicle?.model || customer.linkedVehicle?.name || '',
+        keyNo: customer.linkedVehicle?.keyNo || '',
+        purchaseDate: customer.linkedVehicle?.purchaseDate || '',
+        warranty: customer.linkedVehicle?.warranty || 'YES',
+      },
+    });
+    setEditingId(customer._id);          // ⭐ NOT 'view' — let user edit
     setShowForm(true);
+  };
+
+  // Open as read-only view
+  const handleViewCustomer = (customer) => {
+    handleEditCustomer(customer);        // re-use to populate
+    setEditingId('view');                 // mark as read-only
+  };
+
+  // ⭐ Open Service Profile in same tab
+  const handleServiceProfile = (customer) => {
+    if (!customer || !customer._id) {
+      alert('Customer ID नहीं मिला');
+      return;
+    }
+    navigate(`/customer-profile/${customer._id}`);
   };
 
   const handleDeleteCustomer = async (customerId) => {
@@ -717,8 +756,8 @@ export default function CustomerManagement({ user }) {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2 mb-6 border-b-2 border-gray-200 pb-3 flex-wrap">
+      {/* Compact Tabs */}
+      <div className="flex gap-1 mb-3 border-b border-gray-200 pb-2 flex-wrap">
         {[
           { id:'dashboard', label:'📊 Dashboard' },
           { id:'customers', label:`👥 All (${customers.length})` },
@@ -727,7 +766,7 @@ export default function CustomerManagement({ user }) {
           { id:'oldBikes',  label:`🚲 Old Bikes (${oldBikes.length})` },
         ].map(t => (
           <button key={t.id} onClick={() => { setActiveTab(t.id); setCurrentPage(1); }}
-            className={`px-5 py-2 rounded-t-lg text-sm font-bold border-2 transition ${
+            className={`px-3 py-1.5 rounded text-xs font-bold border transition ${
               activeTab === t.id ? 'bg-purple-600 border-purple-600 text-white' : 'bg-gray-100 border-gray-300 text-gray-600 hover:bg-gray-200'
             }`}>{t.label}</button>
         ))}
@@ -807,30 +846,6 @@ export default function CustomerManagement({ user }) {
             <Card className={`border-2 ${stats.totalRevenue > 0 ? 'bg-green-50 border-green-300' : 'bg-red-50 border-red-300'}`}><CardContent className="p-4 text-center"><p className="text-gray-600 text-xs font-bold">📈 Profit / Loss</p><p className={`font-black text-2xl ${stats.totalRevenue > 0 ? 'text-green-700' : 'text-red-700'}`}>₹{stats.totalRevenue.toLocaleString('en-IN')}</p></CardContent></Card>
           </div>
 
-          {/* ⭐ NEW: Quick Cross-Navigation */}
-          <Card className="bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-purple-200">
-            <CardHeader className="py-3"><CardTitle className="text-base">⚡ Quick Navigation — Customer related actions</CardTitle></CardHeader>
-            <CardContent className="pt-0">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                {[
-                  { l:'🔧 Service Data',   p:'/service-customers',  c:'bg-emerald-600 hover:bg-emerald-700' },
-                  { l:'🎫 New Job Card',   p:'/job-cards',          c:'bg-cyan-600 hover:bg-cyan-700' },
-                  { l:'📄 Invoices',       p:'/invoice-management', c:'bg-orange-600 hover:bg-orange-700' },
-                  { l:'🔔 Reminders',      p:'/reminders',          c:'bg-red-600 hover:bg-red-700' },
-                  { l:'🏍️ Vehicle Sales',  p:'/veh-dashboard',      c:'bg-blue-600 hover:bg-blue-700' },
-                  { l:'📦 Parts',          p:'/parts',              c:'bg-violet-600 hover:bg-violet-700' },
-                  { l:'📊 Reports',        p:'/reports',            c:'bg-green-600 hover:bg-green-700' },
-                  { l:'💹 VP Dashboard',   p:'/vph-dashboard',      c:'bg-pink-600 hover:bg-pink-700' },
-                ].map((x, i) => (
-                  <Button key={i} onClick={() => navigate(x.p)}
-                    className={`${x.c} text-white text-xs font-bold py-2 transition hover:scale-105`}>
-                    {x.l}
-                  </Button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Charts */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card><CardHeader className="py-3 bg-blue-50"><CardTitle className="text-base">🏍️ Vehicle Distribution</CardTitle></CardHeader><CardContent>{stats.vehicleData.length?<ResponsiveContainer width="100%" height={250}><PieChart><Pie data={stats.vehicleData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label>{stats.vehicleData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Pie><Tooltip/></PieChart></ResponsiveContainer>:<p className="text-gray-400 text-center py-10">No data</p>}</CardContent></Card>
@@ -865,23 +880,18 @@ export default function CustomerManagement({ user }) {
       {/* Customers / Finance / Cash Tab */}
       {(activeTab === 'customers' || activeTab === 'finance' || activeTab === 'cash') && (
         <>
-          {/* ⭐ NEW: Read-only mode notice — Add/Import moved to Vehicle Dashboard */}
-          <div className="mb-5 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-xl p-4 flex items-center gap-3 flex-wrap">
-            <div className="bg-blue-500 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 text-white text-lg">ℹ️</div>
-            <div className="flex-1 min-w-0">
-              <p className="text-blue-900 font-bold text-sm">📋 यह page सिर्फ Customers देखने के लिए है</p>
-              <p className="text-blue-700 text-xs mt-0.5">
-                नया customer जोड़ने या Excel से import करने के लिए <b>🏍️ Vehicle Dashboard</b> पर जाएं — वहाँ से जुड़ा customer यहाँ automatic दिखेगा
-              </p>
-            </div>
-            <Button onClick={() => navigate('/veh-dashboard')} className="bg-blue-600 hover:bg-blue-700 text-white font-bold">
-              🏍️ Vehicle Dashboard पर जाएं →
+          {/* Compact info bar */}
+          <div className="mb-3 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 flex items-center gap-2 text-xs flex-wrap">
+            <span className="text-blue-700">📋 यह page सिर्फ देखने के लिए है</span>
+            <span className="text-blue-500">·</span>
+            <span className="text-blue-600">नया customer जोड़ने या Excel import के लिए Vehicle Dashboard पर जाएं</span>
+            <Button onClick={() => navigate('/veh-dashboard')} className="bg-blue-600 hover:bg-blue-700 text-white text-xs h-7 px-2 ml-auto">
+              🏍️ Vehicle Dashboard →
             </Button>
           </div>
 
-          <div className="flex gap-3 mb-6 flex-wrap">
-            {/* Add Customer & Import buttons removed — moved to Vehicle Dashboard */}
-            {isAdmin && <Button onClick={handleClearAll} disabled={clearing || customers.length===0} className="bg-red-700 hover:bg-red-800 text-white font-bold"><Trash2 className="mr-2" size={16} />{clearing ? '⏳ Clearing...' : `🗑 Clear All (${customers.length})`}</Button>}
+          <div className="flex gap-2 mb-3 flex-wrap">
+            {isAdmin && <Button onClick={handleClearAll} disabled={clearing || customers.length===0} className="bg-red-700 hover:bg-red-800 text-white text-xs h-8 px-3"><Trash2 className="mr-1" size={13} />{clearing ? '⏳ Clearing...' : `🗑 Clear All (${customers.length})`}</Button>}
           </div>
           {importResult && (
             <div className={`mb-4 p-4 rounded-lg border-2 ${importResult.error?'bg-red-50 border-red-400':'bg-green-50 border-green-400'}`}>
@@ -941,7 +951,7 @@ export default function CustomerManagement({ user }) {
                 <td className="px-3 py-2">
                   <div className="flex gap-1 flex-wrap">
                     {isAdmin&&<button onClick={()=>handleTaxInvoice(cust)} title="Tax Invoice" className="bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded text-xs"><FileText size={14}/></button>}
-                    <button onClick={() => navigate(`/customer-profile/${cust._id}`)} title="Service Profile" className="bg-purple-600 hover:bg-purple-700 text-white px-2 py-1 rounded text-xs">🔧</button>
+                    <button onClick={() => handleServiceProfile(cust)} title="Service Profile" className="bg-purple-600 hover:bg-purple-700 text-white px-2 py-1 rounded text-xs">🔧</button>
                     <button onClick={()=>handleEditCustomer(cust)} title="View" className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-xs"><Search size={14}/></button>
                     <button onClick={()=>{setFormData(cust);setEditingId(cust._id);setShowForm(true);}} title="Edit" className="bg-yellow-500 hover:bg-yellow-600 text-white px-2 py-1 rounded text-xs">✏️</button>
                     {isAdmin?<button onClick={()=>handleDeleteCustomer(cust._id)} title="Delete" className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-xs"><Trash2 size={14}/></button>:<button disabled title="Admin only" className="bg-gray-300 text-gray-400 px-2 py-1 rounded text-xs cursor-not-allowed">🔒</button>}

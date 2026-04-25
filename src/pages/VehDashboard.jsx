@@ -13,6 +13,7 @@ import { HONDA_MODELS, HONDA_COLORS, FINANCE_COMPANIES, findModel, getHSN, getMo
 export default function VehDashboard() {
   const navigate = useNavigate();
   const [vehicleData, setVehicleData] = useState([]);
+  const [customers, setCustomers] = useState([]);   // ⭐ for Service Profile lookup
   const [filteredData, setFilteredData] = useState([]);
   const [models, setModels] = useState([]);
   const [variants, setVariants] = useState([]);
@@ -148,6 +149,7 @@ const syncToMongoDB = async (data) => {
         const res = await fetch(api('/api/customers'));
         if (!res.ok) throw new Error('Server error');
         const db = await res.json();
+        setCustomers(db);                                                           // ⭐ keep raw customers for lookup
         const valid = db.filter(c => (c.customerName || c.name || '').trim());
         if (valid.length) {
           const transformed = valid.map((c, i) => ({
@@ -310,19 +312,95 @@ const syncToMongoDB = async (data) => {
     setVehicleData(updated);
   };
 
-  const handleAddNewCustomer = () => {
-    const nc = {...newCustomer, id: Date.now(), date: new Date().toISOString().split('T')[0]};
+  const handleAddNewCustomer = async () => {
+    if (!newCustomer.customerName || !newCustomer.mobileNo) {
+      alert('⚠️ Customer Name और Mobile जरूरी हैं');
+      return;
+    }
+    // ⭐ FIX: use the purchaseDate from form, not today's date
+    const useDate = newCustomer.purchaseDate || new Date().toISOString().split('T')[0];
+    const nc = {
+      ...newCustomer,
+      id: Date.now(),
+      date: useDate,                // ⭐ for vehicle dashboard
+      purchaseDate: useDate,        // ⭐ explicit
+    };
+
+    // Add to local vehicle list
     const updated = [...vehicleData, nc];
     setVehicleData(updated);
+
+    // ⭐ ALSO save to MongoDB customers collection (for cross-page sync)
+    try {
+      const customerPayload = {
+        name: newCustomer.customerName,
+        customerName: newCustomer.customerName,
+        fatherName: newCustomer.fatherName,
+        phone: newCustomer.mobileNo,
+        mobileNo: newCustomer.mobileNo,
+        altMobile: newCustomer.altMobile || '',
+        aadhar: newCustomer.aadhar || '',
+        pan: newCustomer.pan || '',
+        dob: newCustomer.dob || '',
+        address: newCustomer.address,
+        district: newCustomer.dist,
+        dist: newCustomer.dist,
+        state: newCustomer.state || 'MADHYA PRADESH',
+        pinCode: newCustomer.pinCode || '',
+        financerName: newCustomer.financerName || 'CASH',
+        vehiclePrice: parseFloat(newCustomer.exShowroom || newCustomer.price || 0),
+        linkedVehicle: {
+          name: newCustomer.vehicleModel || '',
+          model: newCustomer.vehicleModel || '',
+          variant: newCustomer.variant || '',
+          color: newCustomer.color || '',
+          frameNo: newCustomer.chassisNo || '',
+          chassisNo: newCustomer.chassisNo || '',
+          engineNo: newCustomer.engineNo || '',
+          keyNo: newCustomer.keyNo || '',
+          batteryNo: newCustomer.batteryNo || '',
+          hsnNumber: newCustomer.hsnNumber || '',
+          billBookNo: newCustomer.billBookNo || '',
+          year: newCustomer.year || '',
+          purchaseDate: useDate,        // ⭐ proper date
+          price: parseFloat(newCustomer.exShowroom || newCustomer.price || 0),
+          warranty: 'YES',
+          regNo: '',
+        },
+      };
+      await fetch(api('/api/customers'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(customerPayload),
+      });
+    } catch (e) {
+      console.warn('Customer MongoDB sync failed:', e.message);
+    }
+
     setShowAddCustomer(false);
-    setNewCustomer({customerName:'',fatherName:'',mobileNo:'',address:'',dist:'',pinCode:'',dob:'',vehicleModel:'',variant:'',color:'',engineNo:'',chassisNo:'',keyNo:'',batteryNo:'',financerName:'',price:0});
-    alert('✅ Customer added!');
+    setNewCustomer({
+      customerName:'', fatherName:'', mobileNo:'', altMobile:'',
+      address:'', dist:'', state:'MADHYA PRADESH', pinCode:'462001',
+      dob:'', aadhar:'', pan:'',
+      vehicleModel:'', variant:'', color:'',
+      chassisNo:'', engineNo:'', keyNo:'', batteryNo:'',
+      hsnNumber:'', billBookNo:'', cc:'', year: new Date().getFullYear(),
+      price:0, exShowroom:0,
+      financerName:'CASH',
+      purchaseDate: new Date().toISOString().split('T')[0],
+      invoiceNo: '',
+    });
+    alert('✅ Customer added! Customer Management में भी दिखेगा।');
   };
 
   const [invoiceData, setInvoiceData] = useState({
     customerName: '', fatherName: '', mobileNo: '', address: '', dist: '', pinCode: '',
     vehicleModel: '', color: '', variant: '', engineNo: '', chassisNo: '',
     keyNo: '', batteryNo: '', financerName: '', dob: '', price: 0,
+    relation: 'S/O',                                            // ⭐ S/O, W/O, D/O, C/O
+    cc: '',                                                     // ⭐ vehicle CC
+    hsnNumber: '87112029',                                      // ⭐ HSN code
+    year: new Date().getFullYear(),                             // ⭐ year
     invoiceDate: new Date().toISOString().split('T')[0],
     gstin: '23BCYPD9538B1ZG', pan: 'BCYPD9538B'
   });
@@ -469,21 +547,45 @@ const syncToMongoDB = async (data) => {
   const handleGenerateInvoice = (vehicle) => {
     setSelectedVehicle(vehicle);
     const modelKey = (vehicle.vehicleModel || '').trim().toUpperCase();
+
+    // ⭐ FIX: Always use Ex-Showroom from Honda rate list (not the saved on-road price)
     let autoPrice = vehicle.price;
-    for (const [key, val] of Object.entries(ratePrices)) {
-      if (modelKey && key.includes(modelKey.split(' ')[0]) && key.includes(modelKey.split(' ').pop())) {
-        autoPrice = val.exShowroom || val;
-        break;
+    const matchedModel = findModel(vehicle.vehicleModel || '');
+    if (matchedModel) {
+      autoPrice = matchedModel.exShowroom;
+    } else {
+      for (const [key, val] of Object.entries(ratePrices)) {
+        if (modelKey && key.includes(modelKey.split(' ')[0]) && key.includes(modelKey.split(' ').pop())) {
+          autoPrice = val.exShowroom || val;
+          break;
+        }
       }
+      if (ratePrices[modelKey]) autoPrice = ratePrices[modelKey].exShowroom || ratePrices[modelKey];
     }
-    if (ratePrices[modelKey]) autoPrice = ratePrices[modelKey].exShowroom || ratePrices[modelKey];
+
+    // ⭐ Smart relation guess (S/O, W/O, D/O) based on customer name
+    // Default = S/O (Son of). Female names usually get W/O or D/O.
+    const guessedRelation = vehicle.relation || 'S/O';
+
+    // ⭐ Use saved purchase date if available, else today
+    const purchaseDate = vehicle.date || vehicle.purchaseDate || new Date().toISOString().split('T')[0];
+
+    // ⭐ Get HSN from model (Scooter vs Bike)
+    const modelInfo = findModel(vehicle.vehicleModel || '');
+    const autoHSN = modelInfo ? getHSN(vehicle.vehicleModel) : (vehicle.hsnNumber || '87112029');
+
     setInvoiceData({
       customerName: vehicle.customerName, fatherName: vehicle.fatherName, mobileNo: vehicle.mobileNo,
       address: vehicle.address, dist: vehicle.dist, pinCode: vehicle.pinCode,
       vehicleModel: vehicle.vehicleModel, color: vehicle.color, variant: vehicle.variant,
       engineNo: vehicle.engineNo, chassisNo: vehicle.chassisNo, keyNo: vehicle.keyNo,
       batteryNo: vehicle.batteryNo || '', price: autoPrice, dob: vehicle.dob || '',
-      financerName: vehicle.financerName || '', invoiceDate: new Date().toISOString().split('T')[0],
+      relation: guessedRelation,                                  // ⭐ S/O, W/O, D/O, C/O
+      cc: vehicle.cc || vehicle.variant || '',                    // ⭐ CC value
+      hsnNumber: autoHSN,                                         // ⭐ HSN
+      year: vehicle.year || new Date(purchaseDate).getFullYear(), // ⭐ year
+      financerName: vehicle.financerName || '',
+      invoiceDate: purchaseDate,                                   // ⭐ FIX: use purchase date
       gstin: '23BCYPD9538B1ZG', pan: 'BCYPD9538B'
     });
     setShowInvoiceModal(true);
@@ -550,7 +652,7 @@ const syncToMongoDB = async (data) => {
             <td style="width: 58%; vertical-align: top; padding: 0; border: none;">
               <div style="font-weight: bold; text-decoration: underline; margin-bottom: 4px;">CUSTOMER NAME &amp; ADDRESS</div>
               <table style="width: 100%; border: none; font-size: 12px;" cellpadding="2" cellspacing="0">
-                <tr><td style="border:none; width:120px; font-weight:bold;">Sold To</td><td style="border:none; width:10px;">:</td><td style="border:none;">${invoiceData.customerName} &nbsp;&nbsp; <strong>S/O</strong> ${invoiceData.fatherName}</td></tr>
+                <tr><td style="border:none; width:120px; font-weight:bold;">Sold To</td><td style="border:none; width:10px;">:</td><td style="border:none;">${invoiceData.customerName} &nbsp;&nbsp; <strong>${invoiceData.relation || 'S/O'}</strong> ${invoiceData.fatherName}</td></tr>
                 <tr><td style="border:none; font-weight:bold;">Mobile</td><td style="border:none;">:</td><td style="border:none;">${invoiceData.mobileNo}</td></tr>
                 <tr><td style="border:none; font-weight:bold;">Address</td><td style="border:none;">:</td><td style="border:none;">${invoiceData.address}</td></tr>
                 <tr><td style="border:none; font-weight:bold;">Dist</td><td style="border:none;">:</td><td style="border:none;">${invoiceData.dist} &nbsp;&nbsp;&nbsp; ${invoiceData.pinCode || ''}</td></tr>
@@ -569,13 +671,14 @@ const syncToMongoDB = async (data) => {
         </table>
         <table style="width: 100%; margin-bottom: 5px; font-size: 11px; border-collapse: collapse;">
           <tr style="font-weight: bold;"><td style="padding: 5px; border: 1px solid #000; width: 5%; text-align: center;">S No</td><td style="padding: 5px; border: 1px solid #000; width: 16%;">Model</td><td style="padding: 5px; border: 1px solid #000; width: 10%;">Variant</td><td style="padding: 5px; border: 1px solid #000; width: 10%;">Color</td><td style="padding: 5px; border: 1px solid #000; width: 12%;">HSN Number</td><td style="padding: 5px; border: 1px solid #000; width: 17%;">Chassis No</td><td style="padding: 5px; border: 1px solid #000; width: 14%;">Engine No</td><td style="padding: 5px; border: 1px solid #000; width: 16%; text-align: right;">Amount</td></tr>
-          <tr><td style="padding: 5px; border: 1px solid #000; text-align: center;">1</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.vehicleModel}</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.variant}</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.color}</td><td style="padding: 5px; border: 1px solid #000;">87112029</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.chassisNo}</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.engineNo}</td><td style="padding: 5px; border: 1px solid #000; text-align: right;">₹ ${fmt(taxablePrice)}</td></tr>
+          <tr><td style="padding: 5px; border: 1px solid #000; text-align: center;">1</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.vehicleModel}</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.variant}</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.color}</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.hsnNumber || '87112029'}</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.chassisNo}</td><td style="padding: 5px; border: 1px solid #000;">${invoiceData.engineNo}</td><td style="padding: 5px; border: 1px solid #000; text-align: right;">₹ ${fmt(taxablePrice)}</td></tr>
         </table>
         <table style="width: 100%; margin-bottom: 5px; font-size: 12px; border-collapse: collapse;">
           <tr><td style="padding: 4px; border: 1px solid #000; font-weight: bold; width: 70%;">Taxable Price</td><td style="padding: 4px; border: 1px solid #000; text-align: right; width: 30%;">₹ ${fmt(taxablePrice)}</td></tr>
           <tr><td style="padding: 4px; border: 1px solid #000;">SGST @ 9%</td><td style="padding: 4px; border: 1px solid #000; text-align: right;">₹ ${fmt(sgst)}</td></tr>
           <tr><td style="padding: 4px; border: 1px solid #000;">CGST @ 9%</td><td style="padding: 4px; border: 1px solid #000; text-align: right;">₹ ${fmt(cgst)}</td></tr>
-          <tr><td style="padding: 4px; border: 1px solid #000; font-weight: bold;">Invoice Sub Total</td><td style="padding: 4px; border: 1px solid #000; text-align: right;">₹ ${fmt(invoiceSubTotal)}</td></tr>
+          <tr><td style="padding: 4px; border: 1px solid #000; font-weight: bold;">Ex-Showroom Price</td><td style="padding: 4px; border: 1px solid #000; text-align: right;">₹ ${fmt(invoiceSubTotal)}</td></tr>
+          <tr><td style="padding: 4px; border: 1px solid #000;">Invoice Sub Total</td><td style="padding: 4px; border: 1px solid #000; text-align: right;">₹ ${fmt(invoiceSubTotal)}</td></tr>
           <tr><td style="padding: 4px; border: 1px solid #000;">(Round Off)</td><td style="padding: 4px; border: 1px solid #000; text-align: right;">₹ ${fmt(roundOff)}</td></tr>
           <tr><td style="padding: 4px; border: 1px solid #000; font-weight: bold;">Invoice Total</td><td style="padding: 4px; border: 1px solid #000; text-align: right; font-weight: bold;">₹ ${fmt(invoiceTotal)}</td></tr>
         </table>
@@ -585,7 +688,7 @@ const syncToMongoDB = async (data) => {
         </table>
         <table style="width: 100%; margin-bottom: 8px; font-size: 12px; border-collapse: collapse;">
           <tr style="font-weight: bold;"><td style="padding: 4px; border: 1px solid #000; width: 20%;">Battery No. #</td><td style="padding: 4px; border: 1px solid #000; width: 20%;">Book No.#</td><td style="padding: 4px; border: 1px solid #000; width: 20%;">Key No.#</td><td style="padding: 4px; border: 1px solid #000; width: 20%;">CC #</td><td style="padding: 4px; border: 1px solid #000; width: 20%;">Year #</td></tr>
-          <tr><td style="padding: 4px; border: 1px solid #000;">${invoiceData.batteryNo || 'NA'}</td><td style="padding: 4px; border: 1px solid #000;">NA</td><td style="padding: 4px; border: 1px solid #000;">${invoiceData.keyNo || ''}</td><td style="padding: 4px; border: 1px solid #000;">123.94 CC</td><td style="padding: 4px; border: 1px solid #000;">${new Date(invoiceDate).getFullYear()}</td></tr>
+          <tr><td style="padding: 4px; border: 1px solid #000;">${invoiceData.batteryNo || 'NA'}</td><td style="padding: 4px; border: 1px solid #000;">NA</td><td style="padding: 4px; border: 1px solid #000;">${invoiceData.keyNo || ''}</td><td style="padding: 4px; border: 1px solid #000;">${invoiceData.cc || invoiceData.variant || ''}</td><td style="padding: 4px; border: 1px solid #000;">${invoiceData.year || new Date(invoiceDate).getFullYear()}</td></tr>
         </table>
         <div style="font-size: 8px; margin-bottom: 4px; line-height: 1.2;">
           <div style="font-weight: bold;">Terms &amp; conditions-</div>
@@ -682,45 +785,22 @@ const syncToMongoDB = async (data) => {
         </div>
       )}
 
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-2 flex-wrap gap-3">
+      <div className="mb-3">
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
           <div>
-            <h1 className="text-3xl md:text-4xl font-bold text-white">🏍️ Vehicle Sales Dashboard</h1>
-            <p className="text-slate-400 text-xs mt-1 flex items-center gap-2">
-              <Activity size={11} className="text-green-400 animate-pulse"/>
+            <h1 className="text-xl md:text-2xl font-bold text-white">🏍️ Vehicle Sales Dashboard</h1>
+            <p className="text-slate-400 text-xs mt-0.5 flex items-center gap-2">
+              <Activity size={10} className="text-green-400 animate-pulse"/>
               {vehicleData.length} vehicles · {generatedInvoices.length} invoices · {oldBikes.length} old bikes
             </p>
           </div>
           <div className="flex gap-2 flex-wrap">
-            <Button onClick={() => setShowAddCustomer(true)} className="bg-green-600 hover:bg-green-700 text-white text-sm"><Plus size={14} className="mr-1" /> Add Customer</Button>
+            <Button onClick={() => setShowAddCustomer(true)} className="bg-green-600 hover:bg-green-700 text-white text-xs h-8 px-3"><Plus size={12} className="mr-1" /> Add Customer</Button>
             {!isAdmin ? (
-              <Button onClick={handleAdminLogin} className="bg-red-600 hover:bg-red-700 text-white text-sm">🔒 Admin Login</Button>
+              <Button onClick={handleAdminLogin} className="bg-red-600 hover:bg-red-700 text-white text-xs h-8 px-3">🔒 Admin Login</Button>
             ) : (
-              <span className="bg-green-700 text-white px-4 py-2 rounded font-bold text-sm cursor-pointer" onClick={()=>setIsAdmin(false)}>✅ Admin ✕</span>
+              <span className="bg-green-700 text-white px-3 py-1.5 rounded font-bold text-xs cursor-pointer h-8 flex items-center" onClick={()=>setIsAdmin(false)}>✅ Admin ✕</span>
             )}
-          </div>
-        </div>
-        <p className="text-slate-300 mb-3">Advanced Analytics & Invoice Management</p>
-
-        {/* ⭐ NEW: Quick Cross-Navigation Strip */}
-        <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-3 mb-3">
-          <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2">⚡ Related Pages</p>
-          <div className="flex gap-2 flex-wrap">
-            {[
-              { l:'👥 Customers',    p:'/customers',           c:'bg-blue-600 hover:bg-blue-700' },
-              { l:'🔧 Service Data',  p:'/service-customers',  c:'bg-emerald-600 hover:bg-emerald-700' },
-              { l:'📄 Invoices',     p:'/invoice-management',  c:'bg-orange-600 hover:bg-orange-700' },
-              { l:'🎫 Job Cards',    p:'/job-cards',           c:'bg-cyan-600 hover:bg-cyan-700' },
-              { l:'📦 Parts',        p:'/parts',               c:'bg-violet-600 hover:bg-violet-700' },
-              { l:'🔔 Reminders',    p:'/reminders',           c:'bg-red-600 hover:bg-red-700' },
-              { l:'💹 VP Dashboard', p:'/vph-dashboard',       c:'bg-pink-600 hover:bg-pink-700' },
-              { l:'📊 Reports',      p:'/reports',             c:'bg-green-600 hover:bg-green-700' },
-            ].map((x, i) => (
-              <Button key={i} onClick={() => navigate(x.p)}
-                className={`${x.c} text-white text-xs font-bold py-1.5 px-3 h-auto transition hover:scale-105`}>
-                {x.l}
-              </Button>
-            ))}
           </div>
         </div>
 
@@ -730,8 +810,8 @@ const syncToMongoDB = async (data) => {
             { id:'oldBikes', label:`🚲 Old Bikes (${oldBikes.length})` },
           ].map(t => (
             <button key={t.id} onClick={()=>{ setVdActiveTab(t.id); setCurrentPage(1); setOldBikePage(1); }}
-              className={`px-5 py-2 rounded-lg text-sm font-bold border-2 transition ${
-                vdActiveTab===t.id ? 'bg-blue-600 border-blue-400 text-white shadow-lg' : 'bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700'
+              className={`px-3 py-1.5 rounded text-xs font-bold border transition ${
+                vdActiveTab===t.id ? 'bg-blue-600 border-blue-400 text-white shadow' : 'bg-slate-800 border-slate-600 text-slate-300 hover:bg-slate-700'
               }`}>{t.label}</button>
           ))}
         </div>
@@ -739,85 +819,99 @@ const syncToMongoDB = async (data) => {
 
       {vdActiveTab === 'vehicles' && (
         <>
-          <Card className="bg-slate-800 border-slate-700 mb-6">
-            <CardHeader className="bg-gradient-to-r from-blue-600 to-blue-700">
-              <CardTitle className="text-white flex items-center gap-2"><Upload size={20} /> डेटा Import करें</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <input type="file" accept=".xlsx,.xlsm" onChange={handleFileUpload} className="block w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700" />
-              <p className="text-slate-400 text-sm mt-2">वह फाइल Upload करें जिसमें 'cost_detl' sheet हो</p>
+          {/* ⭐ COMPACT: Import + Filters in single strip */}
+          <Card className="bg-slate-800 border-slate-700 mb-3">
+            <CardContent className="py-3 px-4">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Excel Import (compact) */}
+                <label className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded cursor-pointer flex items-center gap-1.5 text-xs whitespace-nowrap">
+                  <Upload size={13}/> Excel Import (cost_detl)
+                  <input type="file" accept=".xlsx,.xlsm" onChange={handleFileUpload} className="hidden" />
+                </label>
+
+                <div className="h-6 w-px bg-slate-600"/>
+
+                {/* Filters (inline) */}
+                <select value={selectedModel} onChange={(e)=>{setSelectedModel(e.target.value); setSelectedVariant('');}}
+                  className="px-2 py-1.5 bg-slate-700 text-white border border-slate-600 rounded text-xs min-w-[140px]">
+                  <option value="">सभी Models</option>
+                  {models.map(model => <option key={model} value={model}>{model}</option>)}
+                </select>
+                <select value={selectedVariant} onChange={(e)=>setSelectedVariant(e.target.value)} disabled={!selectedModel}
+                  className="px-2 py-1.5 bg-slate-700 text-white border border-slate-600 rounded text-xs min-w-[110px] disabled:opacity-50">
+                  <option value="">सभी Variants</option>
+                  {getVariantsForModel().map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+                <select value={selectedYear} onChange={(e)=>setSelectedYear(e.target.value)}
+                  className="px-2 py-1.5 bg-slate-700 text-white border border-slate-600 rounded text-xs min-w-[90px]">
+                  <option value="">All Years</option>
+                  {getYears().map(year => <option key={year} value={year}>{year}</option>)}
+                </select>
+                <select value={selectedMonth} onChange={(e)=>setSelectedMonth(e.target.value)}
+                  className="px-2 py-1.5 bg-slate-700 text-white border border-slate-600 rounded text-xs min-w-[110px]">
+                  <option value="">All Months</option>
+                  {[1,2,3,4,5,6,7,8,9,10,11,12].map(m =>
+                    <option key={m} value={String(m).padStart(2,'0')}>{new Date(2024, m-1).toLocaleString('en-IN', { month: 'short' })}</option>
+                  )}
+                </select>
+
+                {(selectedModel || selectedVariant || selectedYear || selectedMonth) && (
+                  <button onClick={() => { setSelectedModel(''); setSelectedVariant(''); setSelectedYear(''); setSelectedMonth(''); }}
+                    className="px-2 py-1.5 bg-red-600/20 border border-red-600/50 text-red-300 rounded text-xs hover:bg-red-600/30">
+                    ✖ Clear
+                  </button>
+                )}
+
+                <div className="ml-auto flex items-center gap-2 text-xs text-slate-400">
+                  <span className="bg-blue-900/50 border border-blue-600/50 px-2 py-1 rounded font-bold text-blue-300">
+                    {filteredData.length} / {vehicleData.length} vehicles
+                  </span>
+                </div>
+              </div>
             </CardContent>
           </Card>
 
           {vehicleData.length > 0 && (
             <>
-              <Card className="bg-slate-800 border-slate-700 mb-6">
-                <CardHeader className="bg-gradient-to-r from-purple-600 to-purple-700">
-                  <CardTitle className="text-white flex items-center gap-2"><Filter size={20} /> फ़िल्टर्स</CardTitle>
-                </CardHeader>
-                <CardContent className="pt-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div><label className="text-slate-300 text-sm font-semibold mb-2 block">Model</label><select value={selectedModel} onChange={(e)=>{setSelectedModel(e.target.value); setSelectedVariant('');}} className="w-full px-3 py-2 bg-slate-700 text-white border border-slate-600 rounded-md"><option value="">सभी Models</option>{models.map(model=><option key={model} value={model}>{model}</option>)}</select></div>
-                    <div><label className="text-slate-300 text-sm font-semibold mb-2 block">Variant</label><select value={selectedVariant} onChange={(e)=>setSelectedVariant(e.target.value)} disabled={!selectedModel} className="w-full px-3 py-2 bg-slate-700 text-white border border-slate-600 rounded-md disabled:opacity-50"><option value="">सभी Variants</option>{getVariantsForModel().map(variant=><option key={variant} value={variant}>{variant}</option>)}</select></div>
-                    <div><label className="text-slate-300 text-sm font-semibold mb-2 block">Year</label><select value={selectedYear} onChange={(e)=>setSelectedYear(e.target.value)} className="w-full px-3 py-2 bg-slate-700 text-white border border-slate-600 rounded-md"><option value="">सभी Years</option>{getYears().map(year=><option key={year} value={year}>{year}</option>)}</select></div>
-                    <div><label className="text-slate-300 text-sm font-semibold mb-2 block">Month</label><select value={selectedMonth} onChange={(e)=>setSelectedMonth(e.target.value)} className="w-full px-3 py-2 bg-slate-700 text-white border border-slate-600 rounded-md"><option value="">सभी Months</option>{[1,2,3,4,5,6,7,8,9,10,11,12].map(m=><option key={m} value={String(m).padStart(2,'0')}>{new Date(2024, m-1).toLocaleString('en-IN', { month: 'long' })}</option>)}</select></div>
-                  </div>
-                  <div className="mt-4 p-4 bg-blue-900 rounded-lg"><p className="text-blue-200 text-sm"><strong>Total Results:</strong> {filteredData.length} vehicles found</p></div>
-                </CardContent>
-              </Card>
 
-              {/* ⭐ Smart KPI Cards */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                <div style={{ background:'linear-gradient(135deg, #1e40af22, #1e40af08)', border:'1px solid #3b82f640', borderRadius:14, padding:'16px' }}>
+              {/* ⭐ Compact Smart KPI Cards (single row, smaller) */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+                <div style={{ background:'linear-gradient(135deg, #1e40af22, #1e40af08)', border:'1px solid #3b82f640', borderRadius:10, padding:'10px 12px' }}>
                   <div className="flex items-center justify-between">
-                    <Bike size={20} className="text-blue-400"/>
-                    <span className="text-blue-400 text-xs font-bold">SOLD</span>
+                    <Bike size={14} className="text-blue-400"/>
+                    <span className="text-blue-400 text-[10px] font-bold">SOLD</span>
                   </div>
-                  <p className="text-slate-300 text-xs font-bold mt-2">कुल Vehicles</p>
-                  <p className="text-white font-black text-3xl">{vehicleData.length}</p>
-                  <p className="text-slate-500 text-xs">{models.length} models · {filteredData.length} filtered</p>
+                  <p className="text-slate-300 text-[10px] font-bold">कुल Vehicles</p>
+                  <p className="text-white font-black text-lg leading-tight">{vehicleData.length}</p>
+                  <p className="text-slate-500 text-[10px]">{models.length} models · {filteredData.length} filtered</p>
                 </div>
-                <div style={{ background:'linear-gradient(135deg, #16a34a22, #16a34a08)', border:'1px solid #22c55e40', borderRadius:14, padding:'16px' }}>
+                <div style={{ background:'linear-gradient(135deg, #16a34a22, #16a34a08)', border:'1px solid #22c55e40', borderRadius:10, padding:'10px 12px' }}>
                   <div className="flex items-center justify-between">
-                    <TrendingUp size={20} className="text-green-400"/>
-                    <span className="text-green-400 text-xs font-bold">REVENUE</span>
+                    <TrendingUp size={14} className="text-green-400"/>
+                    <span className="text-green-400 text-[10px] font-bold">REVENUE</span>
                   </div>
-                  <p className="text-slate-300 text-xs font-bold mt-2">💰 Total Sales</p>
-                  <p className="text-white font-black text-2xl">₹{totalRevenue >= 100000 ? (totalRevenue/100000).toFixed(2) + 'L' : totalRevenue.toLocaleString('en-IN')}</p>
-                  <p className="text-slate-500 text-xs">avg: ₹{vehicleData.length > 0 ? Math.round(totalRevenue/vehicleData.length).toLocaleString('en-IN') : 0}</p>
+                  <p className="text-slate-300 text-[10px] font-bold">💰 Total Sales</p>
+                  <p className="text-white font-black text-lg leading-tight">₹{totalRevenue >= 100000 ? (totalRevenue/100000).toFixed(2) + 'L' : totalRevenue.toLocaleString('en-IN')}</p>
+                  <p className="text-slate-500 text-[10px]">avg: ₹{vehicleData.length > 0 ? Math.round(totalRevenue/vehicleData.length).toLocaleString('en-IN') : 0}</p>
                 </div>
-                <div style={{ background:'linear-gradient(135deg, #ea580c22, #ea580c08)', border:'1px solid #f9731640', borderRadius:14, padding:'16px' }}>
+                <div style={{ background:'linear-gradient(135deg, #ea580c22, #ea580c08)', border:'1px solid #f9731640', borderRadius:10, padding:'10px 12px' }}>
                   <div className="flex items-center justify-between">
-                    <FileText size={20} className="text-orange-400"/>
-                    <span className="text-orange-400 text-xs font-bold">INVOICES</span>
+                    <FileText size={14} className="text-orange-400"/>
+                    <span className="text-orange-400 text-[10px] font-bold">INVOICES</span>
                   </div>
-                  <p className="text-slate-300 text-xs font-bold mt-2">📄 Generated</p>
-                  <p className="text-white font-black text-3xl">{generatedInvoices.length}</p>
-                  <button onClick={() => navigate('/invoice-management')} className="text-orange-400 text-xs hover:underline">View all →</button>
+                  <p className="text-slate-300 text-[10px] font-bold">📄 Generated</p>
+                  <p className="text-white font-black text-lg leading-tight">{generatedInvoices.length}</p>
+                  <button onClick={() => navigate('/invoice-management')} className="text-orange-400 text-[10px] hover:underline">View all →</button>
                 </div>
-                <div style={{ background:'linear-gradient(135deg, #a855f722, #a855f708)', border:'1px solid #a855f740', borderRadius:14, padding:'16px' }}>
+                <div style={{ background:'linear-gradient(135deg, #a855f722, #a855f708)', border:'1px solid #a855f740', borderRadius:10, padding:'10px 12px' }}>
                   <div className="flex items-center justify-between">
-                    <Bike size={20} className="text-purple-400"/>
-                    <span className="text-purple-400 text-xs font-bold">EXCHANGE</span>
+                    <Bike size={14} className="text-purple-400"/>
+                    <span className="text-purple-400 text-[10px] font-bold">EXCHANGE</span>
                   </div>
-                  <p className="text-slate-300 text-xs font-bold mt-2">🚲 Old Bikes</p>
-                  <p className="text-white font-black text-3xl">{oldBikes.length}</p>
-                  <p className="text-slate-500 text-xs">{oldBikes.filter(b => b.status === 'Sold').length} sold · {oldBikes.filter(b => b.status === 'Available' || !b.status).length} stock</p>
+                  <p className="text-slate-300 text-[10px] font-bold">🚲 Old Bikes</p>
+                  <p className="text-white font-black text-lg leading-tight">{oldBikes.length}</p>
+                  <p className="text-slate-500 text-[10px]">{oldBikes.filter(b => b.status === 'Sold').length} sold · {oldBikes.filter(b => b.status === 'Available' || !b.status).length} stock</p>
                 </div>
-              </div>
-
-              {/* Old style cards row (kept for reference) */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                <Card className="bg-blue-50 border-2 border-blue-300"><CardContent className="p-4 text-center"><p className="text-blue-600 text-xs font-bold">💰 Total Sales (New Vehicles)</p><p className="text-blue-800 font-black text-2xl mt-1">₹{totalRevenue.toLocaleString('en-IN')}</p></CardContent></Card>
-                <Card className="bg-orange-50 border-2 border-orange-300"><CardContent className="p-4 text-center"><p className="text-orange-600 text-xs font-bold">🛒 Total Purchase Cost</p><p className="text-orange-800 font-black text-2xl mt-1">₹0</p><p className="text-orange-400 text-xs">(अभी उपलब्ध नहीं)</p></CardContent></Card>
-                <Card className="bg-purple-50 border-2 border-purple-300"><CardContent className="p-4 text-center"><p className="text-purple-600 text-xs font-bold">📊 Total Revenue</p><p className="text-purple-800 font-black text-2xl mt-1">₹{totalRevenue.toLocaleString('en-IN')}</p></CardContent></Card>
-                <Card className={`border-2 ${totalRevenue > 0 ? 'bg-green-50 border-green-300' : 'bg-red-50 border-red-300'}`}><CardContent className="p-4 text-center"><p className="text-gray-600 text-xs font-bold">📈 Profit / Loss</p><p className={`font-black text-2xl mt-1 ${totalRevenue > 0 ? 'text-green-700' : 'text-red-700'}`}>₹{totalRevenue.toLocaleString('en-IN')}</p><p className="text-gray-400 text-xs">(Sales - Purchase)</p></CardContent></Card>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                <Card className="bg-slate-800 border-slate-700"><CardContent className="pt-6"><div className="text-center"><TrendingUp className="text-green-500 w-12 h-12 mx-auto mb-4" /><p className="text-slate-400 text-sm">कुल Vehicles</p><p className="text-3xl font-bold text-white mt-2">{vehicleData.length}</p></div></CardContent></Card>
-                <Card className="bg-slate-800 border-slate-700"><CardContent className="pt-6"><div className="text-center"><Calendar className="text-blue-500 w-12 h-12 mx-auto mb-4" /><p className="text-slate-400 text-sm">फ़िल्टर किए गए Results</p><p className="text-3xl font-bold text-white mt-2">{filteredData.length}</p></div></CardContent></Card>
-                <Card className="bg-slate-800 border-slate-700"><CardContent className="pt-6"><div className="text-center"><FileText className="text-orange-500 w-12 h-12 mx-auto mb-4" /><p className="text-slate-400 text-sm">कुल Models</p><p className="text-3xl font-bold text-white mt-2">{models.length}</p></div></CardContent></Card>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
@@ -863,17 +957,26 @@ const syncToMongoDB = async (data) => {
                     {generatedInvoices.some(inv => inv.customerName === vehicle.customerName) ? '✅' : '📄'}
                   </Button>
                 )}
-                {/* ⭐ NEW: Quick link to service profile */}
-                {vehicle.id && vehicle.id.toString().length > 10 && (
-                  <Button
-                    onClick={() => navigate(`/customer-profile/${vehicle.id}`)}
-                    size="sm"
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                    title="Service Profile"
-                  >
-                    🔧
-                  </Button>
-                )}
+                {/* ⭐ Quick link to service profile — find by customer name */}
+                <Button
+                  onClick={() => {
+                    // Find customer by matching name from MongoDB customers list
+                    const matchedCust = customers.find(c =>
+                      String(c.name || c.customerName || '').toUpperCase().trim() ===
+                      String(vehicle.customerName || '').toUpperCase().trim()
+                    );
+                    if (matchedCust && matchedCust._id) {
+                      navigate(`/customer-profile/${matchedCust._id}`);
+                    } else {
+                      alert(`⚠️ Customer "${vehicle.customerName}" का profile नहीं मिला।\n\nकृपया पहले Customer Management में check करें कि customer save हुआ है या नहीं।`);
+                    }
+                  }}
+                  size="sm"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  title="Service Profile"
+                >
+                  🔧
+                </Button>
                 <Button onClick={() => handleEditVehicle(vehicle)} size="sm" className="bg-yellow-600 hover:bg-yellow-700 text-white" title="Edit">
                   <Edit2 size={14} />
                 </Button>
@@ -901,7 +1004,114 @@ const syncToMongoDB = async (data) => {
           )}
 
           {showInvoiceModal && selectedVehicle && (
-            <Card className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"><Card className="bg-slate-800 border-slate-700 w-full max-w-2xl max-h-96 overflow-y-auto"><CardHeader className="bg-gradient-to-r from-green-600 to-green-700 sticky top-0"><CardTitle className="text-white flex items-center gap-2"><FileText size={20}/> Tax Invoice Generate करें</CardTitle></CardHeader><CardContent className="pt-6"><div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6"><Input placeholder="Customer Name" value={invoiceData.customerName} onChange={e=>setInvoiceData({...invoiceData,customerName:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Father's Name" value={invoiceData.fatherName} onChange={e=>setInvoiceData({...invoiceData,fatherName:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Mobile" value={invoiceData.mobileNo} onChange={e=>setInvoiceData({...invoiceData,mobileNo:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input type="date" placeholder="Invoice Date" value={invoiceData.invoiceDate} onChange={e=>setInvoiceData({...invoiceData,invoiceDate:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Address" value={invoiceData.address} onChange={e=>setInvoiceData({...invoiceData,address:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="District" value={invoiceData.dist} onChange={e=>setInvoiceData({...invoiceData,dist:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Price" type="number" value={invoiceData.price} onChange={e=>setInvoiceData({...invoiceData,price:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Key No" value={invoiceData.keyNo} onChange={e=>setInvoiceData({...invoiceData,keyNo:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Battery No" value={invoiceData.batteryNo} onChange={e=>setInvoiceData({...invoiceData,batteryNo:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Financer Name" value={invoiceData.financerName} onChange={e=>setInvoiceData({...invoiceData,financerName:e.target.value})} className="bg-slate-700 text-white border-slate-600"/></div><div className="flex gap-4"><Button onClick={generateInvoicePDF} className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold"><Download size={18} className="mr-2"/> PDF Download करें</Button><Button onClick={()=>setShowInvoiceModal(false)} className="flex-1 bg-gray-600 hover:bg-gray-700 text-white font-bold">Cancel</Button></div></CardContent></Card></Card>
+            <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'center', justifyContent:'center', padding:16, zIndex:50 }}
+              onClick={() => setShowInvoiceModal(false)}>
+              <div style={{ background:'#1e293b', border:'1px solid #475569', borderRadius:14, width:'100%', maxWidth:700, maxHeight:'90vh', overflowY:'auto' }}
+                onClick={e => e.stopPropagation()}>
+
+                <div style={{ background:'linear-gradient(90deg, #16a34a, #15803d)', padding:'12px 16px', borderTopLeftRadius:14, borderTopRightRadius:14, position:'sticky', top:0 }}>
+                  <h3 style={{ color:'#fff', fontSize:15, fontWeight:800, margin:0, display:'flex', alignItems:'center', gap:6 }}>
+                    <FileText size={18}/> Tax Invoice Generate करें
+                  </h3>
+                </div>
+
+                <div style={{ padding:'16px' }}>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                    <div>
+                      <label className="text-slate-400 text-xs font-bold mb-1 block">Customer Name</label>
+                      <Input value={invoiceData.customerName} onChange={e=>setInvoiceData({...invoiceData,customerName:e.target.value})} className="bg-slate-700 text-white border-slate-600"/>
+                    </div>
+
+                    {/* ⭐ NEW: Relation dropdown (S/O, W/O, D/O, C/O) + Father/Husband/Guardian Name */}
+                    <div>
+                      <label className="text-slate-400 text-xs font-bold mb-1 block">Relation + Name</label>
+                      <div className="flex gap-1">
+                        <select value={invoiceData.relation || 'S/O'}
+                          onChange={e => setInvoiceData({...invoiceData, relation: e.target.value})}
+                          className="bg-slate-700 text-white border border-slate-600 rounded px-2 py-2 text-sm font-bold w-20">
+                          <option value="S/O">S/O</option>
+                          <option value="W/O">W/O</option>
+                          <option value="D/O">D/O</option>
+                          <option value="C/O">C/O</option>
+                        </select>
+                        <Input value={invoiceData.fatherName} onChange={e=>setInvoiceData({...invoiceData,fatherName:e.target.value})}
+                          className="bg-slate-700 text-white border-slate-600 flex-1" placeholder="Father/Husband Name"/>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-slate-400 text-xs font-bold mb-1 block">Mobile</label>
+                      <Input value={invoiceData.mobileNo} onChange={e=>setInvoiceData({...invoiceData,mobileNo:e.target.value})} className="bg-slate-700 text-white border-slate-600"/>
+                    </div>
+                    <div>
+                      <label className="text-slate-400 text-xs font-bold mb-1 block">Invoice Date</label>
+                      <Input type="date" value={invoiceData.invoiceDate} onChange={e=>setInvoiceData({...invoiceData,invoiceDate:e.target.value})} className="bg-slate-700 text-white border-slate-600"/>
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="text-slate-400 text-xs font-bold mb-1 block">Address</label>
+                      <Input value={invoiceData.address} onChange={e=>setInvoiceData({...invoiceData,address:e.target.value})} className="bg-slate-700 text-white border-slate-600"/>
+                    </div>
+                    <div>
+                      <label className="text-slate-400 text-xs font-bold mb-1 block">District</label>
+                      <Input value={invoiceData.dist} onChange={e=>setInvoiceData({...invoiceData,dist:e.target.value})} className="bg-slate-700 text-white border-slate-600"/>
+                    </div>
+                    <div>
+                      <label className="text-slate-400 text-xs font-bold mb-1 block">
+                        Ex-Showroom Price <span className="text-emerald-400">(GST शामिल)</span>
+                      </label>
+                      <Input type="number" value={invoiceData.price} onChange={e=>setInvoiceData({...invoiceData,price:e.target.value})}
+                        className="bg-slate-700 text-emerald-300 border-slate-600 font-bold"/>
+                    </div>
+                    <div>
+                      <label className="text-slate-400 text-xs font-bold mb-1 block">Key No</label>
+                      <Input value={invoiceData.keyNo} onChange={e=>setInvoiceData({...invoiceData,keyNo:e.target.value})} className="bg-slate-700 text-white border-slate-600"/>
+                    </div>
+                    <div>
+                      <label className="text-slate-400 text-xs font-bold mb-1 block">Battery No</label>
+                      <Input value={invoiceData.batteryNo} onChange={e=>setInvoiceData({...invoiceData,batteryNo:e.target.value})} className="bg-slate-700 text-white border-slate-600"/>
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="text-slate-400 text-xs font-bold mb-1 block">Financer Name</label>
+                      <select value={invoiceData.financerName||'CASH'} onChange={e=>setInvoiceData({...invoiceData,financerName:e.target.value})}
+                        className="bg-slate-700 text-white border border-slate-600 rounded px-3 py-2 w-full text-sm">
+                        {FINANCE_COMPANIES.map(fc => <option key={fc} value={fc}>{fc}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Tax Breakdown Preview */}
+                  {invoiceData.price > 0 && (
+                    <div className="mb-4 p-3 bg-slate-900/60 border border-dashed border-slate-600 rounded">
+                      <p className="text-slate-400 text-xs font-bold mb-2">📋 Tax Breakdown (Invoice में ऐसे आएगा)</p>
+                      {(() => {
+                        const tb = calculateTaxBreakdown(invoiceData.price);
+                        return (
+                          <div className="grid grid-cols-2 gap-1 text-xs">
+                            <span className="text-slate-400">Taxable:</span>
+                            <span className="text-slate-200 text-right">₹{tb.taxable.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</span>
+                            <span className="text-slate-400">SGST 9%:</span>
+                            <span className="text-yellow-300 text-right">₹{tb.sgst.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</span>
+                            <span className="text-slate-400">CGST 9%:</span>
+                            <span className="text-yellow-300 text-right">₹{tb.cgst.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</span>
+                            <span className="text-emerald-400 font-bold border-t border-slate-700 pt-1 mt-1">Total:</span>
+                            <span className="text-emerald-400 text-right font-bold border-t border-slate-700 pt-1 mt-1">₹{tb.exShowroom.toLocaleString('en-IN')}</span>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  <div className="flex gap-3">
+                    <Button onClick={generateInvoicePDF} className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold">
+                      <Download size={16} className="mr-2"/> PDF Download करें
+                    </Button>
+                    <Button onClick={()=>setShowInvoiceModal(false)} className="bg-gray-600 hover:bg-gray-700 text-white">
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
 
           {showEditModal && editVehicle && (
