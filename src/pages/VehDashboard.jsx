@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
-import { Upload, Download, Filter, TrendingUp, Calendar, FileText, Share2, Trash2, Edit2, Plus, Eye, EyeOff } from 'lucide-react';
+import { Upload, Download, Filter, TrendingUp, Calendar, FileText, Share2, Trash2, Edit2, Plus, Eye, EyeOff, Activity, Bike } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import html2pdf from 'html2pdf.js';
 import { api } from '../utils/apiConfig';
 
 export default function VehDashboard() {
+  const navigate = useNavigate();
   const [vehicleData, setVehicleData] = useState([]);
   const [filteredData, setFilteredData] = useState([]);
   const [models, setModels] = useState([]);
@@ -667,18 +669,47 @@ const syncToMongoDB = async (data) => {
       )}
 
       <div className="mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <h1 className="text-4xl font-bold text-white">🏍️ Vehicle Dashboard</h1>
-          <div className="flex gap-3">
-            <Button onClick={() => setShowAddCustomer(true)} className="bg-green-600 hover:bg-green-700 text-white"><Plus size={16} className="mr-1" /> Add New Customer</Button>
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-3">
+          <div>
+            <h1 className="text-3xl md:text-4xl font-bold text-white">🏍️ Vehicle Sales Dashboard</h1>
+            <p className="text-slate-400 text-xs mt-1 flex items-center gap-2">
+              <Activity size={11} className="text-green-400 animate-pulse"/>
+              {vehicleData.length} vehicles · {generatedInvoices.length} invoices · {oldBikes.length} old bikes
+            </p>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <Button onClick={() => setShowAddCustomer(true)} className="bg-green-600 hover:bg-green-700 text-white text-sm"><Plus size={14} className="mr-1" /> Add Customer</Button>
             {!isAdmin ? (
-              <Button onClick={handleAdminLogin} className="bg-red-600 hover:bg-red-700 text-white">🔒 Admin Login</Button>
+              <Button onClick={handleAdminLogin} className="bg-red-600 hover:bg-red-700 text-white text-sm">🔒 Admin Login</Button>
             ) : (
-              <span className="bg-green-700 text-white px-4 py-2 rounded font-bold cursor-pointer" onClick={()=>setIsAdmin(false)}>✅ Admin ✕</span>
+              <span className="bg-green-700 text-white px-4 py-2 rounded font-bold text-sm cursor-pointer" onClick={()=>setIsAdmin(false)}>✅ Admin ✕</span>
             )}
           </div>
         </div>
         <p className="text-slate-300 mb-3">Advanced Analytics & Invoice Management</p>
+
+        {/* ⭐ NEW: Quick Cross-Navigation Strip */}
+        <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-3 mb-3">
+          <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2">⚡ Related Pages</p>
+          <div className="flex gap-2 flex-wrap">
+            {[
+              { l:'👥 Customers',    p:'/customers',           c:'bg-blue-600 hover:bg-blue-700' },
+              { l:'🔧 Service Data',  p:'/service-customers',  c:'bg-emerald-600 hover:bg-emerald-700' },
+              { l:'📄 Invoices',     p:'/invoice-management',  c:'bg-orange-600 hover:bg-orange-700' },
+              { l:'🎫 Job Cards',    p:'/job-cards',           c:'bg-cyan-600 hover:bg-cyan-700' },
+              { l:'📦 Parts',        p:'/parts',               c:'bg-violet-600 hover:bg-violet-700' },
+              { l:'🔔 Reminders',    p:'/reminders',           c:'bg-red-600 hover:bg-red-700' },
+              { l:'💹 VP Dashboard', p:'/vph-dashboard',       c:'bg-pink-600 hover:bg-pink-700' },
+              { l:'📊 Reports',      p:'/reports',             c:'bg-green-600 hover:bg-green-700' },
+            ].map((x, i) => (
+              <Button key={i} onClick={() => navigate(x.p)}
+                className={`${x.c} text-white text-xs font-bold py-1.5 px-3 h-auto transition hover:scale-105`}>
+                {x.l}
+              </Button>
+            ))}
+          </div>
+        </div>
+
         <div className="flex gap-2">
           {[
             { id:'vehicles', label:`🏍️ New Vehicles (${vehicleData.length})` },
@@ -721,6 +752,47 @@ const syncToMongoDB = async (data) => {
                 </CardContent>
               </Card>
 
+              {/* ⭐ Smart KPI Cards */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div style={{ background:'linear-gradient(135deg, #1e40af22, #1e40af08)', border:'1px solid #3b82f640', borderRadius:14, padding:'16px' }}>
+                  <div className="flex items-center justify-between">
+                    <Bike size={20} className="text-blue-400"/>
+                    <span className="text-blue-400 text-xs font-bold">SOLD</span>
+                  </div>
+                  <p className="text-slate-300 text-xs font-bold mt-2">कुल Vehicles</p>
+                  <p className="text-white font-black text-3xl">{vehicleData.length}</p>
+                  <p className="text-slate-500 text-xs">{models.length} models · {filteredData.length} filtered</p>
+                </div>
+                <div style={{ background:'linear-gradient(135deg, #16a34a22, #16a34a08)', border:'1px solid #22c55e40', borderRadius:14, padding:'16px' }}>
+                  <div className="flex items-center justify-between">
+                    <TrendingUp size={20} className="text-green-400"/>
+                    <span className="text-green-400 text-xs font-bold">REVENUE</span>
+                  </div>
+                  <p className="text-slate-300 text-xs font-bold mt-2">💰 Total Sales</p>
+                  <p className="text-white font-black text-2xl">₹{totalRevenue >= 100000 ? (totalRevenue/100000).toFixed(2) + 'L' : totalRevenue.toLocaleString('en-IN')}</p>
+                  <p className="text-slate-500 text-xs">avg: ₹{vehicleData.length > 0 ? Math.round(totalRevenue/vehicleData.length).toLocaleString('en-IN') : 0}</p>
+                </div>
+                <div style={{ background:'linear-gradient(135deg, #ea580c22, #ea580c08)', border:'1px solid #f9731640', borderRadius:14, padding:'16px' }}>
+                  <div className="flex items-center justify-between">
+                    <FileText size={20} className="text-orange-400"/>
+                    <span className="text-orange-400 text-xs font-bold">INVOICES</span>
+                  </div>
+                  <p className="text-slate-300 text-xs font-bold mt-2">📄 Generated</p>
+                  <p className="text-white font-black text-3xl">{generatedInvoices.length}</p>
+                  <button onClick={() => navigate('/invoice-management')} className="text-orange-400 text-xs hover:underline">View all →</button>
+                </div>
+                <div style={{ background:'linear-gradient(135deg, #a855f722, #a855f708)', border:'1px solid #a855f740', borderRadius:14, padding:'16px' }}>
+                  <div className="flex items-center justify-between">
+                    <Bike size={20} className="text-purple-400"/>
+                    <span className="text-purple-400 text-xs font-bold">EXCHANGE</span>
+                  </div>
+                  <p className="text-slate-300 text-xs font-bold mt-2">🚲 Old Bikes</p>
+                  <p className="text-white font-black text-3xl">{oldBikes.length}</p>
+                  <p className="text-slate-500 text-xs">{oldBikes.filter(b => b.status === 'Sold').length} sold · {oldBikes.filter(b => b.status === 'Available' || !b.status).length} stock</p>
+                </div>
+              </div>
+
+              {/* Old style cards row (kept for reference) */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                 <Card className="bg-blue-50 border-2 border-blue-300"><CardContent className="p-4 text-center"><p className="text-blue-600 text-xs font-bold">💰 Total Sales (New Vehicles)</p><p className="text-blue-800 font-black text-2xl mt-1">₹{totalRevenue.toLocaleString('en-IN')}</p></CardContent></Card>
                 <Card className="bg-orange-50 border-2 border-orange-300"><CardContent className="p-4 text-center"><p className="text-orange-600 text-xs font-bold">🛒 Total Purchase Cost</p><p className="text-orange-800 font-black text-2xl mt-1">₹0</p><p className="text-orange-400 text-xs">(अभी उपलब्ध नहीं)</p></CardContent></Card>
@@ -766,17 +838,29 @@ const syncToMongoDB = async (data) => {
               <td className="px-4 py-3">{vehicle.variant}</td>
               <td className="px-4 py-3">{vehicle.date ? new Date(vehicle.date).toLocaleDateString('en-IN') : 'N/A'}</td>
               <td className="px-4 py-3 text-right font-semibold">₹{(vehicle.price || 0).toLocaleString()}</td>
-              <td className="px-4 py-3 text-center flex gap-1 justify-center">
+              <td className="px-4 py-3 text-center flex gap-1 justify-center flex-wrap">
                 {isAdmin && (
                   <Button
                     onClick={() => handleGenerateInvoice(vehicle)}
                     size="sm"
                     className={generatedInvoices.some(inv => inv.customerName === vehicle.customerName) ? "bg-green-700 hover:bg-green-800 text-white" : "bg-blue-600 hover:bg-blue-700 text-white"}
+                    title="Generate/View Invoice"
                   >
-                    {generatedInvoices.some(inv => inv.customerName === vehicle.customerName) ? '✅' : 'Invoice'}
+                    {generatedInvoices.some(inv => inv.customerName === vehicle.customerName) ? '✅' : '📄'}
                   </Button>
                 )}
-                <Button onClick={() => handleEditVehicle(vehicle)} size="sm" className="bg-yellow-600 hover:bg-yellow-700 text-white">
+                {/* ⭐ NEW: Quick link to service profile */}
+                {vehicle.id && vehicle.id.toString().length > 10 && (
+                  <Button
+                    onClick={() => navigate(`/customer-profile/${vehicle.id}`)}
+                    size="sm"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                    title="Service Profile"
+                  >
+                    🔧
+                  </Button>
+                )}
+                <Button onClick={() => handleEditVehicle(vehicle)} size="sm" className="bg-yellow-600 hover:bg-yellow-700 text-white" title="Edit">
                   <Edit2 size={14} />
                 </Button>
                 {isAdmin && (

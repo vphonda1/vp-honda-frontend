@@ -127,7 +127,8 @@ export default function Dashboard({ user }) {
       return fb;
     };
 
-    const [customers, parts, invoices, oldbikes, staff, salaries, partHistory, serviceData] = await Promise.all([
+    const today_ymd = new Date().toISOString().split('T')[0];
+    const [customers, parts, invoices, oldbikes, staff, salaries, partHistory, serviceData, salaryEntities, todayAttendance, shopSettings] = await Promise.all([
       fetchJson('/api/customers'),
       fetchJson('/api/parts'),
       fetchJson('/api/invoices'),
@@ -136,6 +137,9 @@ export default function Dashboard({ user }) {
       fetchJson('/api/salaries'),
       fetchJson('/api/parts/history/all'),
       fetchJson('/api/service-data'),
+      fetchJson('/api/salary-entities'),                            // ⭐ new
+      fetchJson(`/api/attendance?date=${today_ymd}`),               // ⭐ today's check-ins
+      fetchJson('/api/attendance/shop/settings', null),             // ⭐ shop settings
     ]);
 
     const lsInvoices = [...getLS('invoices',[]), ...getLS('generatedInvoices',[])];
@@ -240,17 +244,39 @@ export default function Dashboard({ user }) {
       .sort((a,b) => new Date(b.createdAt || b.invoiceDate || 0) - new Date(a.createdAt || a.invoiceDate || 0))
       .slice(0, 6);
 
-    // ── Salary pending (current month) ────────────────────────────────────
+    // ── Salary pending (current month) ─ uses NEW salary-entities first ─
     const curMonth = now.getMonth() + 1;
     const curYear = now.getFullYear();
-    let totalSalaryDue = 0, totalSalaryPaid = 0;
-    staff.forEach(s => {
-      totalSalaryDue += Number(s.monthlySalary || 0);
-      const paid = salaries
-        .filter(p => String(p.staffId) === String(s.id) && p.forMonth === curMonth && p.forYear === curYear && p.type === 'salary')
-        .reduce((sum, p) => sum + Number(p.amount || 0), 0);
-      totalSalaryPaid += paid;
-    });
+    let totalSalaryDue = 0, totalSalaryPaid = 0, activeStaffCount = 0;
+
+    if (salaryEntities && salaryEntities.length > 0) {
+      // ⭐ NEW: Use salary-entities (staff + rent both)
+      salaryEntities.filter(e => e.active).forEach(e => {
+        totalSalaryDue += Number(e.monthlyAmount || 0);
+        if (e.type === 'staff') activeStaffCount++;
+        const paid = salaries
+          .filter(p => p.staffName === e.name && p.forMonth === curMonth && p.forYear === curYear && p.type === 'salary' && !p.cancelled)
+          .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+        totalSalaryPaid += paid;
+      });
+    } else {
+      // Fallback: old staff system
+      activeStaffCount = staff.length;
+      staff.forEach(s => {
+        totalSalaryDue += Number(s.monthlySalary || 0);
+        const paid = salaries
+          .filter(p => String(p.staffId) === String(s.id) && p.forMonth === curMonth && p.forYear === curYear && p.type === 'salary')
+          .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+        totalSalaryPaid += paid;
+      });
+    }
+
+    // ── Today's attendance ──────────────────────────────────────────────
+    const att = todayAttendance || [];
+    const presentToday = att.filter(a => a.checkInTime).length;
+    const checkedOutToday = att.filter(a => a.checkOutTime).length;
+    const lateToday = att.filter(a => a.isLate).length;
+    const expectedStaffCount = (salaryEntities || []).filter(e => e.type === 'staff' && e.active).length || staff.length;
 
     setData({
       totals: {
@@ -258,7 +284,7 @@ export default function Dashboard({ user }) {
         vehicles: customers.length,
         invoices: allInvoices.length,
         parts: parts.length,
-        staff: staff.length,
+        staff: activeStaffCount,
         quotations: 0,
         oldBikes: oldbikes.length,
         serviceEntries: Object.keys(sdMap).length,
@@ -287,6 +313,15 @@ export default function Dashboard({ user }) {
         due: totalSalaryDue,
         paid: totalSalaryPaid,
         pending: Math.max(0, totalSalaryDue - totalSalaryPaid),
+        activeStaff: activeStaffCount,
+      },
+      attendance: {
+        presentToday,
+        checkedOutToday,
+        lateToday,
+        absentToday: Math.max(0, expectedStaffCount - presentToday),
+        expectedStaff: expectedStaffCount,
+        gpsActive: !!shopSettings?.shopLat,
       },
     });
     setLastRefresh(new Date());
@@ -452,12 +487,49 @@ export default function Dashboard({ user }) {
             ))}
           </div>
 
+          {/* 📍 Today's Attendance — NEW */}
+          {user?.role === 'admin' && (
+            <div style={{ background:'linear-gradient(135deg, #1e293b, #0f172a)', border:'1px solid #334155', borderRadius:'18px', padding:'18px' }}>
+              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'14px' }}>
+                <p style={{ color:'#94a3b8', fontSize:'11px', fontWeight:700, letterSpacing:'0.5px' }}>
+                  📍 TODAY'S ATTENDANCE {data.attendance.gpsActive && <span style={{ color:'#86efac' }}>· GPS ✓</span>}
+                </p>
+                <Link to="/staff-management" style={{ color:'#60a5fa', fontSize:'11px', display:'flex', alignItems:'center', gap:'2px' }}>
+                  View <ArrowUpRight size={11}/>
+                </Link>
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' }}>
+                <div style={{ background:'#22c55e22', border:'1px solid #22c55e44', borderRadius:'10px', padding:'10px' }}>
+                  <p style={{ color:'#86efac', fontSize:'9px', fontWeight:700 }}>PRESENT</p>
+                  <p style={{ color:'#f8fafc', fontSize:'18px', fontWeight:900 }}>{data.attendance.presentToday}<span style={{ color:'#64748b', fontSize:'12px' }}>/{data.attendance.expectedStaff}</span></p>
+                </div>
+                <div style={{ background:'#ef444422', border:'1px solid #ef444444', borderRadius:'10px', padding:'10px' }}>
+                  <p style={{ color:'#fca5a5', fontSize:'9px', fontWeight:700 }}>ABSENT</p>
+                  <p style={{ color:'#f8fafc', fontSize:'18px', fontWeight:900 }}>{data.attendance.absentToday}</p>
+                </div>
+                <div style={{ background:'#3b82f622', border:'1px solid #3b82f644', borderRadius:'10px', padding:'10px' }}>
+                  <p style={{ color:'#93c5fd', fontSize:'9px', fontWeight:700 }}>CHECKED OUT</p>
+                  <p style={{ color:'#f8fafc', fontSize:'18px', fontWeight:900 }}>{data.attendance.checkedOutToday}</p>
+                </div>
+                <div style={{ background:'#f59e0b22', border:'1px solid #f59e0b44', borderRadius:'10px', padding:'10px' }}>
+                  <p style={{ color:'#fcd34d', fontSize:'9px', fontWeight:700 }}>LATE TODAY</p>
+                  <p style={{ color:'#f8fafc', fontSize:'18px', fontWeight:900 }}>{data.attendance.lateToday}</p>
+                </div>
+              </div>
+              {!data.attendance.gpsActive && (
+                <p style={{ color:'#fbbf24', fontSize:'10px', marginTop:'8px', textAlign:'center' }}>
+                  ⚠️ GPS check-in not configured · Set shop location in Staff Management
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Salary Summary */}
           {user?.role === 'admin' && (
             <div style={{ background:'linear-gradient(135deg, #1e293b, #0f172a)', border:'1px solid #334155', borderRadius:'18px', padding:'18px' }}>
               <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'14px' }}>
-                <p style={{ color:'#94a3b8', fontSize:'11px', fontWeight:700, letterSpacing:'0.5px' }}>💰 SALARY STATUS (THIS MONTH)</p>
-                <Link to="/staff-management" style={{ color:'#60a5fa', fontSize:'11px', display:'flex', alignItems:'center', gap:'2px' }}>
+                <p style={{ color:'#94a3b8', fontSize:'11px', fontWeight:700, letterSpacing:'0.5px' }}>💰 SALARY & RENT (THIS MONTH)</p>
+                <Link to="/salary-management" style={{ color:'#60a5fa', fontSize:'11px', display:'flex', alignItems:'center', gap:'2px' }}>
                   Manage <ArrowUpRight size={11}/>
                 </Link>
               </div>
@@ -479,7 +551,7 @@ export default function Dashboard({ user }) {
                 <div style={{ width:`${data.salary.due > 0 ? (data.salary.paid / data.salary.due) * 100 : 0}%`, height:'100%', background:'linear-gradient(90deg, #22c55e, #10b981)', transition:'width 0.5s' }}/>
               </div>
               <p style={{ color:'#64748b', fontSize:'10px', marginTop:'4px' }}>
-                {data.totals.staff} staff members • {data.salary.due > 0 ? Math.round((data.salary.paid/data.salary.due)*100) : 0}% paid
+                {data.salary.activeStaff} active members • {data.salary.due > 0 ? Math.round((data.salary.paid/data.salary.due)*100) : 0}% paid
               </p>
             </div>
           )}
@@ -493,6 +565,8 @@ export default function Dashboard({ user }) {
                 { l:'🎫 New Job Card', p:'/job-cards',             g:'linear-gradient(135deg,#0284c7,#075985)' },
                 { l:'📄 Invoices',     p:'/invoice-management',    g:'linear-gradient(135deg,#ea580c,#9a3412)', a:true },
                 { l:'📦 Parts',        p:'/parts',                 g:'linear-gradient(135deg,#a855f7,#7e22ce)' },
+                { l:'👔 Staff & GPS',  p:'/staff-management',      g:'linear-gradient(135deg,#10b981,#065f46)', a:true },
+                { l:'💰 Salary & Rent',p:'/salary-management',     g:'linear-gradient(135deg,#16a34a,#14532d)', a:true },
                 { l:'🔍 Diagnostic',   p:'/diagnostic',            g:'linear-gradient(135deg,#0891b2,#155e75)', a:true },
                 { l:'📊 Reports',      p:'/reports',               g:'linear-gradient(135deg,#059669,#065f46)', a:true },
               ].filter(x => !x.a || user?.role === 'admin').map((x,i) => (

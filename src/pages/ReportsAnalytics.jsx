@@ -22,7 +22,7 @@ import {
   TrendingUp, TrendingDown, RefreshCw, Download, Users, FileText,
   Package, IndianRupee, Clock, AlertTriangle, CheckCircle, Calendar,
   Filter, Activity, ArrowLeft, BarChart3, PieChart as PieIcon,
-  ChevronDown, Award, Target, DollarSign, Bike,
+  ChevronDown, Award, Target, DollarSign, Bike, Home as HomeIcon,
 } from 'lucide-react';
 import { api } from '../utils/apiConfig';
 
@@ -67,7 +67,7 @@ export default function ReportsAnalytics({ user }) {
   const [activeReport, setActiveReport] = useState('overview');
   const [yearFilter, setYearFilter] = useState(new Date().getFullYear());
   const [monthFilter, setMonthFilter] = useState('all');
-  const [raw, setRaw] = useState({ customers: [], invoices: [], parts: [], staff: [], salaries: [], partHistory: [], serviceData: {} });
+  const [raw, setRaw] = useState({ customers: [], invoices: [], parts: [], staff: [], salaries: [], partHistory: [], serviceData: {}, salaryEntities: [], attendance: [] });
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
   useEffect(() => { loadAll(); }, []);
@@ -78,15 +78,17 @@ export default function ReportsAnalytics({ user }) {
       try { const r = await fetch(api(url)); if (r.ok) return await r.json(); } catch {}
       return fb;
     };
-    const [customers, invoices, parts, staff, salaries, partHistory, serviceDataArr] = await Promise.all([
+    const [customers, invoices, parts, staff, salaries, partHistory, serviceDataArr, salaryEntities, attendance] = await Promise.all([
       f('/api/customers'), f('/api/invoices'), f('/api/parts'), f('/api/staff'),
       f('/api/salaries'), f('/api/parts/history/all'), f('/api/service-data'),
+      f('/api/salary-entities'),                               // ⭐ new
+      f('/api/attendance'),                                    // ⭐ new
     ]);
     const lsInv = [...getLS('invoices',[]), ...getLS('generatedInvoices',[])];
     const allInv = invoices.length > 0 ? invoices : lsInv;
     const sdMap = { ...getLS('customerServiceData', {}) };
     serviceDataArr.forEach(r => { sdMap[r.regNo || r._id] = r; });
-    setRaw({ customers, invoices: allInv, parts, staff, salaries, partHistory, serviceData: sdMap });
+    setRaw({ customers, invoices: allInv, parts, staff, salaries, partHistory, serviceData: sdMap, salaryEntities, attendance });
     setLastRefresh(new Date());
     setLoading(false);
   };
@@ -105,6 +107,7 @@ export default function ReportsAnalytics({ user }) {
       customers: raw.customers, // not filtered by date
       partHistory: filter(raw.partHistory, 'consumedAt'),
       salaries: filter(raw.salaries, 'paymentDate'),
+      attendance: filter(raw.attendance || [], 'date'),
     };
   }, [raw, yearFilter, monthFilter]);
 
@@ -177,6 +180,24 @@ export default function ReportsAnalytics({ user }) {
     const bonusPaid = filtered.salaries.filter(s => s.type === 'bonus' || s.type === 'incentive').reduce((sum, s) => sum + (s.amount || 0), 0);
     const totalPayroll = salaryPaid + advancePaid + bonusPaid;
 
+    // ⭐ Use new salaryEntities (staff + rent), fallback to staff
+    const entities = (raw.salaryEntities || []);
+    const activeStaff = entities.filter(e => e.type === 'staff' && e.active).length || raw.staff.length;
+    const activeRent = entities.filter(e => e.type === 'rent' && e.active).length;
+    const totalRentDue = entities.filter(e => e.type === 'rent' && e.active).reduce((s,e) => s + (e.monthlyAmount||0), 0);
+    const totalStaffDue = entities.length > 0
+      ? entities.filter(e => e.type === 'staff' && e.active).reduce((s,e) => s + (e.monthlyAmount||0), 0)
+      : raw.staff.reduce((s,x) => s + (x.monthlySalary||0), 0);
+
+    // ⭐ Attendance stats (filtered period)
+    const attRecs = filtered.attendance || [];
+    const totalCheckIns = attRecs.filter(a => a.checkInTime).length;
+    const lateCount = attRecs.filter(a => a.isLate).length;
+    const validGPS = attRecs.filter(a => a.checkInValid).length;
+    const avgHours = attRecs.length > 0
+      ? attRecs.filter(a => a.hoursWorked > 0).reduce((s,a) => s + a.hoursWorked, 0) / Math.max(1, attRecs.filter(a => a.hoursWorked > 0).length)
+      : 0;
+
     // Profit/Loss
     const grossRevenue = totalSales;
     const grossExpense = totalPartsValue + totalPayroll; // simplified
@@ -195,7 +216,8 @@ export default function ReportsAnalytics({ user }) {
       monthly: monthlyData,
       customers: { total: totalCustomers, new: newCustomers, pendingAmount, pendingCount },
       parts: { topParts, totalConsumed: totalPartsConsumed, totalValue: totalPartsValue, outOfStock: outOfStock.length, lowStock: lowStock.length, stockValue, stockList: raw.parts.length },
-      salary: { paid: salaryPaid, advance: advancePaid, bonus: bonusPaid, total: totalPayroll, staffCount: raw.staff.length },
+      salary: { paid: salaryPaid, advance: advancePaid, bonus: bonusPaid, total: totalPayroll, staffCount: activeStaff, rentCount: activeRent, totalStaffDue, totalRentDue },
+      attendance: { totalCheckIns, lateCount, validGPS, avgHours, total: attRecs.length },
       pnl: { revenue: grossRevenue, expense: grossExpense, profit: netProfit, margin: grossRevenue > 0 ? (netProfit / grossRevenue) * 100 : 0 },
       vehicleDistribution,
     };
@@ -404,15 +426,32 @@ export default function ReportsAnalytics({ user }) {
         {/* ══════ PAYROLL ══════ */}
         {activeReport === 'salary' && (
           <div style={{ display:'grid', gap:'14px' }}>
+            {/* KPIs Row 1 — Salary */}
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(200px, 1fr))', gap:'12px' }}>
-              <StatCard label="Salary Paid"    value={fmtShort(calc.salary.paid)}    sub={`${yearFilter}`} color="#22c55e" icon={Award}/>
-              <StatCard label="Advance Given"  value={fmtShort(calc.salary.advance)} sub={`${yearFilter}`} color="#f97316" icon={IndianRupee}/>
-              <StatCard label="Bonus/Incentive" value={fmtShort(calc.salary.bonus)}  sub={`${yearFilter}`} color="#3b82f6" icon={TrendingUp}/>
-              <StatCard label="Total Payroll"  value={fmtShort(calc.salary.total)}   sub={`${calc.salary.staffCount} staff`} color="#a855f7" icon={Users}/>
+              <StatCard label="Salary Paid"     value={fmtShort(calc.salary.paid)}    sub={`${yearFilter}`} color="#22c55e" icon={Award}/>
+              <StatCard label="Advance Given"   value={fmtShort(calc.salary.advance)} sub={`${yearFilter}`} color="#f97316" icon={IndianRupee}/>
+              <StatCard label="Bonus/Incentive" value={fmtShort(calc.salary.bonus)}   sub={`${yearFilter}`} color="#3b82f6" icon={TrendingUp}/>
+              <StatCard label="Total Payroll"   value={fmtShort(calc.salary.total)}   sub={`${calc.salary.staffCount} staff`} color="#a855f7" icon={Users}/>
             </div>
+
+            {/* ⭐ NEW: Rent + Active Counts */}
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(200px, 1fr))', gap:'12px' }}>
+              <StatCard label="Active Staff"     value={calc.salary.staffCount}              sub={fmtShort(calc.salary.totalStaffDue) + ' monthly'} color="#10b981" icon={Users}/>
+              <StatCard label="Active Rentals"   value={calc.salary.rentCount}               sub={fmtShort(calc.salary.totalRentDue) + ' monthly'}  color="#06b6d4" icon={HomeIcon}/>
+              <StatCard label="Total Monthly Due" value={fmtShort(calc.salary.totalStaffDue + calc.salary.totalRentDue)} sub="staff + rent"                            color="#a855f7" icon={DollarSign}/>
+            </div>
+
+            {/* ⭐ NEW: Attendance KPIs */}
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(200px, 1fr))', gap:'12px' }}>
+              <StatCard label="Total Check-ins"  value={calc.attendance.totalCheckIns} sub={`${calc.attendance.total} records`} color="#22c55e" icon={CheckCircle}/>
+              <StatCard label="GPS Verified"     value={calc.attendance.validGPS}      sub="within shop radius"  color="#0ea5e9" icon={CheckCircle}/>
+              <StatCard label="Late Check-ins"   value={calc.attendance.lateCount}     sub="after work start"    color="#f59e0b" icon={Clock}/>
+              <StatCard label="Avg Hours Worked" value={calc.attendance.avgHours.toFixed(1) + 'h'} sub="per check-in"   color="#8b5cf6" icon={Activity}/>
+            </div>
+
             <Panel title="💰 Payment Log" action={
               <button onClick={() => exportCSV('salary_payments', filtered.salaries)} style={btnStyle('#a855f7')}>
-                <Download size={12}/> Export
+                <Download size={12}/> Export Payments
               </button>
             }>
               <div style={{ overflowX:'auto' }}>
@@ -420,14 +459,14 @@ export default function ReportsAnalytics({ user }) {
                   <thead>
                     <tr style={{ color:'#94a3b8', fontSize:'10px', textTransform:'uppercase', borderBottom:'1px solid #334155' }}>
                       <th style={{ padding:'10px', textAlign:'left' }}>Date</th>
-                      <th style={{ padding:'10px', textAlign:'left' }}>Staff</th>
+                      <th style={{ padding:'10px', textAlign:'left' }}>Person/Rent</th>
                       <th style={{ padding:'10px', textAlign:'left' }}>Type</th>
                       <th style={{ padding:'10px', textAlign:'right' }}>Amount</th>
                       <th style={{ padding:'10px', textAlign:'left' }}>Notes</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.salaries.slice(0, 20).map((s,i) => (
+                    {filtered.salaries.slice(0, 30).map((s,i) => (
                       <tr key={i} style={{ borderBottom:'1px solid #1e293b' }}>
                         <td style={{ padding:'8px 10px', color:'#94a3b8' }}>{s.paymentDate}</td>
                         <td style={{ padding:'8px 10px', color:'#e2e8f0' }}>{s.staffName}</td>
@@ -447,6 +486,46 @@ export default function ReportsAnalytics({ user }) {
                 </table>
               </div>
             </Panel>
+
+            {/* ⭐ NEW: Attendance Log */}
+            {calc.attendance.total > 0 && (
+              <Panel title="📍 Attendance Log" subtitle={`${calc.attendance.total} records · GPS verified`} action={
+                <button onClick={() => exportCSV('attendance', filtered.attendance)} style={btnStyle('#0ea5e9')}>
+                  <Download size={12}/> Export
+                </button>
+              }>
+                <div style={{ overflowX:'auto', maxHeight:'400px', overflowY:'auto' }}>
+                  <table style={{ width:'100%', fontSize:'12px' }}>
+                    <thead style={{ position:'sticky', top:0, background:'#0f172a' }}>
+                      <tr style={{ color:'#94a3b8', fontSize:'10px', textTransform:'uppercase', borderBottom:'1px solid #334155' }}>
+                        <th style={{ padding:'10px', textAlign:'left' }}>Date</th>
+                        <th style={{ padding:'10px', textAlign:'left' }}>Staff</th>
+                        <th style={{ padding:'10px', textAlign:'left' }}>Check-in</th>
+                        <th style={{ padding:'10px', textAlign:'left' }}>Check-out</th>
+                        <th style={{ padding:'10px', textAlign:'right' }}>Hours</th>
+                        <th style={{ padding:'10px', textAlign:'right' }}>Distance</th>
+                        <th style={{ padding:'10px', textAlign:'center' }}>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.attendance.slice(0, 50).map((a,i) => (
+                        <tr key={i} style={{ borderBottom:'1px solid #1e293b' }}>
+                          <td style={{ padding:'8px 10px', color:'#94a3b8' }}>{a.date}</td>
+                          <td style={{ padding:'8px 10px', color:'#e2e8f0' }}>{a.staffName || '—'}</td>
+                          <td style={{ padding:'8px 10px', color: a.isLate ? '#fbbf24' : '#86efac' }}>{a.checkInTime || '—'} {a.isLate && '⚠️'}</td>
+                          <td style={{ padding:'8px 10px', color:'#94a3b8' }}>{a.checkOutTime || '—'}</td>
+                          <td style={{ padding:'8px 10px', color:'#93c5fd', textAlign:'right' }}>{a.hoursWorked ? a.hoursWorked.toFixed(1) + 'h' : '—'}</td>
+                          <td style={{ padding:'8px 10px', textAlign:'right', color: a.checkInValid ? '#86efac' : '#fca5a5' }}>{a.checkInDistance != null ? a.checkInDistance + 'm' : '—'}</td>
+                          <td style={{ padding:'8px 10px', textAlign:'center' }}>
+                            {a.checkInValid ? '✅' : '❌'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+            )}
           </div>
         )}
 

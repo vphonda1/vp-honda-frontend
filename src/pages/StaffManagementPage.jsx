@@ -132,43 +132,9 @@ export default function StaffManagementPage() {
         if (res.ok) { const db = await res.json(); if (db.length > 0) { setStaffList(db); localStorage.setItem('staffData', JSON.stringify(db)); return; } }
       } catch {}
       try { const s = localStorage.getItem('staffData'); if (s) setStaffList(JSON.parse(s)); } catch {}
-    })();   // ⚠️ semicolon MUST be here - prevents next IIFE from being interpreted as function call
-
-    // ⭐ Salary payments — MongoDB sync (cross-device)
-    (async () => {
-      try {
-        const res = await fetch(api('/api/salaries'));
-        if (res.ok) {
-          const dbPayments = await res.json();
-          // Group by staffId for compatibility with existing UI
-          const grouped = {};
-          dbPayments.forEach(p => {
-            if (!grouped[p.staffId]) grouped[p.staffId] = [];
-            grouped[p.staffId].push({
-              id: p._id,
-              date: p.paymentDate,
-              amount: p.amount,
-              description: p.notes || p.type,
-              type: p.type,
-            });
-          });
-          // Merge with localStorage (MongoDB priority)
-          try {
-            const local = JSON.parse(localStorage.getItem('staffPayments') || '{}');
-            Object.keys(local).forEach(sid => {
-              if (!grouped[sid]) grouped[sid] = local[sid];
-            });
-          } catch {}
-          setPaymentHistory(grouped);
-          localStorage.setItem('staffPayments', JSON.stringify(grouped));
-          return;
-        }
-      } catch {}
-      // Fallback to localStorage
-      try { const p = localStorage.getItem('staffPayments'); if (p) setPaymentHistory(JSON.parse(p)); } catch {}
-    })();
-
+    })()
     try { const a = localStorage.getItem('staffAttendance'); if (a) setAttendanceRecords(JSON.parse(a)); } catch {}
+    try { const p = localStorage.getItem('staffPayments'); if (p) setPaymentHistory(JSON.parse(p)); } catch {}
     try { const n = localStorage.getItem('staffNotes'); if (n) setManualNotes(JSON.parse(n)); } catch {}
     try { const i = localStorage.getItem('staffIncentives'); if (i) setIncentiveData(JSON.parse(i)); } catch {}
     try { if (localStorage.getItem('vpAdminSession') === 'true') { setIsAdmin(true); setShowLandingPage(false); } } catch {}
@@ -250,47 +216,103 @@ export default function StaffManagementPage() {
     return h > 9 || (h === 9 && m > 30);
   };
 
-  // ===== SALARY: सिर्फ Basic Salary, कोई DA/HRA/PF/ESI नहीं =====
-  const calculateSalaryDetails = (staffId) => {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 💰 SALARY CALCULATION — Smart Rules
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 📜 नियम (User defined):
+  //   • हर महीने में सारे Sundays = PAID OFF (कोई कटौती नहीं, चाहे 4 हों या 5)
+  //   • Sunday के अलावा कोई भी दिन छुट्टी = उस दिन की salary कटेगी
+  //   • Per-day rate = monthlySalary ÷ (total days - sundays)
+  //   • Late penalty only on rules-active months
+  //
+  // 🕊️ Grace Period:
+  //   • Rules सिर्फ shopSettings.attendanceRulesStartDate से लागू होंगे
+  //   • उस से पहले के महीनों में कोई कटौती नहीं (full salary)
+  //   • यह इसलिए कि पुराने महीनों में attendance log नहीं है
+  // ═══════════════════════════════════════════════════════════════════════════
+  const calculateSalaryDetails = (staffId, forMonth = null, forYear = null) => {
     const staff = staffList.find(s => s.id === staffId);
     if (!staff) return {};
+
+    const m = forMonth !== null ? forMonth : currentMonth;
+    const y = forYear !== null ? forYear : currentYear;
+
     const attendance = attendanceRecords[staffId] || [];
     const payments = paymentHistory[staffId] || [];
     const incList = incentiveData[staffId] || [];
-    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-    const sundays = countSundays(currentYear, currentMonth);
-    const workingDaysInMonth = daysInMonth - sundays;
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    const sundays = countSundays(y, m);
+    const workingDaysInMonth = daysInMonth - sundays;   // sundays are paid off
+
+    // 🕊️ Grace Period check: Are rules active for this month?
+    const rulesStart = shopSettings?.attendanceRulesStartDate;  // YYYY-MM-DD
+    const rulesActive = (() => {
+      if (!rulesStart) return false;  // not configured yet
+      const startDate = new Date(rulesStart);
+      // First day of month being calculated
+      const thisMonthStart = new Date(y, m, 1);
+      // Last day of rules-start month (whole month from start onwards)
+      const startMonthFirst = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+      return thisMonthStart >= startMonthFirst;
+    })();
 
     const monthAtt = attendance.filter(a => {
       const d = new Date(a.date);
-      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+      return d.getMonth() === m && d.getFullYear() === y;
     });
     const presentDays = monthAtt.length;
-    const absentDays = Math.max(0, workingDaysInMonth - presentDays);
 
-    const lateDays = monthAtt.filter(a => a.checkInTime && isLateTime(a.checkInTime)).length;
+    // Absent = Working days (non-Sunday) NOT marked present
+    // Note: We only count attendance for non-Sunday dates
+    // Calculate expected non-Sunday dates that have passed (for current month only count till today)
+    const today = new Date();
+    const isCurrentMonth = (m === today.getMonth() && y === today.getFullYear());
+    const isFutureMonth = new Date(y, m, 1) > today;
 
-    const perDayRate = staff.monthlySalary / 26;
-    let salaryDeduction = 0, deductionDays = 0, deductionReason = '';
-
-    if (absentDays === 0) {
-      deductionReason = '✅ पूरे महीने उपस्थित';
-    } else if (absentDays >= 8 && absentDays <= 10) {
-      deductionDays = 15; salaryDeduction = 15 * perDayRate;
-      deductionReason = `${absentDays} दिन absent → 15 दिन fixed कटौती`;
-    } else if (absentDays > 4) {
-      deductionDays = absentDays + sundays; salaryDeduction = deductionDays * perDayRate;
-      deductionReason = `${absentDays} absent + ${sundays} रविवार = ${deductionDays} दिन`;
-    } else {
-      deductionDays = absentDays; salaryDeduction = absentDays * perDayRate;
-      deductionReason = `${absentDays} दिन absent`;
+    // For current month, only count days till today (not future days as absent)
+    let expectedWorkingDays = workingDaysInMonth;
+    let elapsedWorkingDays = workingDaysInMonth;  // for absent calculation
+    if (isCurrentMonth) {
+      let count = 0;
+      for (let d = 1; d <= today.getDate(); d++) {
+        const date = new Date(y, m, d);
+        if (date.getDay() !== 0) count++;  // not Sunday
+      }
+      elapsedWorkingDays = count;
+    } else if (isFutureMonth) {
+      elapsedWorkingDays = 0;  // future month - no absent yet
     }
 
-    const latePenalty = lateDays * 50;
-    const extraLateCut = lateDays > 5 ? perDayRate : 0;
-    const totalDeduction = salaryDeduction + latePenalty + extraLateCut;
+    const absentDays = Math.max(0, elapsedWorkingDays - presentDays);
+    const lateDays = monthAtt.filter(a => a.checkInTime && isLateTime(a.checkInTime)).length;
 
-    const monthIncentives = incList.filter(i => i.month === currentMonth + 1 && i.year === currentYear);
+    const perDayRate = workingDaysInMonth > 0 ? (staff.monthlySalary / workingDaysInMonth) : 0;
+
+    let salaryDeduction = 0, deductionDays = 0, deductionReason = '', latePenalty = 0;
+
+    if (!rulesActive) {
+      // 🕊️ GRACE PERIOD — पुराने महीने या rules abhi लागू नहीं हुए
+      const niceDate = rulesStart
+        ? new Date(rulesStart).toLocaleDateString('en-IN', { month:'long', year:'numeric' })
+        : 'अगले महीने';
+      deductionReason = `🕊️ Grace Period — ${niceDate} से rules लागू होंगे। पुराने महीनों में कोई कटौती नहीं।`;
+    } else if (isFutureMonth) {
+      deductionReason = '🔮 भविष्य का महीना — अभी कोई data नहीं';
+    } else if (presentDays >= elapsedWorkingDays) {
+      deductionReason = `✅ पूरे ${elapsedWorkingDays} working days में उपस्थित — कोई कटौती नहीं`;
+    } else {
+      // 💼 RULE: per-day deduction for non-Sunday absent
+      deductionDays = absentDays;
+      salaryDeduction = absentDays * perDayRate;
+      deductionReason = `${absentDays} दिन छुट्टी × ₹${perDayRate.toFixed(0)}/दिन (Sundays paid off)`;
+
+      // Late penalty
+      latePenalty = lateDays * (shopSettings?.latePenalty || 50);
+    }
+
+    const totalDeduction = salaryDeduction + latePenalty;
+
+    const monthIncentives = incList.filter(i => i.month === m + 1 && i.year === y);
     const totalIncentive = monthIncentives.filter(i => i.type === 'incentive').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
     const totalInsurance = monthIncentives.filter(i => i.type === 'insurance').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
     const otherBonus = monthIncentives.filter(i => i.type === 'bonus').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
@@ -299,25 +321,115 @@ export default function StaffManagementPage() {
 
     const monthPayments = payments.filter(p => {
       const d = new Date(p.date);
-      return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+      return d.getMonth() === m && d.getFullYear() === y;
     });
     const totalPayments = monthPayments.reduce((s, p) => s + p.amount, 0);
 
     return {
       monthlySalary: staff.monthlySalary, presentDays, absentDays, sundays,
-      workingDaysInMonth, deductionDays, deductionReason, perDayRate,
+      workingDaysInMonth, elapsedWorkingDays,
+      deductionDays, deductionReason, perDayRate,
       salaryDeduction: salaryDeduction.toFixed(2), lateDays,
-      latePenalty: latePenalty.toFixed(2), extraLateCut: extraLateCut.toFixed(2),
+      latePenalty: latePenalty.toFixed(2), extraLateCut: '0.00',
       totalDeduction: totalDeduction.toFixed(2),
       totalIncentive, totalInsurance, otherBonus, monthIncentives,
       totalPayments, netSalary: netSalary.toFixed(2),
       balance: (netSalary - totalPayments).toFixed(2),
-      payments: monthPayments
+      payments: monthPayments,
+      rulesActive, rulesStart,
+      isCurrentMonth, isFutureMonth,
     };
   };
 
-  // ===== ATTENDANCE (no location block) =====
-  const handleMarkAttendance = (staffId, type = 'check-in') => {
+  // ===== ATTENDANCE (📍 GPS LOCATION-BASED) =====
+  // Requires user to be within shop's allowed radius
+  const [shopSettings, setShopSettings] = useState(null);
+  const [checkInLoading, setCheckInLoading] = useState(null); // staffId being processed
+
+  // Load shop settings on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch(api('/api/attendance/shop/settings'));
+        if (r.ok) setShopSettings(await r.json());
+      } catch {}
+    })();
+  }, []);
+
+  const getLocation = () => new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error('आपका browser GPS support नहीं करता')); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+      (err) => {
+        const msgs = {
+          1: '❌ Location permission denied। Browser settings में allow करें।',
+          2: '❌ Location unavailable। GPS on करें और दोबारा try करें।',
+          3: '❌ Location timeout। Signal check करें।',
+        };
+        reject(new Error(msgs[err.code] || err.message));
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  });
+
+  const handleMarkAttendance = async (staffId, type = 'check-in') => {
+    const staff = staffList.find(s => s.id === staffId);
+    if (!staff) return;
+
+    // Check shop location is set
+    if (!shopSettings?.shopLat || !shopSettings?.shopLng) {
+      alert('⚠️ Admin ने अभी शोरूम location set नहीं की है।\n\nAdmin panel में जाकर "Set Shop Location" से set करें।');
+      return;
+    }
+
+    setCheckInLoading(staffId);
+
+    try {
+      // Get user's current GPS location
+      const loc = await getLocation();
+
+      // Send to backend (backend verifies distance)
+      const endpoint = type === 'check-in' ? '/api/attendance/check-in' : '/api/attendance/check-out';
+      const res = await fetch(api(endpoint), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ staffId, staffName: staff.name, lat: loc.lat, lng: loc.lng }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error + (data.distance ? `\n\n📍 Distance from shop: ${data.distance}m\n📏 Allowed: ${data.allowedRadius}m` : ''));
+        setCheckInLoading(null);
+        return;
+      }
+
+      alert(data.message + `\n\n📍 Distance from shop: ${data.distance || 0}m`);
+
+      // Update local state to reflect new attendance
+      const rec = { ...attendanceRecords };
+      if (!rec[staffId]) rec[staffId] = [];
+      const today = data.attendance.date;
+      const exIdx = rec[staffId].findIndex(a => a.date === today);
+      const newEntry = {
+        date: today,
+        checkInTime: data.attendance.checkInTime,
+        checkOutTime: data.attendance.checkOutTime,
+        status: data.attendance.status,
+        location: { lat: data.attendance.checkInLat, lng: data.attendance.checkInLng, distance: data.attendance.checkInDistance },
+      };
+      if (exIdx >= 0) rec[staffId][exIdx] = { ...rec[staffId][exIdx], ...newEntry };
+      else rec[staffId].push(newEntry);
+      setAttendanceRecords(rec);
+      saveAttendance(rec);
+    } catch (err) {
+      alert('⚠️ ' + err.message);
+    }
+
+    setCheckInLoading(null);
+  };
+
+  // ===== OLD TIME-BASED CHECK-IN (kept as backup function) =====
+  const handleMarkAttendanceTimeOnly = (staffId, type = 'check-in') => {
     const today = new Date().toISOString().split('T')[0];
     const now = new Date();
     const time = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -355,7 +467,7 @@ export default function StaffManagementPage() {
     const suns = countSundays(y, m - 1);
     const wDays = daysInM - suns;
     const base = staff.monthlySalary;
-    const perDay = base / 26;
+    const perDay = base / wDays;    // ⭐ Per working day (not /26)
     const ex = paySlipExtras; // manual DA/HRA/PF/ESI
 
     const att = (attendanceRecords[staff.id] || []).filter(a => {
@@ -365,14 +477,26 @@ export default function StaffManagementPage() {
     const absent = Math.max(0, wDays - present);
     const late = att.filter(a => a.checkInTime && isLateTime(a.checkInTime)).length;
 
-    let absDed = 0, deductDesc = '';
-    if (absent === 0) { absDed = 0; deductDesc = 'पूरे महीने उपस्थित — कोई कटौती नहीं'; }
-    else if (absent >= 8 && absent <= 10) { absDed = 15 * perDay; deductDesc = `${absent} दिन absent → 15 दिन fixed कटौती`; }
-    else if (absent > 4) { absDed = (absent + suns) * perDay; deductDesc = `${absent} absent + ${suns} रविवार कटौती`; }
-    else { absDed = absent * perDay; deductDesc = `${absent} दिन absent कटौती`; }
+    // ⭐ Check grace period for this month
+    const rulesStart = shopSettings?.attendanceRulesStartDate;
+    const thisMonthStart = new Date(y, m - 1, 1);
+    const rulesActive = rulesStart && thisMonthStart >= new Date(rulesStart);
 
-    const latePenalty = late * 50;
-    const extraLate = late > 5 ? perDay : 0;
+    let absDed = 0, deductDesc = '';
+    if (!rulesActive) {
+      absDed = 0;
+      deductDesc = `🕊️ Grace Period — Rules ${rulesStart ? new Date(rulesStart).toLocaleDateString('en-IN', { month:'short', year:'numeric' }) : 'next month'} से लागू होंगे`;
+    } else if (absent === 0) {
+      absDed = 0;
+      deductDesc = `पूरे ${wDays} working days उपस्थित — कोई कटौती नहीं`;
+    } else {
+      // NEW RULE: per-day deduction, Sundays free
+      absDed = absent * perDay;
+      deductDesc = `${absent} दिन absent × ₹${perDay.toFixed(0)}/दिन (Sundays छुट्टी)`;
+    }
+
+    const latePenalty = rulesActive ? late * (shopSettings?.latePenalty || 50) : 0;
+    const extraLate = 0; // removed
     const manualDed = parseFloat(ex.pf||0) + parseFloat(ex.esi||0) + parseFloat(ex.tds||0) + parseFloat(ex.otherDeduction||0);
     const totalDed = absDed + latePenalty + extraLate + manualDed;
     const totalEarnings = base + parseFloat(ex.da||0) + parseFloat(ex.hra||0) + parseFloat(ex.otherAllowance||0);
@@ -575,6 +699,8 @@ export default function StaffManagementPage() {
     // Calculate 12 months salary data
     let annualSalary = 0, annualIncentive = 0, annualInsurance = 0, annualBonus = 0, annualAbsDed = 0, annualLatePen = 0;
     const monthlyBreakdown = [];
+    const rulesStart = shopSettings?.attendanceRulesStartDate;
+
     for (let mo = 1; mo <= 12; mo++) {
       const base = staff.monthlySalary;
       const dInM = new Date(selectedYearPaySlip, mo, 0).getDate();
@@ -586,12 +712,17 @@ export default function StaffManagementPage() {
       const present = att.length;
       const absent = Math.max(0, wDays - present);
       const late = att.filter(a => a.checkInTime && isLateTime(a.checkInTime)).length;
-      const perDay = base / 26;
-      let absDed = 0;
-      if (absent >= 8 && absent <= 10) absDed = 15 * perDay;
-      else if (absent > 4) absDed = (absent + suns) * perDay;
-      else absDed = absent * perDay;
-      const latePen = late * 50;
+      const perDay = base / wDays;
+
+      // ⭐ Grace period check per month
+      const thisMonthStart = new Date(selectedYearPaySlip, mo - 1, 1);
+      const rulesActive = rulesStart && thisMonthStart >= new Date(rulesStart);
+
+      let absDed = 0, latePen = 0;
+      if (rulesActive) {
+        absDed = absent * perDay;  // simple per-day deduction
+        latePen = late * (shopSettings?.latePenalty || 50);
+      }
       const incMo = (incentiveData[staff.id] || []).filter(i => i.month === mo && i.year === selectedYearPaySlip);
       const inc = incMo.filter(i => i.type === 'incentive').reduce((s, i) => s + i.amount, 0);
       const ins = incMo.filter(i => i.type === 'insurance').reduce((s, i) => s + i.amount, 0);
@@ -599,7 +730,7 @@ export default function StaffManagementPage() {
       const net = Math.max(0, base - absDed - latePen + inc + bon - ins);
       annualSalary += base; annualIncentive += inc; annualInsurance += ins;
       annualBonus += bon; annualAbsDed += absDed; annualLatePen += latePen;
-      monthlyBreakdown.push({ mo, present, absent, late, absDed, latePen, inc, bon, ins, net });
+      monthlyBreakdown.push({ mo, present, absent, late, absDed, latePen, inc, bon, ins, net, rulesActive });
     }
     const totalNet = annualSalary - annualAbsDed - annualLatePen + annualIncentive + annualBonus - annualInsurance;
     const fmt = (n) => 'Rs.' + Math.round(n).toLocaleString('en-IN');
@@ -843,49 +974,14 @@ export default function StaffManagementPage() {
     alert(`✅ ${staff.name} का PIN reset हो गया → 1234`);
   };
 
-  const handleAddPayment = async () => {
+  const handleAddPayment = () => {
     if (!selectedStaffForPayment || !paymentEntry.amount) { alert('कर्मचारी और राशि चुनें'); return; }
-    const staffMember = staffList.find(s => s.id === selectedStaffForPayment);
-    const amount = parseFloat(paymentEntry.amount);
-    const paymentDate = paymentEntry.date;
-    const desc = paymentEntry.description || 'Salary Payment';
-    // Detect type from description
-    const txt = desc.toLowerCase();
-    const type = /advance/.test(txt) ? 'advance' : /bonus/.test(txt) ? 'bonus' : /incentive/.test(txt) ? 'incentive' : 'salary';
-
-    // 1. localStorage save (existing)
     const p = { ...paymentHistory };
     if (!p[selectedStaffForPayment]) p[selectedStaffForPayment] = [];
-    p[selectedStaffForPayment].push({ date: paymentDate, amount, description: desc, type, id: Date.now() });
+    p[selectedStaffForPayment].push({ date: paymentEntry.date, amount: parseFloat(paymentEntry.amount), description: paymentEntry.description, id: Date.now() });
     setPaymentHistory(p); savePayments(p);
-
-    // 2. MongoDB sync (cross-device)
-    try {
-      const d = new Date(paymentDate);
-      await fetch(api('/api/salaries'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          staffId: String(selectedStaffForPayment),
-          staffName: staffMember?.name || '',
-          staffPosition: staffMember?.position || '',
-          type,
-          amount,
-          paymentDate,
-          forMonth: d.getMonth() + 1,
-          forYear: d.getFullYear(),
-          paymentMode: 'CASH',
-          notes: desc,
-          paidBy: (JSON.parse(localStorage.getItem('vpSession') || '{}'))?.name || 'Admin',
-        }),
-      });
-    } catch (e) {
-      console.warn('MongoDB salary sync failed (saved local only):', e.message);
-    }
-
     setPaymentEntry({ amount: 0, date: new Date().toISOString().split('T')[0], description: 'Salary Payment' });
-    setShowPaymentForm(false);
-    alert('✅ पेमेंट जोड़ा गया (cross-device sync हो गया)');
+    setShowPaymentForm(false); alert('✅ पेमेंट जोड़ा गया');
   };
   const handleAddNote = () => {
     if (!selectedStaffForNotes || !noteText) { alert('कर्मचारी और नोट भरें'); return; }
@@ -895,40 +991,14 @@ export default function StaffManagementPage() {
     setManualNotes(n); saveNotes(n);
     setNoteText(''); setHighlightText(''); setShowNotesForm(false); alert('✅ नोट जोड़ा गया');
   };
-  const handleAddIncentive = async () => {
+  const handleAddIncentive = () => {
     if (!selectedStaffForIncentive || !incentiveEntry.amount) { alert('कर्मचारी और राशि भरें'); return; }
-    const staffMember = staffList.find(s => s.id === selectedStaffForIncentive);
-    const amount = parseFloat(incentiveEntry.amount);
-
     const inc = { ...incentiveData };
     if (!inc[selectedStaffForIncentive]) inc[selectedStaffForIncentive] = [];
-    inc[selectedStaffForIncentive].push({ ...incentiveEntry, amount, id: Date.now() });
+    inc[selectedStaffForIncentive].push({ ...incentiveEntry, amount: parseFloat(incentiveEntry.amount), id: Date.now() });
     setIncentiveData(inc); saveIncentives(inc);
-
-    // ⭐ MongoDB sync — store as bonus/incentive payment
-    try {
-      const today = new Date().toISOString().split('T')[0];
-      await fetch(api('/api/salaries'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          staffId: String(selectedStaffForIncentive),
-          staffName: staffMember?.name || '',
-          staffPosition: staffMember?.position || '',
-          type: incentiveEntry.type === 'deduction' ? 'deduction' : 'incentive',
-          amount,
-          paymentDate: today,
-          forMonth: incentiveEntry.month || new Date().getMonth() + 1,
-          forYear: incentiveEntry.year || new Date().getFullYear(),
-          notes: incentiveEntry.reason || '',
-          paidBy: (JSON.parse(localStorage.getItem('vpSession') || '{}'))?.name || 'Admin',
-        }),
-      });
-    } catch (e) { console.warn('Incentive sync failed:', e.message); }
-
     setIncentiveEntry({ amount: '', reason: 'अच्छा प्रदर्शन', type: 'incentive', month: new Date().getMonth() + 1, year: new Date().getFullYear() });
-    setShowIncentiveForm(false);
-    alert('✅ जोड़ा गया (cross-device sync हो गया)');
+    setShowIncentiveForm(false); alert('✅ जोड़ा गया');
   };
 
   const getReminders = () => {
@@ -1153,6 +1223,13 @@ export default function StaffManagementPage() {
           )}
         </Card>
 
+        {/* 📍 SHOP LOCATION STATUS (GPS-based attendance) */}
+        <ShopLocationBanner
+          isAdmin={isAdmin}
+          shopSettings={shopSettings}
+          onUpdate={(newSettings) => setShopSettings(newSettings)}
+        />
+
         {/* ADD STAFF */}
         {showAddForm && isAdmin && (
           <Card className="bg-slate-800 border-green-600 border-2">
@@ -1336,6 +1413,9 @@ export default function StaffManagementPage() {
                               <div className="flex items-center gap-2 bg-green-900/30 rounded px-3 py-2">
                                 <LogIn size={14} className="text-green-400" />
                                 <span className="text-green-300 text-sm font-bold">Check-in: {todayAtt.checkInTime}</span>
+                                {todayAtt.location?.distance != null && (
+                                  <span className="text-emerald-400 text-xs ml-auto">📍 {todayAtt.location.distance}m</span>
+                                )}
                               </div>
                               {todayAtt.checkOutTime ? (
                                 <div className="flex items-center gap-2 bg-red-900/30 rounded px-3 py-2">
@@ -1343,17 +1423,41 @@ export default function StaffManagementPage() {
                                   <span className="text-red-300 text-sm font-bold">Check-out: {todayAtt.checkOutTime}</span>
                                 </div>
                               ) : (
-                                <Button size="sm" onClick={() => handleMarkAttendance(staff.id, 'check-out')} className="w-full bg-red-600 hover:bg-red-700 text-white text-sm font-bold py-2">
-                                  <LogOut size={16} className="mr-2" /> 🔴 Check-out करें
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleMarkAttendance(staff.id, 'check-out')}
+                                  disabled={checkInLoading === staff.id}
+                                  className="w-full bg-red-600 hover:bg-red-700 text-white text-sm font-bold py-2"
+                                >
+                                  {checkInLoading === staff.id ? (
+                                    <>⏳ GPS verify कर रहे हैं...</>
+                                  ) : (
+                                    <><LogOut size={16} className="mr-2" /> 🔴 Check-out करें <MapPin size={12} className="ml-1" /></>
+                                  )}
                                 </Button>
                               )}
                             </div>
                           ) : (
                             <div className="space-y-2">
                               <p className="text-red-400 font-bold mb-2">❌ Check-in नहीं हुई</p>
-                              <Button onClick={() => handleMarkAttendance(staff.id, 'check-in')} className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 text-sm">
-                                <LogIn size={16} className="mr-2" /> 🟢 Check-in करें
+                              <Button
+                                onClick={() => handleMarkAttendance(staff.id, 'check-in')}
+                                disabled={checkInLoading === staff.id || !shopSettings?.shopLat}
+                                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 text-sm disabled:opacity-50"
+                              >
+                                {checkInLoading === staff.id ? (
+                                  <>⏳ GPS verify कर रहे हैं...</>
+                                ) : !shopSettings?.shopLat ? (
+                                  <>⚠️ Admin को पहले shop location set करनी होगी</>
+                                ) : (
+                                  <><LogIn size={16} className="mr-2" /> 🟢 Check-in करें <MapPin size={12} className="ml-1" /></>
+                                )}
                               </Button>
+                              {shopSettings?.shopLat && (
+                                <p className="text-emerald-400 text-xs text-center">
+                                  📍 GPS verify होगा · {shopSettings.allowedRadius}m radius
+                                </p>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1591,6 +1695,270 @@ export default function StaffManagementPage() {
 
         <div className="text-center text-slate-600 text-xs pt-4 border-t border-slate-700">
           VP Honda Staff System © 2026 · Bhopal
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 📍 SHOP LOCATION BANNER COMPONENT
+// Shows location status + allows admin to set/update shop GPS coordinates
+// ════════════════════════════════════════════════════════════════════════════
+function ShopLocationBanner({ isAdmin, shopSettings, onUpdate }) {
+  const [showSettings, setShowSettings] = useState(false);
+  const [gettingLocation, setGettingLocation] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Next month 1st date helper (for rules activation default)
+  const nextMonth1st = () => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 1);
+    d.setDate(1);
+    return d.toISOString().split('T')[0];
+  };
+
+  const [form, setForm] = useState({
+    shopLat: shopSettings?.shopLat || '',
+    shopLng: shopSettings?.shopLng || '',
+    allowedRadius: shopSettings?.allowedRadius || 100,
+    workStartTime: shopSettings?.workStartTime || '09:00',
+    lateAfter: shopSettings?.lateAfter || '09:30',
+    workEndTime: shopSettings?.workEndTime || '19:00',
+    latePenalty: shopSettings?.latePenalty || 50,
+    attendanceRulesStartDate: shopSettings?.attendanceRulesStartDate || '',
+  });
+
+  useEffect(() => {
+    if (shopSettings) {
+      setForm({
+        shopLat: shopSettings.shopLat || '',
+        shopLng: shopSettings.shopLng || '',
+        allowedRadius: shopSettings.allowedRadius || 100,
+        workStartTime: shopSettings.workStartTime || '09:00',
+        lateAfter: shopSettings.lateAfter || '09:30',
+        workEndTime: shopSettings.workEndTime || '19:00',
+        latePenalty: shopSettings.latePenalty || 50,
+        attendanceRulesStartDate: shopSettings.attendanceRulesStartDate || '',
+      });
+    }
+  }, [shopSettings]);
+
+  const captureMyLocation = async () => {
+    if (!navigator.geolocation) { alert('Browser GPS support नहीं करता'); return; }
+    setGettingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setForm(prev => ({ ...prev, shopLat: pos.coords.latitude.toFixed(6), shopLng: pos.coords.longitude.toFixed(6) }));
+        alert(`✅ Current location captured!\n\nLat: ${pos.coords.latitude.toFixed(6)}\nLng: ${pos.coords.longitude.toFixed(6)}\nAccuracy: ±${Math.round(pos.coords.accuracy)}m\n\n(बिलकुल शोरूम पर खड़े हों तभी यह button दबाएं)`);
+        setGettingLocation(false);
+      },
+      (err) => { alert('❌ Location error: ' + err.message); setGettingLocation(false); },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  };
+
+  const saveSettings = async () => {
+    if (!form.shopLat || !form.shopLng) { alert('Lat/Lng जरूरी है'); return; }
+    setSaving(true);
+    try {
+      const res = await fetch(api('/api/attendance/shop/settings'), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopLat: parseFloat(form.shopLat),
+          shopLng: parseFloat(form.shopLng),
+          allowedRadius: parseInt(form.allowedRadius) || 100,
+          workStartTime: form.workStartTime,
+          lateAfter: form.lateAfter,
+          workEndTime: form.workEndTime,
+          latePenalty: parseInt(form.latePenalty) || 50,
+          attendanceRulesStartDate: form.attendanceRulesStartDate || null,
+        }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        onUpdate(updated);
+        alert('✅ Shop settings saved!');
+        setShowSettings(false);
+      } else { alert('❌ Save failed'); }
+    } catch (err) { alert(err.message); }
+    setSaving(false);
+  };
+
+  const isConfigured = shopSettings?.shopLat && shopSettings?.shopLng;
+  const rulesActivated = !!shopSettings?.attendanceRulesStartDate;
+  const rulesStartFormatted = shopSettings?.attendanceRulesStartDate
+    ? new Date(shopSettings.attendanceRulesStartDate).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })
+    : null;
+
+  return (
+    <div className="space-y-3">
+      {/* ═══ GPS Location Banner ═══ */}
+      <div className={`rounded-xl border-2 overflow-hidden transition-all ${isConfigured ? 'bg-gradient-to-r from-emerald-900/40 to-green-900/40 border-emerald-600' : 'bg-gradient-to-r from-red-900/40 to-orange-900/40 border-orange-500'}`}>
+        <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${isConfigured ? 'bg-emerald-600' : 'bg-orange-600'}`}>
+              <MapPin size={20} className="text-white" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className={`text-sm font-bold ${isConfigured ? 'text-emerald-300' : 'text-orange-300'}`}>
+                {isConfigured ? '📍 GPS Check-in Active' : '⚠️ Shop Location Not Set'}
+              </p>
+              <p className="text-slate-400 text-xs mt-0.5">
+                {isConfigured
+                  ? `कर्मचारी सिर्फ ${shopSettings.allowedRadius}m के अंदर check-in कर सकते हैं · ${shopSettings.shopLat?.toFixed(5)}, ${shopSettings.shopLng?.toFixed(5)}`
+                  : 'Admin को location set करनी होगी ताकि कर्मचारी check-in कर सकें'}
+              </p>
+            </div>
+          </div>
+          {isAdmin && (
+            <Button
+              onClick={() => setShowSettings(!showSettings)}
+              className={`${isConfigured ? 'bg-emerald-700 hover:bg-emerald-600' : 'bg-orange-600 hover:bg-orange-500'} text-white text-xs font-bold px-3 py-1.5 h-auto`}
+            >
+              {showSettings ? '✖️ Close' : isConfigured ? '⚙️ Edit' : '📍 Set Location'}
+            </Button>
+          )}
+        </div>
+
+        {showSettings && isAdmin && (
+          <div className="border-t border-slate-700 p-4 bg-slate-900/60 space-y-4">
+            <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-3 text-xs text-blue-200">
+              💡 <b>टिप:</b> शोरूम पर खड़े होकर "📍 Current Location Capture करें" button दबाएं। यह आपकी exact GPS coordinates ले लेगा।
+            </div>
+
+            {/* Location Settings */}
+            <div>
+              <h4 className="text-white font-bold text-sm mb-3 flex items-center gap-2">📍 Shop Location</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="md:col-span-2">
+                  <Button onClick={captureMyLocation} disabled={gettingLocation}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5">
+                    {gettingLocation ? '⏳ GPS ले रहे हैं...' : '📍 Current Location Capture करें'}
+                  </Button>
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Shop Latitude</label>
+                  <Input type="number" step="any" value={form.shopLat} onChange={e => setForm({...form, shopLat: e.target.value})}
+                    className="bg-slate-700 text-white border-slate-600" placeholder="23.2599" />
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Shop Longitude</label>
+                  <Input type="number" step="any" value={form.shopLng} onChange={e => setForm({...form, shopLng: e.target.value})}
+                    className="bg-slate-700 text-white border-slate-600" placeholder="77.4126" />
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Allowed Radius (meters)</label>
+                  <Input type="number" value={form.allowedRadius} onChange={e => setForm({...form, allowedRadius: e.target.value})}
+                    className="bg-slate-700 text-white border-slate-600" placeholder="100" />
+                  <p className="text-slate-500 text-xs mt-1">कर्मचारी इतने meter के अंदर check-in कर सकते हैं</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="h-px bg-slate-700" />
+
+            {/* Work Hours */}
+            <div>
+              <h4 className="text-white font-bold text-sm mb-3 flex items-center gap-2">⏰ Work Hours</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Work Start Time</label>
+                  <Input type="time" value={form.workStartTime} onChange={e => setForm({...form, workStartTime: e.target.value})}
+                    className="bg-slate-700 text-white border-slate-600" />
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Late After</label>
+                  <Input type="time" value={form.lateAfter} onChange={e => setForm({...form, lateAfter: e.target.value})}
+                    className="bg-slate-700 text-white border-slate-600" />
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Work End Time</label>
+                  <Input type="time" value={form.workEndTime} onChange={e => setForm({...form, workEndTime: e.target.value})}
+                    className="bg-slate-700 text-white border-slate-600" />
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Late Penalty (₹/day)</label>
+                  <Input type="number" value={form.latePenalty} onChange={e => setForm({...form, latePenalty: e.target.value})}
+                    className="bg-slate-700 text-white border-slate-600" />
+                </div>
+              </div>
+            </div>
+
+            <div className="h-px bg-slate-700" />
+
+            {/* ⭐ NEW: Attendance Rules Activation */}
+            <div>
+              <h4 className="text-white font-bold text-sm mb-2 flex items-center gap-2">📅 Salary Rules Activation Date</h4>
+              <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-3 text-xs text-yellow-200 mb-3">
+                <b>⚠️ जरूरी:</b> इस date से पहले के महीने <b>Grace Period</b> में होंगे — कोई salary deduction नहीं होगी।
+                <br/>इस date से जो महीने शुरू होंगे उनमें पूरे नियम लागू होंगे।
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Rules लागू होने की date</label>
+                  <Input type="date" value={form.attendanceRulesStartDate}
+                    onChange={e => setForm({...form, attendanceRulesStartDate: e.target.value})}
+                    className="bg-slate-700 text-white border-slate-600" />
+                  <p className="text-slate-500 text-xs mt-1">Recommended: next month की 1 तारीख</p>
+                </div>
+                <div className="flex items-end">
+                  <Button
+                    onClick={() => setForm({...form, attendanceRulesStartDate: nextMonth1st()})}
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs"
+                  >
+                    📅 Next Month से लागू करें
+                  </Button>
+                </div>
+              </div>
+              {form.attendanceRulesStartDate && (
+                <div className="mt-2 bg-emerald-900/30 border border-emerald-700 rounded p-2 text-xs text-emerald-300">
+                  ✅ {new Date(form.attendanceRulesStartDate).toLocaleDateString('en-IN', { day:'2-digit', month:'long', year:'numeric' })} से rules लागू होंगे
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <Button onClick={saveSettings} disabled={saving} className="bg-green-600 hover:bg-green-700 text-white font-bold flex-1">
+                {saving ? '⏳ Saving...' : '💾 Save Settings'}
+              </Button>
+              <Button onClick={() => setShowSettings(false)} className="bg-gray-600 hover:bg-gray-700 text-white">
+                Cancel
+              </Button>
+            </div>
+
+            {form.shopLat && form.shopLng && (
+              <div className="mt-2">
+                <a
+                  href={`https://www.google.com/maps?q=${form.shopLat},${form.shopLng}`}
+                  target="_blank" rel="noopener noreferrer"
+                  className="inline-block text-blue-400 text-xs underline"
+                >
+                  🗺️ Google Maps में देखें: {form.shopLat}, {form.shopLng}
+                </a>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ═══ Salary Rules Status Banner ═══ */}
+      <div className={`rounded-xl border-2 px-4 py-3 flex items-center justify-between flex-wrap gap-2 ${rulesActivated ? 'bg-gradient-to-r from-indigo-900/40 to-purple-900/40 border-indigo-600' : 'bg-gradient-to-r from-slate-800 to-slate-900 border-slate-600'}`}>
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${rulesActivated ? 'bg-indigo-600' : 'bg-slate-600'}`}>
+            <span className="text-xl">📅</span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className={`text-sm font-bold ${rulesActivated ? 'text-indigo-300' : 'text-slate-300'}`}>
+              {rulesActivated ? `📋 Salary Rules Active from ${rulesStartFormatted}` : '🕊️ Grace Period — No Rules Active Yet'}
+            </p>
+            <p className="text-slate-400 text-xs mt-0.5">
+              {rulesActivated
+                ? `इस date से पहले के महीने में कोई deduction नहीं। Sundays = paid off · Absent days = per-day deduction`
+                : 'Admin को activation date set करनी होगी। तब तक किसी भी महीने में salary कटौती नहीं होगी।'}
+            </p>
+          </div>
         </div>
       </div>
     </div>

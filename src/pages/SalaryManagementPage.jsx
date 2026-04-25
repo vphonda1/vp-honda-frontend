@@ -2,8 +2,8 @@
 // SalaryManagementPage.jsx — VP Honda Salary & Rent Ledger
 // ════════════════════════════════════════════════════════════════════════════
 // All staff + rent expenses in one place:
-// • 8 staff entities (4 original + 3 replacements)
-// • 5 rent entities (4 original + 3 replacements)
+// • 8 staff entities (5 original + 3 replacements)
+// • 5 rent entities (3 original + 2 replacements)
 // • Seeded with 277 payment records from Excel (Sallery.xlsx)
 // • Per-entity: total paid, months active, expected, pending balance
 // • Staff replacements visualized with chain
@@ -60,6 +60,8 @@ export default function SalaryManagementPage() {
   const [filterType, setFilterType] = useState('all');     // 'all' | 'staff' | 'rent'
   const [showAddPayment, setShowAddPayment] = useState(false);
   const [showAddEntity, setShowAddEntity] = useState(false);
+  const [editingEntity, setEditingEntity] = useState(null);         // ⭐ entity being edited
+  const [editingPayment, setEditingPayment] = useState(null);       // ⭐ payment being edited
   const [seedingInProgress, setSeedingInProgress] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
@@ -121,7 +123,53 @@ export default function SalaryManagementPage() {
     setSeedingInProgress(false);
   };
 
-  // ── Calculations ──────────────────────────────────────────────────────
+  // ── Full reset — nuclear option to clear and re-seed ──────────────────
+  const handleReset = async () => {
+    const msg = `⚠️ DANGER ZONE ⚠️\n\nयह सब कुछ हटा देगा:\n• सभी entities (staff + rent)\n• सभी seeded payments (Excel से imported)\n\nManual add की गई payments safe रहेंगी।\n\nक्या continue करना है?`;
+    if (!window.confirm(msg)) return;
+    if (!window.confirm('आखिरी chance — सच में सब कुछ हटा दें?')) return;
+
+    try {
+      const res = await fetch(api('/api/salary-entities/reset'), { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`✅ Reset complete\n\n• Entities deleted: ${data.entitiesDeleted}\n• Seeded payments deleted: ${data.paymentsDeleted}\n\nअब "Import from Excel" button से fresh data load करें।`);
+        await loadAll();
+        setActiveTab('all');
+      } else {
+        alert(`❌ ${data.error}`);
+      }
+    } catch (err) { alert(err.message); }
+  };
+
+  // ── Delete entity ─────────────────────────────────────────────────────
+  const handleDeleteEntity = async (entity) => {
+    if (!window.confirm(`⚠️ ${entity.name} को delete करें?\n\nइनके सभी payments भी delete हो जाएंगे।`)) return;
+    try {
+      const res = await fetch(api(`/api/salary-entities/${entity._id}`), { method: 'DELETE' });
+      if (res.ok) {
+        alert(`✅ ${entity.name} deleted`);
+        setActiveTab('all');
+        await loadAll();
+      } else {
+        const data = await res.json();
+        alert(`❌ ${data.error}`);
+      }
+    } catch (err) { alert(err.message); }
+  };
+
+  // ── Delete single payment ─────────────────────────────────────────────
+  const handleDeletePayment = async (payment) => {
+    if (!window.confirm(`Payment delete करें?\n\n${fmtINR(payment.amount)} · ${payment.paymentDate}`)) return;
+    try {
+      const res = await fetch(api(`/api/salaries/${payment._id}`), { method: 'DELETE' });
+      if (res.ok) {
+        await loadAll();
+      } else {
+        alert('Delete failed');
+      }
+    } catch (err) { alert(err.message); }
+  };
   const calcs = useMemo(() => {
     // Per-entity stats
     const perEntity = entities.map(e => {
@@ -213,6 +261,13 @@ export default function SalaryManagementPage() {
               style={{ background:'#1e293b', color:'#f8fafc', padding:'10px 14px', borderRadius:10, border:'1px solid #334155', cursor:'pointer', display:'flex', alignItems:'center', gap:6, fontSize:13 }}>
               <RefreshCw size={14}/>
             </button>
+            {!isEmpty && (
+              <button onClick={handleReset}
+                style={{ background:'#7f1d1d22', color:'#fca5a5', padding:'10px 14px', borderRadius:10, border:'1px solid #ef444455', cursor:'pointer', display:'flex', alignItems:'center', gap:6, fontSize:11, fontWeight:700 }}
+                title="Clear all and re-seed">
+                <Trash2 size={12}/> Reset
+              </button>
+            )}
           </div>
         </div>
 
@@ -328,7 +383,14 @@ export default function SalaryManagementPage() {
             )}
 
             {/* ═══ SINGLE ENTITY VIEW ═══ */}
-            {activeEntity && <EntityDetails entity={activeEntity} onAddPayment={() => setShowAddPayment(true)} onRefresh={loadAll}/>}
+            {activeEntity && <EntityDetails
+              entity={activeEntity}
+              onAddPayment={() => setShowAddPayment(true)}
+              onEdit={() => setEditingEntity(activeEntity)}
+              onDelete={() => handleDeleteEntity(activeEntity)}
+              onDeletePayment={handleDeletePayment}
+              onEditPayment={(p) => setEditingPayment(p)}
+            />}
           </>
         )}
 
@@ -340,6 +402,16 @@ export default function SalaryManagementPage() {
         {/* MODAL: Add Entity */}
         {showAddEntity && (
           <AddEntityModal onClose={() => setShowAddEntity(false)} onSuccess={() => { setShowAddEntity(false); loadAll(); }} existing={entities}/>
+        )}
+
+        {/* MODAL: Edit Entity */}
+        {editingEntity && (
+          <EditEntityModal entity={editingEntity} onClose={() => setEditingEntity(null)} onSuccess={() => { setEditingEntity(null); loadAll(); }}/>
+        )}
+
+        {/* MODAL: Edit Payment */}
+        {editingPayment && (
+          <EditPaymentModal payment={editingPayment} onClose={() => setEditingPayment(null)} onSuccess={() => { setEditingPayment(null); loadAll(); }}/>
         )}
 
       </div>
@@ -399,20 +471,29 @@ function EntityCard({ entity: e, onClick }) {
         opacity: e.active ? 1 : 0.75,
       }}
       className="hover:scale-[1.01] hover:shadow-xl">
-      {/* Header */}
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'start', marginBottom:10 }}>
-        <div>
-          <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:4 }}>
-            <span style={{ fontSize:18 }}>{e.type === 'staff' ? '👤' : '🏠'}</span>
-            <h3 style={{ color:'#f8fafc', fontSize:16, fontWeight:800, margin:0 }}>{e.name}</h3>
-            {!e.active && <span style={{ background:'#64748b22', color:'#94a3b8', fontSize:9, padding:'2px 6px', borderRadius:4 }}>ENDED</span>}
+      {/* Header with photo */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'start', marginBottom:10, gap:10 }}>
+        <div style={{ display:'flex', gap:10, flex:1, minWidth:0 }}>
+          <div style={{
+            width:44, height:44, borderRadius:'50%', flexShrink:0,
+            background: e.photo ? `url(${e.photo}) center/cover` : `linear-gradient(135deg, ${typeColor}, ${typeColor}aa)`,
+            display:'flex', alignItems:'center', justifyContent:'center',
+            border:`2px solid ${statusColor}66`,
+          }}>
+            {!e.photo && <span style={{ fontSize:20 }}>{e.type === 'staff' ? '👤' : '🏠'}</span>}
           </div>
-          <p style={{ color:'#64748b', fontSize:10 }}>
-            {e.type === 'staff' ? 'Staff' : 'Rental'} · {fmtINR(e.monthlyAmount)}/month
-          </p>
+          <div style={{ minWidth:0, flex:1 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:2 }}>
+              <h3 style={{ color:'#f8fafc', fontSize:15, fontWeight:800, margin:0, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{e.name}</h3>
+              {!e.active && <span style={{ background:'#64748b22', color:'#94a3b8', fontSize:9, padding:'2px 6px', borderRadius:4, flexShrink:0 }}>ENDED</span>}
+            </div>
+            <p style={{ color:'#64748b', fontSize:10, margin:0 }}>
+              {e.type === 'staff' ? 'Staff' : 'Rental'} · {fmtINR(e.monthlyAmount)}/mo
+            </p>
+          </div>
         </div>
         {isOverdue && (
-          <div style={{ background:'#ef444422', border:'1px solid #ef444466', borderRadius:8, padding:'2px 8px' }}>
+          <div style={{ background:'#ef444422', border:'1px solid #ef444466', borderRadius:8, padding:'2px 8px', flexShrink:0 }}>
             <span style={{ color:'#fca5a5', fontSize:10, fontWeight:700 }}>⚠ DUE</span>
           </div>
         )}
@@ -460,7 +541,7 @@ function Metric({ label, value, color }) {
 }
 
 // ── Single Entity Details View ──────────────────────────────────────────────
-function EntityDetails({ entity: e, onAddPayment, onRefresh }) {
+function EntityDetails({ entity: e, onAddPayment, onEdit, onDelete, onDeletePayment, onEditPayment }) {
   const [showHistory, setShowHistory] = useState(true);
 
   // Group payments by month
@@ -482,38 +563,64 @@ function EntityDetails({ entity: e, onAddPayment, onRefresh }) {
 
   return (
     <div style={{ display:'grid', gap:14 }}>
-      {/* Header */}
+      {/* Header with photo + actions */}
       <div style={{ background:'linear-gradient(135deg, #1e293b, #0f172a)', border:'1px solid #334155', borderRadius:16, padding:20 }}>
         <div style={{ display:'flex', flexWrap:'wrap', justifyContent:'space-between', alignItems:'start', gap:14 }}>
-          <div>
-            <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6 }}>
-              <span style={{ fontSize:28 }}>{e.type === 'staff' ? '👤' : '🏠'}</span>
-              <h2 style={{ color:'#f8fafc', fontSize:24, fontWeight:900, margin:0 }}>{e.name}</h2>
-              {e.active ? (
-                <span style={{ background:'#22c55e22', color:'#86efac', fontSize:10, fontWeight:700, padding:'3px 8px', borderRadius:6 }}>ACTIVE</span>
-              ) : (
-                <span style={{ background:'#64748b33', color:'#94a3b8', fontSize:10, fontWeight:700, padding:'3px 8px', borderRadius:6 }}>ENDED</span>
+          <div style={{ display:'flex', gap:14, alignItems:'start', flex:1, minWidth:280 }}>
+            {/* Profile Photo */}
+            <div style={{
+              width:72, height:72, borderRadius:'50%',
+              background: e.photo ? `url(${e.photo}) center/cover` : `linear-gradient(135deg, ${e.type==='staff'?'#3b82f6':'#a855f7'}, ${e.type==='staff'?'#1e40af':'#7e22ce'})`,
+              display:'flex', alignItems:'center', justifyContent:'center',
+              flexShrink:0, border:'3px solid #334155',
+            }}>
+              {!e.photo && <span style={{ fontSize:28 }}>{e.type === 'staff' ? '👤' : '🏠'}</span>}
+            </div>
+            <div style={{ flex:1 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6, flexWrap:'wrap' }}>
+                <h2 style={{ color:'#f8fafc', fontSize:22, fontWeight:900, margin:0 }}>{e.name}</h2>
+                {e.active ? (
+                  <span style={{ background:'#22c55e22', color:'#86efac', fontSize:10, fontWeight:700, padding:'3px 8px', borderRadius:6 }}>ACTIVE</span>
+                ) : (
+                  <span style={{ background:'#64748b33', color:'#94a3b8', fontSize:10, fontWeight:700, padding:'3px 8px', borderRadius:6 }}>ENDED</span>
+                )}
+                <span style={{ background: e.type==='staff'?'#3b82f622':'#a855f722', color: e.type==='staff'?'#93c5fd':'#d8b4fe', fontSize:10, fontWeight:700, padding:'3px 8px', borderRadius:6 }}>
+                  {e.type === 'staff' ? '👤 STAFF' : '🏠 RENT'}
+                </span>
+              </div>
+              <p style={{ color:'#94a3b8', fontSize:12, lineHeight:1.5 }}>
+                Monthly: <b style={{ color:'#f8fafc' }}>{fmtINR(e.monthlyAmount)}</b>
+                <br/>
+                Start: <b style={{ color:'#f8fafc' }}>{fmtDate(e.startDate)}</b>
+                {e.endDate && <> · End: <b style={{ color:'#fca5a5' }}>{fmtDate(e.endDate)}</b></>}
+              </p>
+              {e.notes && <p style={{ color:'#64748b', fontSize:11, marginTop:4 }}>📝 {e.notes}</p>}
+              {(e.replaces || e.replacedBy) && (
+                <div style={{ marginTop:8, display:'flex', gap:8, flexWrap:'wrap' }}>
+                  {e.replaces && <span style={{ background:'#22c55e22', color:'#86efac', fontSize:10, padding:'4px 10px', borderRadius:8 }}>← Replaces <b>{e.replaces}</b></span>}
+                  {e.replacedBy && <span style={{ background:'#ef444422', color:'#fca5a5', fontSize:10, padding:'4px 10px', borderRadius:8 }}>Replaced by <b>{e.replacedBy}</b> →</span>}
+                </div>
               )}
             </div>
-            <p style={{ color:'#94a3b8', fontSize:12 }}>
-              {e.type === 'staff' ? 'Employee' : 'Rental House'} · Monthly: <b style={{ color:'#f8fafc' }}>{fmtINR(e.monthlyAmount)}</b>
-              {' · '}Hired: <b style={{ color:'#f8fafc' }}>{fmtDate(e.startDate)}</b>
-              {e.endDate && <> · Ended: <b style={{ color:'#fca5a5' }}>{fmtDate(e.endDate)}</b></>}
-            </p>
-            {e.notes && <p style={{ color:'#64748b', fontSize:11, marginTop:4 }}>📝 {e.notes}</p>}
-            {(e.replaces || e.replacedBy) && (
-              <div style={{ marginTop:8, display:'flex', gap:8, flexWrap:'wrap' }}>
-                {e.replaces && <span style={{ background:'#22c55e22', color:'#86efac', fontSize:10, padding:'4px 10px', borderRadius:8 }}>← Replaces <b>{e.replaces}</b></span>}
-                {e.replacedBy && <span style={{ background:'#ef444422', color:'#fca5a5', fontSize:10, padding:'4px 10px', borderRadius:8 }}>Replaced by <b>{e.replacedBy}</b> →</span>}
-              </div>
-            )}
           </div>
-          {e.active && (
-            <button onClick={onAddPayment}
-              style={{ background:'linear-gradient(135deg, #22c55e, #10b981)', color:'#fff', padding:'10px 18px', borderRadius:10, fontWeight:700, fontSize:13, border:'none', cursor:'pointer', display:'flex', alignItems:'center', gap:6, boxShadow:'0 4px 14px rgba(34,197,94,0.4)' }}>
-              <Plus size={14}/> Add Payment
+
+          {/* Action buttons */}
+          <div style={{ display:'flex', flexDirection:'column', gap:6, minWidth:140 }}>
+            {e.active && (
+              <button onClick={onAddPayment}
+                style={{ background:'linear-gradient(135deg, #22c55e, #10b981)', color:'#fff', padding:'10px 14px', borderRadius:10, fontWeight:700, fontSize:12, border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:6, boxShadow:'0 4px 14px rgba(34,197,94,0.4)' }}>
+                <Plus size={13}/> Add Payment
+              </button>
+            )}
+            <button onClick={onEdit}
+              style={{ background:'#3b82f622', border:'1px solid #3b82f666', color:'#93c5fd', padding:'8px 14px', borderRadius:10, fontWeight:700, fontSize:12, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:6 }}>
+              <Edit2 size={12}/> Edit
             </button>
-          )}
+            <button onClick={onDelete}
+              style={{ background:'#ef444422', border:'1px solid #ef444466', color:'#fca5a5', padding:'8px 14px', borderRadius:10, fontWeight:700, fontSize:12, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:6 }}>
+              <Trash2 size={12}/> Delete
+            </button>
+          </div>
         </div>
       </div>
 
@@ -548,7 +655,7 @@ function EntityDetails({ entity: e, onAddPayment, onRefresh }) {
       )}
 
       {/* Payment History */}
-      <Panel title={`💰 Payment History (${e.payments.length})`} subtitle="All transactions"
+      <Panel title={`💰 Payment History (${e.payments.length})`} subtitle="All transactions — tap edit/delete"
         action={
           <button onClick={() => setShowHistory(!showHistory)}
             style={{ background:'#3b82f622', border:'1px solid #3b82f655', color:'#93c5fd', padding:'6px 12px', borderRadius:8, fontSize:11, cursor:'pointer', display:'flex', alignItems:'center', gap:4 }}>
@@ -567,6 +674,7 @@ function EntityDetails({ entity: e, onAddPayment, onRefresh }) {
                     <th style={{ padding:8, textAlign:'right' }}>Amount</th>
                     <th style={{ padding:8, textAlign:'left' }}>Type</th>
                     <th style={{ padding:8, textAlign:'left' }}>Notes</th>
+                    <th style={{ padding:8, textAlign:'center', width:70 }}>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -580,6 +688,16 @@ function EntityDetails({ entity: e, onAddPayment, onRefresh }) {
                         </span>
                       </td>
                       <td style={{ padding:'8px', color:'#64748b' }}>{p.notes || '—'}</td>
+                      <td style={{ padding:'8px', textAlign:'center' }}>
+                        <button onClick={() => onEditPayment(p)} title="Edit"
+                          style={{ background:'transparent', border:'none', color:'#60a5fa', cursor:'pointer', marginRight:4, padding:4 }}>
+                          <Edit2 size={12}/>
+                        </button>
+                        <button onClick={() => onDeletePayment(p)} title="Delete"
+                          style={{ background:'transparent', border:'none', color:'#f87171', cursor:'pointer', padding:4 }}>
+                          <Trash2 size={12}/>
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -693,7 +811,33 @@ function AddEntityModal({ onClose, onSuccess, existing }) {
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [replaces, setReplaces] = useState('');
   const [notes, setNotes] = useState('');
+  const [photo, setPhoto] = useState('');
+  const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { alert('⚠️ Photo 2MB से छोटी होनी चाहिए'); return; }
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxSize = 300;
+        let { width, height } = img;
+        if (width > height) { if (width > maxSize) { height = (height * maxSize) / width; width = maxSize; } }
+        else { if (height > maxSize) { width = (width * maxSize) / height; height = maxSize; } }
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        setPhoto(canvas.toDataURL('image/jpeg', 0.75));
+        setUploading(false);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
 
   const save = async () => {
     if (!name || !startDate) { alert('Name और start date जरूरी है'); return; }
@@ -704,7 +848,7 @@ function AddEntityModal({ onClose, onSuccess, existing }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name, type, monthlyAmount: parseFloat(monthlyAmount) || 0,
-          startDate, replaces: replaces || null, notes,
+          startDate, replaces: replaces || null, photo, notes,
         }),
       });
       if (res.ok) {
@@ -718,7 +862,6 @@ function AddEntityModal({ onClose, onSuccess, existing }) {
     setSubmitting(false);
   };
 
-  // filter existing by type for "replaces"
   const replaceableOptions = existing.filter(e => e.type === type && e.active);
 
   return (
@@ -726,6 +869,22 @@ function AddEntityModal({ onClose, onSuccess, existing }) {
       <div style={{ background:'#1e293b', borderRadius:16, padding:24, maxWidth:480, width:'100%', border:'1px solid #334155', maxHeight:'90vh', overflowY:'auto' }} onClick={e => e.stopPropagation()}>
         <h3 style={{ color:'#f8fafc', fontSize:18, fontWeight:800, margin:0 }}>➕ Add New Entity</h3>
         <p style={{ color:'#94a3b8', fontSize:12, margin:'4px 0 16px' }}>Staff member या rental house add करें</p>
+
+        <FormField label="📸 Photo (optional)">
+          <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+            <div style={{
+              width:72, height:72, borderRadius:'50%',
+              background: photo ? `url(${photo}) center/cover` : `linear-gradient(135deg, ${type==='staff'?'#3b82f6':'#a855f7'}, ${type==='staff'?'#1e40af':'#7e22ce'})`,
+              display:'flex', alignItems:'center', justifyContent:'center', border:'3px solid #334155', flexShrink:0,
+            }}>
+              {!photo && <span style={{ fontSize:28 }}>{type === 'staff' ? '👤' : '🏠'}</span>}
+            </div>
+            <label style={{ display:'inline-block', background:'#3b82f6', color:'#fff', padding:'8px 14px', borderRadius:8, cursor:'pointer', fontSize:12, fontWeight:700 }}>
+              {uploading ? '⏳ Uploading...' : photo ? '🔄 Change' : '📤 Upload from Gallery'}
+              <input type="file" accept="image/*" onChange={handlePhotoUpload} disabled={uploading} style={{ display:'none' }}/>
+            </label>
+          </div>
+        </FormField>
 
         <FormField label="Type">
           <div style={{ display:'flex', gap:8 }}>
@@ -762,7 +921,7 @@ function AddEntityModal({ onClose, onSuccess, existing }) {
 
         <div style={{ display:'flex', gap:8, marginTop:16 }}>
           <button onClick={onClose} disabled={submitting} style={{ flex:1, background:'#334155', color:'#fff', padding:10, borderRadius:10, border:'none', cursor:'pointer', fontSize:13, fontWeight:700 }}>Cancel</button>
-          <button onClick={save} disabled={submitting} style={{ flex:1, background:'linear-gradient(135deg, #3b82f6, #6366f1)', color:'#fff', padding:10, borderRadius:10, border:'none', cursor: submitting?'wait':'pointer', fontSize:13, fontWeight:700 }}>
+          <button onClick={save} disabled={submitting || uploading} style={{ flex:1, background:'linear-gradient(135deg, #3b82f6, #6366f1)', color:'#fff', padding:10, borderRadius:10, border:'none', cursor: (submitting||uploading)?'wait':'pointer', fontSize:13, fontWeight:700 }}>
             {submitting ? 'Saving...' : '✅ Add'}
           </button>
         </div>
@@ -784,3 +943,244 @@ const inputStyle = {
   width:'100%', padding:'9px 12px', background:'#0f172a', border:'1px solid #334155',
   borderRadius:8, color:'#f8fafc', fontSize:13,
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// EDIT ENTITY MODAL — with photo upload from mobile gallery
+// ════════════════════════════════════════════════════════════════════════════
+function EditEntityModal({ entity, onClose, onSuccess }) {
+  const [name, setName] = useState(entity.name);
+  const [type, setType] = useState(entity.type);
+  const [monthlyAmount, setMonthlyAmount] = useState(entity.monthlyAmount || 0);
+  const [startDate, setStartDate] = useState(entity.startDate || '');
+  const [endDate, setEndDate] = useState(entity.endDate || '');
+  const [notes, setNotes] = useState(entity.notes || '');
+  const [photo, setPhoto] = useState(entity.photo || '');
+  const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  // ── Photo upload from mobile gallery ──────────────────────────────
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Check size (max 2MB to keep MongoDB docs small)
+    if (file.size > 2 * 1024 * 1024) {
+      alert('⚠️ Photo 2MB से छोटी होनी चाहिए। कृपया resize करें।');
+      return;
+    }
+
+    setUploading(true);
+    try {
+      // Convert to base64 + resize using canvas
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onload = () => {
+          // Resize to max 300px (for profile pic)
+          const canvas = document.createElement('canvas');
+          const maxSize = 300;
+          let { width, height } = img;
+          if (width > height) {
+            if (width > maxSize) { height = (height * maxSize) / width; width = maxSize; }
+          } else {
+            if (height > maxSize) { width = (width * maxSize) / height; height = maxSize; }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          const resized = canvas.toDataURL('image/jpeg', 0.75);   // 75% quality JPEG
+          setPhoto(resized);
+          setUploading(false);
+        };
+        img.onerror = () => { alert('Image load error'); setUploading(false); };
+        img.src = ev.target.result;
+      };
+      reader.onerror = () => { alert('File read error'); setUploading(false); };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      alert(`Upload error: ${err.message}`);
+      setUploading(false);
+    }
+  };
+
+  const save = async () => {
+    if (!name || !startDate) { alert('Name और start date जरूरी है'); return; }
+    setSubmitting(true);
+    try {
+      const res = await fetch(api(`/api/salary-entities/${entity._id}`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name, type,
+          monthlyAmount: parseFloat(monthlyAmount) || 0,
+          startDate,
+          endDate: endDate || null,
+          active: !endDate,
+          photo, notes,
+        }),
+      });
+      if (res.ok) {
+        alert(`✅ ${name} updated`);
+        onSuccess();
+      } else {
+        const data = await res.json();
+        alert(`❌ ${data.error || 'Update failed'}`);
+      }
+    } catch (err) { alert(err.message); }
+    setSubmitting(false);
+  };
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20 }} onClick={onClose}>
+      <div style={{ background:'#1e293b', borderRadius:16, padding:24, maxWidth:480, width:'100%', border:'1px solid #334155', maxHeight:'90vh', overflowY:'auto' }} onClick={e => e.stopPropagation()}>
+        <h3 style={{ color:'#f8fafc', fontSize:18, fontWeight:800, margin:0 }}>✏️ Edit Entity</h3>
+        <p style={{ color:'#94a3b8', fontSize:12, margin:'4px 0 16px' }}>Editing: <b style={{ color:'#f8fafc' }}>{entity.name}</b></p>
+
+        {/* PHOTO UPLOAD */}
+        <FormField label="📸 Photo (mobile gallery से select करें)">
+          <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+            <div style={{
+              width:80, height:80, borderRadius:'50%',
+              background: photo ? `url(${photo}) center/cover` : `linear-gradient(135deg, ${type==='staff'?'#3b82f6':'#a855f7'}, ${type==='staff'?'#1e40af':'#7e22ce'})`,
+              display:'flex', alignItems:'center', justifyContent:'center', border:'3px solid #334155', flexShrink:0,
+            }}>
+              {!photo && <span style={{ fontSize:32 }}>{type === 'staff' ? '👤' : '🏠'}</span>}
+            </div>
+            <div style={{ flex:1 }}>
+              <label style={{ display:'inline-block', background:'#3b82f6', color:'#fff', padding:'8px 14px', borderRadius:8, cursor:'pointer', fontSize:12, fontWeight:700 }}>
+                {uploading ? '⏳ Uploading...' : photo ? '🔄 Change Photo' : '📤 Upload from Gallery'}
+                <input type="file" accept="image/*" onChange={handlePhotoUpload} disabled={uploading} style={{ display:'none' }}/>
+              </label>
+              {photo && (
+                <button onClick={() => setPhoto('')} style={{ display:'block', marginTop:6, background:'transparent', border:'none', color:'#f87171', fontSize:11, cursor:'pointer' }}>
+                  🗑️ Remove photo
+                </button>
+              )}
+              <p style={{ color:'#64748b', fontSize:10, marginTop:4 }}>Max 2MB · Auto-resized to 300px</p>
+            </div>
+          </div>
+        </FormField>
+
+        <FormField label="Type">
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={() => setType('staff')}
+              style={{ ...inputStyle, flex:1, background: type==='staff' ? '#3b82f6' : '#0f172a', border: type==='staff' ? '1px solid #93c5fd' : '1px solid #334155', cursor:'pointer' }}>👤 Staff</button>
+            <button onClick={() => setType('rent')}
+              style={{ ...inputStyle, flex:1, background: type==='rent' ? '#a855f7' : '#0f172a', border: type==='rent' ? '1px solid #c4b5fd' : '1px solid #334155', cursor:'pointer' }}>🏠 Rent/House</button>
+          </div>
+        </FormField>
+
+        <FormField label="Name">
+          <input type="text" value={name} onChange={e => setName(e.target.value)} style={inputStyle}/>
+        </FormField>
+
+        <FormField label="Monthly Amount (₹)">
+          <input type="number" value={monthlyAmount} onChange={e => setMonthlyAmount(e.target.value)} style={inputStyle}/>
+        </FormField>
+
+        <FormField label="Start Date">
+          <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={inputStyle}/>
+        </FormField>
+
+        <FormField label="End Date (blank = अभी active)">
+          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={inputStyle}/>
+          {endDate && <p style={{ color:'#fbbf24', fontSize:10, marginTop:4 }}>⚠️ End date set करने पर "ENDED" mark होगा</p>}
+        </FormField>
+
+        <FormField label="Notes">
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ ...inputStyle, resize:'vertical' }}/>
+        </FormField>
+
+        <div style={{ display:'flex', gap:8, marginTop:16 }}>
+          <button onClick={onClose} disabled={submitting}
+            style={{ flex:1, background:'#334155', color:'#fff', padding:10, borderRadius:10, border:'none', cursor:'pointer', fontSize:13, fontWeight:700 }}>
+            Cancel
+          </button>
+          <button onClick={save} disabled={submitting || uploading}
+            style={{ flex:1, background:'linear-gradient(135deg, #3b82f6, #6366f1)', color:'#fff', padding:10, borderRadius:10, border:'none', cursor: (submitting||uploading)?'wait':'pointer', fontSize:13, fontWeight:700 }}>
+            {submitting ? '⏳ Saving...' : '✅ Save Changes'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// EDIT PAYMENT MODAL
+// ════════════════════════════════════════════════════════════════════════════
+function EditPaymentModal({ payment, onClose, onSuccess }) {
+  const [amount, setAmount] = useState(payment.amount || 0);
+  const [date, setDate] = useState(payment.paymentDate || '');
+  const [type, setType] = useState(payment.type || 'salary');
+  const [notes, setNotes] = useState(payment.notes || '');
+  const [submitting, setSubmitting] = useState(false);
+
+  const save = async () => {
+    if (!amount || parseFloat(amount) <= 0) { alert('Valid amount डालें'); return; }
+    setSubmitting(true);
+    try {
+      const res = await fetch(api(`/api/salaries/${payment._id}`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: parseFloat(amount),
+          paymentDate: date,
+          forMonth: parseInt(date.split('-')[1]),
+          forYear: parseInt(date.split('-')[0]),
+          type, notes,
+        }),
+      });
+      if (res.ok) {
+        onSuccess();
+      } else {
+        const data = await res.json();
+        alert(`❌ ${data.error || 'Update failed'}`);
+      }
+    } catch (err) { alert(err.message); }
+    setSubmitting(false);
+  };
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:20 }} onClick={onClose}>
+      <div style={{ background:'#1e293b', borderRadius:16, padding:24, maxWidth:420, width:'100%', border:'1px solid #334155' }} onClick={e => e.stopPropagation()}>
+        <h3 style={{ color:'#f8fafc', fontSize:18, fontWeight:800, margin:0 }}>✏️ Edit Payment</h3>
+        <p style={{ color:'#94a3b8', fontSize:12, margin:'4px 0 16px' }}>For <b style={{ color:'#f8fafc' }}>{payment.staffName}</b></p>
+
+        <FormField label="Amount (₹)">
+          <input type="number" value={amount} onChange={e => setAmount(e.target.value)} style={inputStyle}/>
+        </FormField>
+
+        <FormField label="Payment Date">
+          <input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle}/>
+        </FormField>
+
+        <FormField label="Type">
+          <select value={type} onChange={e => setType(e.target.value)} style={inputStyle}>
+            <option value="salary">Salary / Rent</option>
+            <option value="advance">Advance</option>
+            <option value="bonus">Bonus</option>
+            <option value="incentive">Incentive</option>
+            <option value="deduction">Deduction</option>
+          </select>
+        </FormField>
+
+        <FormField label="Notes">
+          <input type="text" value={notes} onChange={e => setNotes(e.target.value)} style={inputStyle}/>
+        </FormField>
+
+        <div style={{ display:'flex', gap:8, marginTop:16 }}>
+          <button onClick={onClose} disabled={submitting}
+            style={{ flex:1, background:'#334155', color:'#fff', padding:10, borderRadius:10, border:'none', cursor:'pointer', fontSize:13, fontWeight:700 }}>
+            Cancel
+          </button>
+          <button onClick={save} disabled={submitting}
+            style={{ flex:1, background:'linear-gradient(135deg, #3b82f6, #6366f1)', color:'#fff', padding:10, borderRadius:10, border:'none', cursor: submitting?'wait':'pointer', fontSize:13, fontWeight:700 }}>
+            {submitting ? '⏳ Saving...' : '✅ Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

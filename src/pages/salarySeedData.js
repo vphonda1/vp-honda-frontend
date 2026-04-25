@@ -4,40 +4,36 @@ export const SEED_PAYMENTS = [{"person":"Azzam","date":"2024-01-09","amount":610
 // Based on user's instructions:
 // - 17/9/2025: Raju → Sunil, Durgesh → Priya
 // - 17/11/2025: Azzam → Farhan
-// - 20/10/2025: Gajender → Gajender(RENT CHANGE)
 // - 8/3/2026:  Premmla → Vishnu (house rental)
 // - 19/4/2026: Rent → "New House" (higher rent)
 export const SEED_ENTITIES = [
   // ── STAFF ────────────────────────────────────────────────────────────────
-  { name: 'Azzam',    type: 'staff', monthlyAmount: 10000, startDate: '2024-12-15', endDate: '2025-11-17', active: false, replacedBy: 'Farhan', replaces: null,
+  { name: 'Azzam',    type: 'staff', monthlyAmount: 12000, startDate: '2024-09-20', endDate: '2025-11-17', active: false, replacedBy: 'Farhan', replaces: null,
     notes: 'Original staff — replaced by Farhan on 17 Nov 2025' },
-  { name: 'Farhan',   type: 'staff', monthlyAmount: 11000, startDate: '2025-11-17', endDate: null, active: true, replacedBy: null, replaces: 'Azzam',
+  { name: 'Farhan',   type: 'staff', monthlyAmount: 12000, startDate: '2025-11-17', endDate: null, active: true, replacedBy: null, replaces: 'Azzam',
     notes: 'Replaces Azzam' },
-  { name: 'Durgesh',  type: 'staff', monthlyAmount: null,  startDate: '2024-11-20', endDate: '2025-09-17', active: false, replacedBy: 'Priya', replaces: null,
+  { name: 'Durgesh',  type: 'staff', monthlyAmount: 8000,  startDate: '2024-09-20', endDate: '2025-09-17', active: false, replacedBy: 'Priya', replaces: null,
     notes: 'Original staff — replaced by Priya on 17 Sep 2025' },
   { name: 'Priya',    type: 'staff', monthlyAmount: 8000,  startDate: '2025-09-17', endDate: null, active: true, replacedBy: null, replaces: 'Durgesh',
     notes: 'Replaces Durgesh' },
-  
-  { name: 'Raju',     type: 'staff', monthlyAmount: 12000, startDate: '2024-10-20', endDate: '2025-09-17', active: false, replacedBy: 'Sunil', replaces: null,
+  { name: 'Gajender', type: 'rent',  monthlyAmount: 9000,  startDate: '2024-09-20', endDate: null, active: true, replacedBy: null, replaces: null,
+    notes: 'House rent — ₹9000/month' },
+  { name: 'Raju',     type: 'staff', monthlyAmount: 12000, startDate: '2024-09-20', endDate: '2025-09-17', active: false, replacedBy: 'Sunil', replaces: null,
     notes: 'Original staff — replaced by Sunil on 17 Sep 2025' },
   { name: 'Sunil',    type: 'staff', monthlyAmount: 12000, startDate: '2025-09-17', endDate: null, active: true, replacedBy: null, replaces: 'Raju',
     notes: 'Replaces Raju' },
-  { name: 'Sagar',    type: 'staff', monthlyAmount: 12000, startDate: '2024-10-25', endDate: null, active: true, replacedBy: null, replaces: null,
+  { name: 'Sagar',    type: 'staff', monthlyAmount: 18000, startDate: '2024-09-20', endDate: null, active: true, replacedBy: null, replaces: null,
     notes: 'Senior staff' },
 
   // ── RENT / HOUSES ────────────────────────────────────────────────────────
-  { name: 'Premmla',  type: 'rent', monthlyAmount: null,  startDate: '2024-09-20', endDate: '2026-03-08', active: false, replacedBy: 'Vishnu', replaces: null,
+  { name: 'Premmla',  type: 'rent', monthlyAmount: 3000,  startDate: '2024-09-20', endDate: '2026-03-08', active: false, replacedBy: 'Vishnu', replaces: null,
     notes: 'Original house — replaced by Vishnu on 8 Mar 2026' },
-  { name: 'Vishnu',   type: 'rent', monthlyAmount: 3000,  startDate: '2026-03-08', endDate: null, active: true, replacedBy: null, replaces: 'Premmla',
+  { name: 'Vishnu',   type: 'rent', monthlyAmount: 3500,  startDate: '2026-03-08', endDate: null, active: true, replacedBy: null, replaces: 'Premmla',
     notes: 'Replaces Premmla house' },
-  { name: 'Rent',     type: 'rent', monthlyAmount: 2500,  startDate: '2024-11-20', endDate: '2026-04-19', active: false, replacedBy: 'New House', replaces: null,
+  { name: 'Rent',     type: 'rent', monthlyAmount: 5000,  startDate: '2024-09-20', endDate: '2026-04-19', active: false, replacedBy: 'New House', replaces: null,
     notes: 'Original rental — replaced by New House on 19 Apr 2026' },
-  { name: 'New House',type: 'rent', monthlyAmount: 3500,  startDate: '2026-04-19', endDate: null, active: true, replacedBy: null, replaces: 'Rent',
+  { name: 'New House',type: 'rent', monthlyAmount: 7500,  startDate: '2026-04-19', endDate: null, active: true, replacedBy: null, replaces: 'Rent',
     notes: 'New house with higher rent' },
-  { name: 'Home',     type: 'rent', monthlyAmount: null, startDate: '2024-09-20', endDate: null, active: true, replacedBy: null, replaces: null,
+  { name: 'Home',     type: 'rent', monthlyAmount: 20000, startDate: '2024-09-20', endDate: null, active: true, replacedBy: null, replaces: null,
     notes: 'Main residence' },
-  { name: 'Gajender', type: 'rent', monthlyAmount: 9000, startDate: '2024-09-20', endDate: 2025-10-20, active: false, replacedBy: 'Gajender', replaces: null,
-    notes: 'NEW rent change by 20 Oct 2025' },
-  { name: 'Gajender',    type: 'rent', monthlyAmount: 15000,  startDate: '2025-10-20', endDate: null, active: true, replacedBy: null, replaces: 'Gajender',
-    notes: 'Rent change ' },
 ];

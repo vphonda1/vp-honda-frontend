@@ -561,7 +561,32 @@ export default function CustomerManagement({ user }) {
     setShowInvoiceModal(false);
   };
 
-  // ── Dashboard stats (using linkedVehicle) ────────────────────────────────
+  // ⭐ NEW: Cross-page integration - load related data
+  const [serviceData, setServiceData] = useState({});
+  const [invoices, setInvoices] = useState([]);
+  const [partHistory, setPartHistory] = useState([]);
+
+  useEffect(() => {
+    const loadCrossData = async () => {
+      const f = async (url, fb=[]) => { try { const r = await fetch(api(url)); if (r.ok) return await r.json(); } catch {} return fb; };
+      const [sdArr, inv, pHist] = await Promise.all([
+        f('/api/service-data'),
+        f('/api/invoices'),
+        f('/api/parts/history/all'),
+      ]);
+      const sdMap = {};
+      try { Object.assign(sdMap, JSON.parse(localStorage.getItem('customerServiceData') || '{}')); } catch {}
+      sdArr.forEach(r => { sdMap[r.regNo || r._id] = r; });
+      setServiceData(sdMap);
+      setInvoices(inv);
+      setPartHistory(pHist);
+    };
+    loadCrossData();
+    const t = setInterval(loadCrossData, 60000);
+    return () => clearInterval(t);
+  }, [customers.length]);
+
+  // ── Enhanced Dashboard stats with cross-page data ────────────────────────
   const stats = useMemo(() => {
     const total = customers.length;
     const withVehicle = customers.filter(c => c.linkedVehicle?.name && c.linkedVehicle.name !== 'N/A' && c.linkedVehicle.name !== '').length;
@@ -574,6 +599,27 @@ export default function CustomerManagement({ user }) {
       return !f || f === '0' || f === '' || f === 'NA' || f === 'N/A' || /^cash$/i.test(f);
     });
     const totalRevenue = customers.reduce((s,c) => s + (c.vehiclePrice || c.linkedVehicle?.price || 0), 0);
+
+    // ⭐ Service stats (from CustomerServiceDataManager data)
+    let pendingPayment = 0, pendingCount = 0, overdueCount = 0;
+    let withService = 0;
+    const today = new Date(); today.setHours(0,0,0,0);
+    Object.values(serviceData).forEach(d => {
+      if (d.firstServiceDate || d.secondServiceDate) withService++;
+      const amt = parseFloat(d.pendingAmount || 0);
+      if (amt > 0 && !d.paymentReceivedDate) {
+        pendingPayment += amt; pendingCount++;
+        if (d.paymentDueDate && new Date(d.paymentDueDate) < today) overdueCount++;
+      }
+    });
+
+    // ⭐ Invoice stats per customer
+    const customerInvoices = {};
+    invoices.forEach(i => {
+      const key = i.customerName?.toUpperCase().trim();
+      if (key) customerInvoices[key] = (customerInvoices[key] || 0) + 1;
+    });
+
     // Vehicle distribution chart
     const vehMap = {};
     customers.forEach(c => {
@@ -605,8 +651,20 @@ export default function CustomerManagement({ user }) {
       if (f) finMap[f] = (finMap[f]||0)+1;
     });
     const financeCompanyData = Object.entries(finMap).sort((a,b) => b[1]-a[1]).slice(0,10).map(([name,value]) => ({name: name.slice(0,18), value}));
-    return { total, withVehicle, financeCount: financeCustomers.length, cashCount: cashCustomers.length, totalRevenue, vehicleData, districtData, monthlyData, financeCompanyData };
-  }, [customers]);
+
+    // ⭐ Top customers (by invoice count)
+    const topCustByInvoices = Object.entries(customerInvoices).sort((a,b) => b[1]-a[1]).slice(0,5).map(([name,count]) => ({name: name.slice(0,20), count}));
+
+    return {
+      total, withVehicle,
+      financeCount: financeCustomers.length, cashCount: cashCustomers.length,
+      totalRevenue, vehicleData, districtData, monthlyData, financeCompanyData,
+      // ⭐ NEW
+      pendingPayment, pendingCount, overdueCount, withService,
+      totalInvoices: invoices.length, partsConsumed: partHistory.length,
+      topCustByInvoices,
+    };
+  }, [customers, serviceData, invoices, partHistory]);
 
   // ── Filter and pagination ────────────────────────────────────────────────
   const filteredCustomers = [...customers].filter(cust => {
@@ -678,6 +736,25 @@ export default function CustomerManagement({ user }) {
       {/* Dashboard Tab */}
       {activeTab === 'dashboard' && (
         <div className="space-y-6">
+          {/* ⭐ Smart Alert Strip */}
+          {(stats.overdueCount > 0 || stats.pendingCount > 0) && (
+            <div className="bg-gradient-to-r from-red-50 to-orange-50 border-2 border-orange-300 rounded-xl p-4 flex flex-wrap items-center gap-3">
+              <div className="bg-orange-500 rounded-full p-2 flex-shrink-0">
+                <AlertCircle size={20} className="text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-orange-800 font-bold text-sm">⚠️ Attention Required</p>
+                <p className="text-orange-700 text-xs">
+                  {stats.overdueCount > 0 && <>📅 <b>{stats.overdueCount}</b> overdue payments · </>}
+                  {stats.pendingCount > 0 && <>💰 <b>{stats.pendingCount}</b> customers with pending ₹{stats.pendingPayment.toLocaleString('en-IN')}</>}
+                </p>
+              </div>
+              <Button onClick={() => navigate('/reminders')} className="bg-orange-600 hover:bg-orange-700 text-white text-xs">
+                🔔 View Reminders
+              </Button>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
               { label:'Total Customers', val:stats.total, icon:<Users size={20}/>, bg:'bg-blue-50', col:'text-blue-700' },
@@ -694,6 +771,34 @@ export default function CustomerManagement({ user }) {
             ))}
           </div>
 
+          {/* ⭐ NEW: Cross-page integration KPIs */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Card className="bg-cyan-50 border-2 border-cyan-300 hover:scale-[1.02] transition cursor-pointer" onClick={() => navigate('/invoice-management')}>
+              <CardContent className="p-4 flex items-center gap-3">
+                <FileText size={20} className="text-cyan-700"/>
+                <div><p className="text-gray-500 text-xs font-bold">📄 Total Invoices</p><p className="text-cyan-700 font-black text-2xl">{stats.totalInvoices}</p></div>
+              </CardContent>
+            </Card>
+            <Card className="bg-emerald-50 border-2 border-emerald-300 hover:scale-[1.02] transition cursor-pointer" onClick={() => navigate('/service-customers')}>
+              <CardContent className="p-4 flex items-center gap-3">
+                <Users size={20} className="text-emerald-700"/>
+                <div><p className="text-gray-500 text-xs font-bold">🔧 With Service</p><p className="text-emerald-700 font-black text-2xl">{stats.withService}</p></div>
+              </CardContent>
+            </Card>
+            <Card className={`bg-red-50 border-2 ${stats.pendingCount > 0 ? 'border-red-400' : 'border-red-200'} hover:scale-[1.02] transition cursor-pointer`} onClick={() => navigate('/reminders')}>
+              <CardContent className="p-4 flex items-center gap-3">
+                <AlertCircle size={20} className="text-red-700"/>
+                <div><p className="text-gray-500 text-xs font-bold">💰 Pending Payments</p><p className="text-red-700 font-black text-xl">₹{stats.pendingPayment >= 100000 ? (stats.pendingPayment/100000).toFixed(1) + 'L' : stats.pendingPayment.toLocaleString('en-IN')}</p></div>
+              </CardContent>
+            </Card>
+            <Card className="bg-violet-50 border-2 border-violet-300 hover:scale-[1.02] transition cursor-pointer" onClick={() => navigate('/parts')}>
+              <CardContent className="p-4 flex items-center gap-3">
+                <FileText size={20} className="text-violet-700"/>
+                <div><p className="text-gray-500 text-xs font-bold">📦 Parts Used</p><p className="text-violet-700 font-black text-2xl">{stats.partsConsumed}</p></div>
+              </CardContent>
+            </Card>
+          </div>
+
           {/* 4-part Revenue Card */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <Card className="bg-blue-50 border-2 border-blue-300"><CardContent className="p-4 text-center"><p className="text-blue-600 text-xs font-bold">💰 Total Sales</p><p className="text-blue-800 font-black text-2xl">₹{stats.totalRevenue.toLocaleString('en-IN')}</p></CardContent></Card>
@@ -702,6 +807,30 @@ export default function CustomerManagement({ user }) {
             <Card className={`border-2 ${stats.totalRevenue > 0 ? 'bg-green-50 border-green-300' : 'bg-red-50 border-red-300'}`}><CardContent className="p-4 text-center"><p className="text-gray-600 text-xs font-bold">📈 Profit / Loss</p><p className={`font-black text-2xl ${stats.totalRevenue > 0 ? 'text-green-700' : 'text-red-700'}`}>₹{stats.totalRevenue.toLocaleString('en-IN')}</p></CardContent></Card>
           </div>
 
+          {/* ⭐ NEW: Quick Cross-Navigation */}
+          <Card className="bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-purple-200">
+            <CardHeader className="py-3"><CardTitle className="text-base">⚡ Quick Navigation — Customer related actions</CardTitle></CardHeader>
+            <CardContent className="pt-0">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {[
+                  { l:'🔧 Service Data',   p:'/service-customers',  c:'bg-emerald-600 hover:bg-emerald-700' },
+                  { l:'🎫 New Job Card',   p:'/job-cards',          c:'bg-cyan-600 hover:bg-cyan-700' },
+                  { l:'📄 Invoices',       p:'/invoice-management', c:'bg-orange-600 hover:bg-orange-700' },
+                  { l:'🔔 Reminders',      p:'/reminders',          c:'bg-red-600 hover:bg-red-700' },
+                  { l:'🏍️ Vehicle Sales',  p:'/veh-dashboard',      c:'bg-blue-600 hover:bg-blue-700' },
+                  { l:'📦 Parts',          p:'/parts',              c:'bg-violet-600 hover:bg-violet-700' },
+                  { l:'📊 Reports',        p:'/reports',            c:'bg-green-600 hover:bg-green-700' },
+                  { l:'💹 VP Dashboard',   p:'/vph-dashboard',      c:'bg-pink-600 hover:bg-pink-700' },
+                ].map((x, i) => (
+                  <Button key={i} onClick={() => navigate(x.p)}
+                    className={`${x.c} text-white text-xs font-bold py-2 transition hover:scale-105`}>
+                    {x.l}
+                  </Button>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Charts */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card><CardHeader className="py-3 bg-blue-50"><CardTitle className="text-base">🏍️ Vehicle Distribution</CardTitle></CardHeader><CardContent>{stats.vehicleData.length?<ResponsiveContainer width="100%" height={250}><PieChart><Pie data={stats.vehicleData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label>{stats.vehicleData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}</Pie><Tooltip/></PieChart></ResponsiveContainer>:<p className="text-gray-400 text-center py-10">No data</p>}</CardContent></Card>
@@ -709,6 +838,24 @@ export default function CustomerManagement({ user }) {
             <Card><CardHeader className="py-3 bg-purple-50"><CardTitle className="text-base">📍 District Distribution</CardTitle></CardHeader><CardContent>{stats.districtData.length?<ResponsiveContainer width="100%" height={250}><BarChart data={stats.districtData}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="name" tick={{fontSize:9}}/><YAxis/><Tooltip/><Bar dataKey="value" fill="#8b5cf6"/></BarChart></ResponsiveContainer>:<p className="text-gray-400 text-center py-10">No data</p>}</CardContent></Card>
             <Card><CardHeader className="py-3 bg-green-50"><CardTitle className="text-base">📈 Monthly Sales</CardTitle></CardHeader><CardContent>{stats.monthlyData.length?<ResponsiveContainer width="100%" height={250}><BarChart data={stats.monthlyData}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="name"/><YAxis/><Tooltip/><Bar dataKey="value" fill="#10b981"/></BarChart></ResponsiveContainer>:<p className="text-gray-400 text-center py-10">No data</p>}</CardContent></Card>
           </div>
+
+          {/* ⭐ NEW: Top Customers by Invoice Count */}
+          {stats.topCustByInvoices.length > 0 && (
+            <Card>
+              <CardHeader className="py-3 bg-indigo-50"><CardTitle className="text-base">⭐ Top Customers by Invoice Count</CardTitle></CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={stats.topCustByInvoices} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3"/>
+                    <XAxis type="number"/>
+                    <YAxis dataKey="name" type="category" width={140} tick={{fontSize:10}}/>
+                    <Tooltip/>
+                    <Bar dataKey="count" fill="#6366f1" radius={[0,4,4,0]}/>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Recent Customers */}
           <Card><CardHeader className="py-3 bg-gray-50"><CardTitle className="text-base">🆕 Recent Customers</CardTitle></CardHeader><CardContent className="p-0"><table className="w-full text-sm"><thead className="bg-gray-100"><tr><th className="px-4 py-2">Name</th><th className="px-4 py-2">Phone</th><th className="px-4 py-2">Vehicle</th><th className="px-4 py-2">Reg No</th><th className="px-4 py-2">Finance</th><th className="px-4 py-2">District</th></tr></thead><tbody>{customers.slice(0,8).map(c=><tr key={c._id} className="border-b"><td className="px-4 py-2 font-bold">{c.name}</td><td className="px-4 py-2">{c.phone}</td><td className="px-4 py-2 text-blue-600">{c.linkedVehicle?.name||'—'}</td><td className="px-4 py-2 font-mono">{c.linkedVehicle?.regNo||'—'}</td><td className="px-4 py-2">{c.financerName && c.financerName!=='0' && c.financerName!=='NA'?<span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded">{c.financerName}</span>:<span className="bg-green-100 text-green-700 px-2 py-0.5 rounded">CASH</span>}</td><td className="px-4 py-2">{c.district||'—'}</td></tr>)}</tbody></table></CardContent></Card>
@@ -759,7 +906,38 @@ export default function CustomerManagement({ user }) {
             </CardContent></Card>
           )}
           <div className="mb-6"><div className="relative"><Search className="absolute left-3 top-3 text-gray-400" size={20}/><Input placeholder="Search by name or phone..." value={searchTerm} onChange={e=>{setSearchTerm(e.target.value);setCurrentPage(1);}} className="pl-10 border-2"/></div></div>
-          <Card><CardContent className="p-0"><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-100 border-b-2"><tr><th className="px-4 py-3">#</th><th className="px-4 py-3">Name</th><th className="px-4 py-3">Phone</th><th className="px-4 py-3">Aadhar</th><th className="px-4 py-3">Vehicle</th><th className="px-4 py-3">Reg No</th><th className="px-4 py-3">Finance</th><th className="px-4 py-3">Action</th></tr></thead><tbody>{paginatedCustomers.length===0?<tr><td colSpan="8" className="px-6 py-6 text-center text-gray-500">No customers found</td></tr>:paginatedCustomers.map((cust,idx)=><tr key={cust._id} className="border-b hover:bg-gray-50"><td className="px-4 py-3 text-gray-400 text-sm">{(currentPage-1)*CUSTOMERS_PER_PAGE+idx+1}</td><td className="px-4 py-3 font-bold">{cust.name}</td><td className="px-4 py-3">{cust.phone}</td><td className="px-4 py-3">{cust.aadhar}</td><td className="px-4 py-3">{cust.linkedVehicle?.name||'-'}</td><td className="px-4 py-3">{cust.linkedVehicle?.regNo||'-'}</td><td className="px-4 py-3">{(()=>{const f=String(cust.financerName||'').trim();return (f&&f!=='0'&&f!=='NA'&&!/^cash$/i.test(f))?<span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-xs font-bold">{f.slice(0,15)}</span>:<span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-bold">CASH</span>;})()}</td><td className="px-4 py-3 flex gap-2">{isAdmin&&<button onClick={()=>handleTaxInvoice(cust)} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm"><FileText size={16}/></button>}<button onClick={()=>handleEditCustomer(cust)} className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm"><Search size={16}/></button><button onClick={()=>{setFormData(cust);setEditingId(cust._id);setShowForm(true);}} className="bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-1 rounded text-sm">✏️</button>{isAdmin?<button onClick={()=>handleDeleteCustomer(cust._id)} className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm"><Trash2 size={16}/></button>:<button disabled className="bg-gray-300 text-gray-400 px-3 py-1 rounded text-sm cursor-not-allowed">🔒</button>}</td></tr>)}</tbody></table></div>{filteredCustomers.length>CUSTOMERS_PER_PAGE&&(<div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-t"><p className="text-sm text-gray-600">Page <b>{currentPage}</b> of <b>{totalPages}</b> &nbsp;|&nbsp; Total: <b>{filteredCustomers.length}</b> customers</p><div className="flex gap-2"><button onClick={()=>setCurrentPage(p=>Math.max(1,p-1))} disabled={currentPage===1} className="px-4 py-2 text-sm font-bold bg-purple-600 text-white rounded disabled:opacity-40">◀ Previous</button><button onClick={()=>setCurrentPage(p=>Math.min(totalPages,p+1))} disabled={currentPage===totalPages} className="px-4 py-2 text-sm font-bold bg-purple-600 text-white rounded disabled:opacity-40">Next ▶</button></div></div>)}</CardContent></Card>
+          <Card><CardContent className="p-0"><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-100 border-b-2"><tr><th className="px-3 py-3 text-xs">#</th><th className="px-3 py-3 text-xs">Name</th><th className="px-3 py-3 text-xs">Phone</th><th className="px-3 py-3 text-xs">Vehicle</th><th className="px-3 py-3 text-xs">Reg No</th><th className="px-3 py-3 text-xs">Finance</th><th className="px-3 py-3 text-xs">Status</th><th className="px-3 py-3 text-xs">Action</th></tr></thead><tbody>{paginatedCustomers.length===0?<tr><td colSpan="8" className="px-6 py-6 text-center text-gray-500">No customers found</td></tr>:paginatedCustomers.map((cust,idx)=>{
+            const sd = serviceData[cust.linkedVehicle?.regNo] || serviceData[cust._id] || {};
+            const pendingAmt = parseFloat(sd.pendingAmount || 0);
+            const hasPending = pendingAmt > 0 && !sd.paymentReceivedDate;
+            const hasService = !!(sd.firstServiceDate || sd.secondServiceDate);
+            return (
+              <tr key={cust._id} className="border-b hover:bg-gray-50">
+                <td className="px-3 py-2 text-gray-400 text-xs">{(currentPage-1)*CUSTOMERS_PER_PAGE+idx+1}</td>
+                <td className="px-3 py-2 font-bold text-sm">{cust.name}</td>
+                <td className="px-3 py-2 text-sm">{cust.phone}</td>
+                <td className="px-3 py-2 text-sm">{cust.linkedVehicle?.name||'-'}</td>
+                <td className="px-3 py-2 text-sm">{cust.linkedVehicle?.regNo||'-'}</td>
+                <td className="px-3 py-2">{(()=>{const f=String(cust.financerName||'').trim();return (f&&f!=='0'&&f!=='NA'&&!/^cash$/i.test(f))?<span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-xs font-bold">{f.slice(0,12)}</span>:<span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-bold">CASH</span>;})()}</td>
+                <td className="px-3 py-2 text-xs">
+                  <div className="flex flex-col gap-1">
+                    {hasPending && <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded font-bold">⚠️ ₹{pendingAmt.toLocaleString('en-IN')}</span>}
+                    {hasService && <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded font-bold">🔧 Service</span>}
+                    {!hasPending && !hasService && <span className="text-gray-400">—</span>}
+                  </div>
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-1 flex-wrap">
+                    {isAdmin&&<button onClick={()=>handleTaxInvoice(cust)} title="Tax Invoice" className="bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded text-xs"><FileText size={14}/></button>}
+                    <button onClick={() => navigate(`/customer-profile/${cust._id}`)} title="Service Profile" className="bg-purple-600 hover:bg-purple-700 text-white px-2 py-1 rounded text-xs">🔧</button>
+                    <button onClick={()=>handleEditCustomer(cust)} title="View" className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-xs"><Search size={14}/></button>
+                    <button onClick={()=>{setFormData(cust);setEditingId(cust._id);setShowForm(true);}} title="Edit" className="bg-yellow-500 hover:bg-yellow-600 text-white px-2 py-1 rounded text-xs">✏️</button>
+                    {isAdmin?<button onClick={()=>handleDeleteCustomer(cust._id)} title="Delete" className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-xs"><Trash2 size={14}/></button>:<button disabled title="Admin only" className="bg-gray-300 text-gray-400 px-2 py-1 rounded text-xs cursor-not-allowed">🔒</button>}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}</tbody></table></div>{filteredCustomers.length>CUSTOMERS_PER_PAGE&&(<div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-t"><p className="text-sm text-gray-600">Page <b>{currentPage}</b> of <b>{totalPages}</b> &nbsp;|&nbsp; Total: <b>{filteredCustomers.length}</b> customers</p><div className="flex gap-2"><button onClick={()=>setCurrentPage(p=>Math.max(1,p-1))} disabled={currentPage===1} className="px-4 py-2 text-sm font-bold bg-purple-600 text-white rounded disabled:opacity-40">◀ Previous</button><button onClick={()=>setCurrentPage(p=>Math.min(totalPages,p+1))} disabled={currentPage===totalPages} className="px-4 py-2 text-sm font-bold bg-purple-600 text-white rounded disabled:opacity-40">Next ▶</button></div></div>)}</CardContent></Card>
           {showInvoiceModal && selectedCustomer && (
             <Card className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"><Card className="bg-white w-full max-w-2xl max-h-96 overflow-y-auto"><CardHeader className="bg-green-600 text-white sticky top-0"><CardTitle className="flex items-center gap-2"><FileText size={20}/> Tax Invoice - {selectedCustomer.name}</CardTitle></CardHeader><CardContent className="pt-6"><div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6"><Input type="date" value={invoiceData.invoiceDate} onChange={e=>setInvoiceData({...invoiceData,invoiceDate:e.target.value})} className="border-2"/><Input placeholder="Vehicle Model" value={invoiceData.vehicleModel} onChange={e=>setInvoiceData({...invoiceData,vehicleModel:e.target.value})} className="border-2"/><Input placeholder="Color" value={invoiceData.color} onChange={e=>setInvoiceData({...invoiceData,color:e.target.value})} className="border-2"/><Input placeholder="Variant" value={invoiceData.variant} onChange={e=>setInvoiceData({...invoiceData,variant:e.target.value})} className="border-2"/><Input placeholder="Chassis No" value={invoiceData.chassisNo} onChange={e=>setInvoiceData({...invoiceData,chassisNo:e.target.value})} className="border-2"/><Input placeholder="Engine No" value={invoiceData.engineNo} onChange={e=>setInvoiceData({...invoiceData,engineNo:e.target.value})} className="border-2"/><Input placeholder="Key No" value={invoiceData.keyNo} onChange={e=>setInvoiceData({...invoiceData,keyNo:e.target.value})} className="border-2"/><Input placeholder="Battery No" value={invoiceData.batteryNo} onChange={e=>setInvoiceData({...invoiceData,batteryNo:e.target.value})} className="border-2"/><Input placeholder="Price" type="number" value={invoiceData.price} onChange={e=>setInvoiceData({...invoiceData,price:parseFloat(e.target.value)||0})} className="border-2"/><Input placeholder="Financer Name" value={invoiceData.financerName} onChange={e=>setInvoiceData({...invoiceData,financerName:e.target.value})} className="border-2"/></div><div className="flex gap-4"><Button onClick={generateInvoicePDF} className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold"><Download size={18} className="mr-2"/> Generate & Download PDF</Button><Button onClick={()=>setShowInvoiceModal(false)} className="flex-1 bg-gray-600 hover:bg-gray-700 text-white font-bold">Cancel</Button></div></CardContent></Card></Card>
           )}

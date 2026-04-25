@@ -49,9 +49,13 @@ export default function AdminPanel({ user }) {
     const f = async (url, fb = []) => { try { const r = await fetch(api(url)); if (r.ok) { setServerOnline(true); return await r.json(); } } catch { setServerOnline(false); } return fb; };
 
     const t0 = Date.now();
-    const [customers, invoices, parts, staff, salaries, partHistory] = await Promise.all([
+    const today = new Date().toISOString().split('T')[0];
+    const [customers, invoices, parts, staff, salaries, partHistory, salaryEntities, todayAttendance, shopSettings] = await Promise.all([
       f('/api/customers'), f('/api/invoices'), f('/api/parts'), f('/api/staff'),
       f('/api/salaries'), f('/api/parts/history/all'),
+      f('/api/salary-entities'),                                   // ⭐ new
+      f(`/api/attendance?date=${today}`),                          // ⭐ today's check-ins
+      f('/api/attendance/shop/settings', null),                    // ⭐ shop settings
     ]);
     const latency = Date.now() - t0;
 
@@ -80,12 +84,22 @@ export default function AdminPanel({ user }) {
         staff: staff.length,
         salaries: salaries.length,
         partConsumptions: partHistory.length,
+        salaryEntities: salaryEntities?.length || 0,                    // ⭐ new
+        attendanceToday: todayAttendance?.length || 0,                  // ⭐ new
       },
       financial: {
         totalRevenue,
         totalSalary,
         stockValue: parts.reduce((s, p) => s + ((p.mrp || p.unitPrice || 0) * (Number(p.stock||p.quantity)||0)), 0),
         pendingPayments: 0, // calculated below
+      },
+      attendance: {
+        gpsConfigured: !!(shopSettings && shopSettings.shopLat),
+        rulesActive: !!(shopSettings && shopSettings.attendanceRulesStartDate),
+        rulesStartDate: shopSettings?.attendanceRulesStartDate || null,
+        radius: shopSettings?.allowedRadius || 0,
+        presentToday: (todayAttendance || []).filter(a => a.checkInTime).length,
+        lateToday: (todayAttendance || []).filter(a => a.isLate).length,
       },
       server: {
         online: serverOnline,
@@ -131,6 +145,8 @@ export default function AdminPanel({ user }) {
     else if (type === 'parts') { const r = await fetch(api('/api/parts')); data = await r.json(); filename = 'parts'; }
     else if (type === 'staff') { const r = await fetch(api('/api/staff')); data = await r.json(); filename = 'staff'; }
     else if (type === 'salaries') { const r = await fetch(api('/api/salaries')); data = await r.json(); filename = 'salaries'; }
+    else if (type === 'salary-entities') { const r = await fetch(api('/api/salary-entities')); data = await r.json(); filename = 'salary-entities'; }
+    else if (type === 'attendance') { const r = await fetch(api('/api/attendance')); data = await r.json(); filename = 'attendance'; }
 
     if (!data) { alert('Export failed'); return; }
 
@@ -226,6 +242,37 @@ export default function AdminPanel({ user }) {
               <AdminKPI icon={TrendingUp} label="Stock Value" value={fmtShort(stats.financial.stockValue)} color="#06b6d4"/>
             </div>
 
+            {/* ⭐ NEW: Salary System + Attendance Status */}
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(340px, 1fr))', gap:14 }}>
+              <AdminPanel_Panel title="💰 Salary & Rent System">
+                <div style={{ display:'grid', gap:10 }}>
+                  <Row label="Total Entities" value={stats.counts.salaryEntities + ' (staff + rent)'} color="#22c55e"/>
+                  <Row label="Payment Records" value={stats.counts.salaries}/>
+                  <Row label="Old Staff Records" value={stats.counts.staff} color="#94a3b8"/>
+                </div>
+                <button onClick={() => navigate('/salary-management')}
+                  style={{ width:'100%', marginTop:10, background:'linear-gradient(135deg, #16a34a, #14532d)', color:'#fff', padding:'8px 12px', borderRadius:8, border:'none', cursor:'pointer', fontSize:11, fontWeight:700 }}>
+                  💰 Open Salary Management
+                </button>
+              </AdminPanel_Panel>
+
+              <AdminPanel_Panel title="📍 GPS Attendance">
+                <div style={{ display:'grid', gap:10 }}>
+                  <Row label="GPS Configured" value={stats.attendance.gpsConfigured ? '✅ Active' : '❌ Not set'} color={stats.attendance.gpsConfigured ? '#22c55e' : '#ef4444'}/>
+                  <Row label="Allowed Radius" value={stats.attendance.gpsConfigured ? `${stats.attendance.radius}m` : '—'}/>
+                  <Row label="Salary Rules" value={stats.attendance.rulesActive ? `From ${stats.attendance.rulesStartDate}` : '🕊️ Grace period'} color={stats.attendance.rulesActive ? '#22c55e' : '#fbbf24'}/>
+                  <Row label="Today Present" value={`${stats.attendance.presentToday} / ${stats.counts.staff}`} color="#22c55e"/>
+                  <Row label="Late Today" value={stats.attendance.lateToday} color={stats.attendance.lateToday > 0 ? '#f59e0b' : '#86efac'}/>
+                </div>
+                {!stats.attendance.gpsConfigured && (
+                  <button onClick={() => navigate('/staff-management')}
+                    style={{ width:'100%', marginTop:10, background:'linear-gradient(135deg, #f97316, #c2410c)', color:'#fff', padding:'8px 12px', borderRadius:8, border:'none', cursor:'pointer', fontSize:11, fontWeight:700 }}>
+                    📍 Setup Shop Location
+                  </button>
+                )}
+              </AdminPanel_Panel>
+            </div>
+
             {/* Server + Storage */}
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(340px, 1fr))', gap:14 }}>
               <AdminPanel_Panel title="🌐 Server Status">
@@ -266,6 +313,8 @@ export default function AdminPanel({ user }) {
                 <ActionButton label="🔔 Reminders"  color="#dc2626" onClick={() => navigate('/reminders')}/>
                 <ActionButton label="📈 Reports"    color="#059669" onClick={() => navigate('/reports')}/>
                 <ActionButton label="💹 VP Dashboard" color="#f97316" onClick={() => navigate('/vph-dashboard')}/>
+                <ActionButton label="👔 Staff & GPS" color="#10b981" onClick={() => navigate('/staff-management')}/>
+                <ActionButton label="💰 Salary & Rent" color="#16a34a" onClick={() => navigate('/salary-management')}/>
                 <ActionButton label="🧹 Clear Cache" color="#8b5cf6" onClick={() => clearCache('all')}/>
                 <ActionButton label="🔒 Logout" color="#ef4444" onClick={() => { localStorage.clear(); window.location.href = '/login'; }}/>
               </div>
@@ -283,7 +332,9 @@ export default function AdminPanel({ user }) {
                   { label:'Invoices', count:stats.counts.invoices, color:'#f97316', api:'/api/invoices' },
                   { label:'Parts', count:stats.counts.parts, color:'#a855f7', api:'/api/parts' },
                   { label:'Staff', count:stats.counts.staff, color:'#10b981', api:'/api/staff' },
-                  { label:'Salary Records', count:stats.counts.salaries, color:'#22c55e', api:'/api/salaries' },
+                  { label:'Salary & Rent Entities', count:stats.counts.salaryEntities, color:'#22c55e', api:'/api/salary-entities' },
+                  { label:'Salary Records', count:stats.counts.salaries, color:'#16a34a', api:'/api/salaries' },
+                  { label:'Today Attendance', count:stats.counts.attendanceToday, color:'#0ea5e9', api:'/api/attendance' },
                   { label:'Part Usage Logs', count:stats.counts.partConsumptions, color:'#06b6d4', api:'/api/parts/history' },
                 ].map((d,i) => (
                   <div key={i} style={{ background:`${d.color}15`, border:`1px solid ${d.color}40`, padding:'12px 14px', borderRadius:12 }}>
@@ -297,11 +348,11 @@ export default function AdminPanel({ user }) {
 
             <AdminPanel_Panel title="📥 Export Data">
               <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(160px, 1fr))', gap:8 }}>
-                {['customers','invoices','parts','staff','salaries'].map(t => (
+                {['customers','invoices','parts','staff','salaries','salary-entities','attendance'].map(t => (
                   <button key={t} onClick={() => exportData(t)}
                     style={{ background:'#1e293b', border:'1px solid #334155', color:'#e2e8f0', padding:'10px 12px', borderRadius:10, fontSize:11, fontWeight:700, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:6 }}
                     className="hover:bg-slate-700">
-                    <Download size={13}/> {t.charAt(0).toUpperCase() + t.slice(1)}
+                    <Download size={13}/> {t.charAt(0).toUpperCase() + t.slice(1).replace('-', ' ')}
                   </button>
                 ))}
               </div>

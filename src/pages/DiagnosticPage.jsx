@@ -98,6 +98,50 @@ export default function DiagnosticPage() {
       try { dbParts       = await (await fetch(api('/api/parts'))).json(); } catch {}
       try { dbServiceData = await (await fetch(api('/api/service-data'))).json(); } catch {}
       try { dbFollowUps   = await (await fetch(api('/api/follow-ups'))).json(); } catch {}
+
+      // ⭐ NEW: Check salary system
+      let dbSalaryEntities = [], dbSalaries = [], dbAttendance = [], shopSettings = null;
+      try { dbSalaryEntities = await (await fetch(api('/api/salary-entities'))).json(); } catch {}
+      try { dbSalaries       = await (await fetch(api('/api/salaries'))).json(); } catch {}
+      try { dbAttendance     = await (await fetch(api('/api/attendance'))).json(); } catch {}
+      try { shopSettings     = await (await fetch(api('/api/attendance/shop/settings'))).json(); } catch {}
+
+      // Salary entities health
+      const activeStaff = dbSalaryEntities.filter(e => e.type === 'staff' && e.active).length;
+      const activeRent  = dbSalaryEntities.filter(e => e.type === 'rent' && e.active).length;
+      r.sync.items.push({
+        kind: dbSalaryEntities.length > 0 ? 'ok' : 'warning',
+        title: dbSalaryEntities.length > 0
+          ? `✅ Salary System: ${dbSalaryEntities.length} entities (${activeStaff} staff + ${activeRent} rent)`
+          : '⚠️ Salary System Empty',
+        detail: dbSalaryEntities.length > 0
+          ? `${dbSalaries.length} payments recorded`
+          : 'Salary Management में जा कर "Import from Excel" करें',
+        action: dbSalaryEntities.length === 0 ? { label: 'Setup Salary', fn: () => window.location.href = '/salary-management' } : null,
+      });
+
+      // GPS Shop location
+      r.sync.items.push({
+        kind: shopSettings?.shopLat ? 'ok' : 'warning',
+        title: shopSettings?.shopLat
+          ? `✅ GPS Check-in Configured (${shopSettings.allowedRadius}m radius)`
+          : '⚠️ Shop GPS Location Not Set',
+        detail: shopSettings?.shopLat
+          ? `Lat: ${shopSettings.shopLat?.toFixed(4)}, Lng: ${shopSettings.shopLng?.toFixed(4)}`
+          : 'कर्मचारी GPS check-in नहीं कर पाएंगे — Staff Management में set करें',
+        action: !shopSettings?.shopLat ? { label: 'Setup GPS', fn: () => window.location.href = '/staff-management' } : null,
+      });
+
+      // Attendance Rules
+      r.sync.items.push({
+        kind: shopSettings?.attendanceRulesStartDate ? 'ok' : 'info',
+        title: shopSettings?.attendanceRulesStartDate
+          ? `📋 Salary Rules Active from ${new Date(shopSettings.attendanceRulesStartDate).toLocaleDateString('en-IN', { month:'short', year:'numeric' })}`
+          : '🕊️ Salary Rules in Grace Period',
+        detail: shopSettings?.attendanceRulesStartDate
+          ? `${dbAttendance.length} total attendance records`
+          : 'पुराने महीनों में कोई कटौती नहीं — Staff Mgmt में activation date set करें',
+      });
     }
 
     const lsCustomers   = [...getLS('sharedCustomerData',[]), ...getLS('customerData',[])];

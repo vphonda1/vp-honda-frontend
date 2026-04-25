@@ -183,6 +183,9 @@ export default function VPHondaDashboard() {
   const [partHistory, setPartHistory] = useState([]);
   const [serviceData, setServiceData] = useState({});
   const [overrides, setOverrides] = useState(loadOverrides());
+  const [salaryEntities, setSalaryEntities] = useState([]);     // ⭐ new salary system
+  const [attendance, setAttendance] = useState([]);             // ⭐ GPS attendance
+  const [shopSettings, setShopSettings] = useState(null);
 
   // ── Load all data from MongoDB + localStorage fallback ─────────────────
   const loadAll = useCallback(async () => {
@@ -200,7 +203,8 @@ export default function VPHondaDashboard() {
       return getLS(lsKey, fb);
     };
 
-    const [cust, inv, prts, stf, sal, pHist, sdArr] = await Promise.all([
+    const today = new Date().toISOString().split('T')[0];
+    const [cust, inv, prts, stf, sal, pHist, sdArr, salEnts, todayAtt, shopS] = await Promise.all([
       f('/api/customers','sharedCustomerData'),
       f('/api/invoices','invoices'),
       f('/api/parts','partsInventory'),
@@ -208,6 +212,9 @@ export default function VPHondaDashboard() {
       f('/api/salaries',null, []),
       f('/api/parts/history/all', null, []),
       f('/api/service-data', null, []),
+      f('/api/salary-entities', null, []),                       // ⭐ new
+      f(`/api/attendance?date=${today}`, null, []),              // ⭐ today's attendance
+      f('/api/attendance/shop/settings', null, null),            // ⭐ shop settings
     ]);
 
     setCustomers(cust);
@@ -217,6 +224,9 @@ export default function VPHondaDashboard() {
     setStaff(stf);
     setSalaries(sal);
     setPartHistory(pHist);
+    setSalaryEntities(salEnts);
+    setAttendance(todayAtt);
+    setShopSettings(shopS);
 
     // Merge serviceData (array from MongoDB + object from localStorage)
     const sdMap = { ...getLS('customerServiceData', {}) };
@@ -315,16 +325,49 @@ export default function VPHondaDashboard() {
     return { out, low, stockValue, total: parts.length };
   }, [parts]);
 
-  // Salary stats
+  // Salary stats (uses NEW salary-entities + salaries, falls back to staff)
   const salStats = useMemo(() => {
     const filt = salaries.filter(s => !s.cancelled && matchDate(s.paymentDate));
     const salary   = filt.filter(s => s.type === 'salary').reduce((sum, s) => sum + (s.amount||0), 0);
     const advance  = filt.filter(s => s.type === 'advance').reduce((sum, s) => sum + (s.amount||0), 0);
     const bonus    = filt.filter(s => s.type === 'bonus' || s.type === 'incentive').reduce((sum, s) => sum + (s.amount||0), 0);
     const deduct   = filt.filter(s => s.type === 'deduction').reduce((sum, s) => sum + (s.amount||0), 0);
-    const totalDue = staff.reduce((s, x) => s + Number(x.monthlySalary||0), 0);
-    return { salary, advance, bonus, deduct, totalDue, total: salary + advance + bonus };
-  }, [salaries, staff, matchDate]);
+
+    // Use NEW salary-entities if available, else fallback to old /api/staff
+    let totalDue = 0, activeCount = 0, rentDue = 0, rentCount = 0;
+    if (salaryEntities.length > 0) {
+      salaryEntities.filter(e => e.active).forEach(e => {
+        if (e.type === 'staff') { totalDue += Number(e.monthlyAmount||0); activeCount++; }
+        else if (e.type === 'rent') { rentDue += Number(e.monthlyAmount||0); rentCount++; }
+      });
+    } else {
+      // Fallback: old staff-only system
+      totalDue = staff.reduce((s, x) => s + Number(x.monthlySalary||0), 0);
+      activeCount = staff.length;
+    }
+
+    // Pending balance calculation (sum of (expected - paid) for active entities)
+    let totalPending = 0;
+    salaryEntities.filter(e => e.active).forEach(e => {
+      const start = new Date(e.startDate);
+      const today = new Date();
+      const months = Math.max(0, (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth()) + (today.getDate() >= start.getDate() ? 1 : 0));
+      const expected = (e.monthlyAmount || 0) * months;
+      const paid = salaries.filter(p => !p.cancelled && p.staffName === e.name).reduce((s,p) => s + (p.amount||0), 0);
+      totalPending += Math.max(0, expected - paid);
+    });
+
+    return { salary, advance, bonus, deduct, totalDue, rentDue, totalPending, activeCount, rentCount, total: salary + advance + bonus };
+  }, [salaries, staff, salaryEntities, matchDate]);
+
+  // ⭐ Attendance stats (today)
+  const attStats = useMemo(() => {
+    const presentToday = attendance.filter(a => a.checkInTime).length;
+    const checkedOut = attendance.filter(a => a.checkOutTime).length;
+    const lateToday = attendance.filter(a => a.isLate).length;
+    const expectedStaff = salaryEntities.filter(e => e.type === 'staff' && e.active).length || staff.length;
+    return { presentToday, checkedOut, lateToday, expectedStaff, absentToday: Math.max(0, expectedStaff - presentToday) };
+  }, [attendance, salaryEntities, staff]);
 
   // Pending payments
   const pendStats = useMemo(() => {
@@ -501,6 +544,7 @@ export default function VPHondaDashboard() {
                   { l:'👥 Customers',     p:'/customers',              g:'linear-gradient(135deg,#2563eb,#1e40af)' },
                   { l:'📦 Parts',         p:'/parts',                  g:'linear-gradient(135deg,#a855f7,#7e22ce)' },
                   { l:'👔 Staff',         p:'/staff-management',       g:'linear-gradient(135deg,#059669,#065f46)' },
+                  { l:'💰 Salary & Rent', p:'/salary-management',      g:'linear-gradient(135deg,#16a34a,#14532d)' },
                   { l:'🔍 Diagnostic',    p:'/diagnostic',             g:'linear-gradient(135deg,#0891b2,#155e75)' },
                   { l:'📈 Reports',       p:'/reports',                g:'linear-gradient(135deg,#7c3aed,#5b21b6)' },
                 ].map((x,i) => (
@@ -693,21 +737,83 @@ export default function VPHondaDashboard() {
         {/* ══ TAB: PAYROLL ══ */}
         {tab === 'salary' && (
           <div style={{ display:'grid', gap:14 }}>
+            {/* Today's Attendance Snapshot */}
+            <Card>
+              <SH title="📍 आज की Attendance" sub={shopSettings?.shopLat ? `GPS Active · ${shopSettings.allowedRadius}m radius` : '⚠️ Shop location not set'}/>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(140px, 1fr))', gap:10 }}>
+                <K icon={Users} label="Present" value={attStats.presentToday} sub={`${attStats.expectedStaff} expected`} color="#22c55e"/>
+                <K icon={CheckCircle} label="Checked Out" value={attStats.checkedOut} sub="completed shifts" color="#3b82f6"/>
+                <K icon={Clock} label="Late Today" value={attStats.lateToday} sub="after work start" color="#f59e0b"/>
+                <K icon={XCircle} label="Absent" value={attStats.absentToday} sub="no check-in yet" color="#ef4444"/>
+              </div>
+            </Card>
+
+            {/* Salary KPIs (uses new salary-entities) */}
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(200px, 1fr))', gap:12 }}>
               <K icon={Award} label="Salary Paid" value={salStats.salary} sub="this period" color="#22c55e"/>
               <K icon={DollarSign} label="Advance Given" value={salStats.advance} color="#f97316"/>
               <K icon={TrendingUp} label="Bonus/Incentive" value={salStats.bonus} color="#3b82f6"/>
-              <K icon={Users} label="Staff Count" value={staff.length} sub={fmtINR(salStats.totalDue) + ' monthly'} color="#a855f7" onClick={() => navigate('/staff-management')}/>
+              <K icon={Users} label="Active Staff" value={salStats.activeCount} sub={fmtINR(salStats.totalDue) + ' monthly'} color="#a855f7" onClick={() => navigate('/salary-management')}/>
+              {salStats.rentCount > 0 && (
+                <K icon={Bell} label="Active Rentals" value={salStats.rentCount} sub={fmtINR(salStats.rentDue) + ' monthly'} color="#06b6d4" onClick={() => navigate('/salary-management')}/>
+              )}
+              {salStats.totalPending > 0 && (
+                <K icon={AlertTriangle} label="Pending Balance" value={salStats.totalPending} sub="all entities" color="#ef4444" alert="Due"/>
+              )}
             </div>
+
             <Card>
-              <SH title="💰 Payroll Summary" action={
-                <button onClick={() => navigate('/staff-management')} style={{ background:'#a855f722', border:'1px solid #a855f755', color:'#d8b4fe', padding:'6px 12px', borderRadius:8, fontSize:11, cursor:'pointer', display:'flex', alignItems:'center', gap:4 }}>
-                  Manage <ArrowUpRight size={11}/>
-                </button>
+              <SH title="💰 Payroll & Rent Summary" sub="Includes staff + rent (via Salary Management)" action={
+                <div style={{ display:'flex', gap:6 }}>
+                  <button onClick={() => navigate('/salary-management')} style={{ background:'#22c55e22', border:'1px solid #22c55e55', color:'#86efac', padding:'6px 12px', borderRadius:8, fontSize:11, cursor:'pointer', display:'flex', alignItems:'center', gap:4 }}>
+                    💰 Salary Mgmt <ArrowUpRight size={11}/>
+                  </button>
+                  <button onClick={() => navigate('/staff-management')} style={{ background:'#a855f722', border:'1px solid #a855f755', color:'#d8b4fe', padding:'6px 12px', borderRadius:8, fontSize:11, cursor:'pointer', display:'flex', alignItems:'center', gap:4 }}>
+                    👔 Staff <ArrowUpRight size={11}/>
+                  </button>
+                </div>
               }/>
-              {staff.length === 0 ? (
-                <p style={{ color:'#64748b', textAlign:'center', padding:40 }}>No staff added yet</p>
+              {(salaryEntities.length === 0 && staff.length === 0) ? (
+                <p style={{ color:'#64748b', textAlign:'center', padding:40 }}>No staff/entities yet. Salary Management में जा कर "Import from Excel" करें।</p>
+              ) : salaryEntities.length > 0 ? (
+                // ⭐ Use NEW salary entities
+                <div style={{ overflowX:'auto' }}>
+                  <table style={{ width:'100%', fontSize:12 }}>
+                    <thead>
+                      <tr style={{ color:'#94a3b8', fontSize:10, textTransform:'uppercase', borderBottom:'1px solid #334155' }}>
+                        <th style={{ padding:10, textAlign:'left' }}>Name</th>
+                        <th style={{ padding:10, textAlign:'left' }}>Type</th>
+                        <th style={{ padding:10, textAlign:'right' }}>Monthly</th>
+                        <th style={{ padding:10, textAlign:'right' }}>Total Paid</th>
+                        <th style={{ padding:10, textAlign:'center' }}>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {salaryEntities.slice().sort((a,b) => (b.active?1:0) - (a.active?1:0)).map((e,i) => {
+                        const paid = salaries.filter(p => !p.cancelled && p.staffName === e.name).reduce((sum, p) => sum + (p.amount||0), 0);
+                        return (
+                          <tr key={i} style={{ borderBottom:'1px solid #1e293b', opacity: e.active?1:0.6 }}>
+                            <td style={{ padding:'8px 10px', color:'#e2e8f0', fontWeight:700 }}>{e.name}</td>
+                            <td style={{ padding:'8px 10px' }}>
+                              <span style={{ background: e.type==='staff'?'#3b82f622':'#a855f722', color: e.type==='staff'?'#93c5fd':'#d8b4fe', fontSize:9, padding:'2px 8px', borderRadius:6, fontWeight:700 }}>
+                                {e.type === 'staff' ? '👤 STAFF' : '🏠 RENT'}
+                              </span>
+                            </td>
+                            <td style={{ padding:'8px 10px', color:'#93c5fd', textAlign:'right', fontWeight:700 }}>{fmtINR(e.monthlyAmount || 0)}</td>
+                            <td style={{ padding:'8px 10px', color:'#86efac', textAlign:'right', fontWeight:700 }}>{fmtINR(paid)}</td>
+                            <td style={{ padding:'8px 10px', textAlign:'center' }}>
+                              {e.active
+                                ? <span style={{ color:'#86efac', fontSize:10, fontWeight:700 }}>✅ ACTIVE</span>
+                                : <span style={{ color:'#94a3b8', fontSize:10, fontWeight:700 }}>⚫ ENDED</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
+                // Fallback: old staff system
                 <div style={{ overflowX:'auto' }}>
                   <table style={{ width:'100%', fontSize:12 }}>
                     <thead>

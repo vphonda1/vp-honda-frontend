@@ -19,6 +19,7 @@ import InvoiceDetailsPage from './pages/InvoiceDetailsPage';
 import AdvancedPDFImporter from './pages/AdvancedPDFImporter';
 import ManualInvoiceEntryPage from './pages/ManualInvoiceEntryPage';
 import StaffManagementPage from './pages/StaffManagementPage';
+import SalaryManagementPage from './pages/SalaryManagementPage';
 import QuotationPage from './pages/QuotationPage';
 import VehDashboard from './pages/VehDashboard';
 import VPHondaDashboard from './pages/VPHondaDashboard';
@@ -26,7 +27,6 @@ import AddServiceCustomerPage from './pages/AddServiceCustomerPage';
 import ServiceCustomerListPage from './pages/ServiceCustomerListPage';
 import Dashboardwebpage from './pages/Dashboardwebpage';
 import Navbar from './components/Navbar';
-import SalaryManagementPage from './pages/SalaryManagementPage';
 
 function ProtectedRoute({ children, user }) {
   return user ? children : <Navigate to="/login" />;
@@ -233,16 +233,6 @@ export default function App() {
             }
           />
           <Route
-            path="/salary-management"
-            element={
-              <ProtectedRoute user={user}>
-                <AdminRoute user={user}>
-                  <SalaryManagementPage user={user} />
-                </AdminRoute>
-              </ProtectedRoute>
-            }
-          />
-          <Route
             path="/admin"
             element={
               <ProtectedRoute user={user}>
@@ -341,6 +331,16 @@ export default function App() {
                 <RoleRoute user={user} requiredRole="staff">
                   <StaffManagementPage user={user} />
                 </RoleRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/salary-management"
+            element={
+              <ProtectedRoute user={user}>
+                <AdminRoute user={user}>
+                  <SalaryManagementPage user={user} />
+                </AdminRoute>
               </ProtectedRoute>
             }
           />
