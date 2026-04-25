@@ -865,11 +865,23 @@ export default function CustomerManagement({ user }) {
       {/* Customers / Finance / Cash Tab */}
       {(activeTab === 'customers' || activeTab === 'finance' || activeTab === 'cash') && (
         <>
+          {/* ⭐ NEW: Read-only mode notice — Add/Import moved to Vehicle Dashboard */}
+          <div className="mb-5 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-xl p-4 flex items-center gap-3 flex-wrap">
+            <div className="bg-blue-500 rounded-full w-10 h-10 flex items-center justify-center flex-shrink-0 text-white text-lg">ℹ️</div>
+            <div className="flex-1 min-w-0">
+              <p className="text-blue-900 font-bold text-sm">📋 यह page सिर्फ Customers देखने के लिए है</p>
+              <p className="text-blue-700 text-xs mt-0.5">
+                नया customer जोड़ने या Excel से import करने के लिए <b>🏍️ Vehicle Dashboard</b> पर जाएं — वहाँ से जुड़ा customer यहाँ automatic दिखेगा
+              </p>
+            </div>
+            <Button onClick={() => navigate('/veh-dashboard')} className="bg-blue-600 hover:bg-blue-700 text-white font-bold">
+              🏍️ Vehicle Dashboard पर जाएं →
+            </Button>
+          </div>
+
           <div className="flex gap-3 mb-6 flex-wrap">
-            <Button onClick={() => { setShowForm(!showForm); setEditingId(null); resetForm(); }} className="bg-purple-600 hover:bg-purple-700 text-white"><Plus className="mr-2" /> Add Customer</Button>
-            <Button onClick={() => fileInputRef.current.click()} disabled={importing} className="bg-blue-600 hover:bg-blue-700 text-white font-bold"><FileSpreadsheet className="mr-2" size={18} />{importing ? '⏳ Importing...' : '📥 Import from Excel (cost_detl)'}</Button>
+            {/* Add Customer & Import buttons removed — moved to Vehicle Dashboard */}
             {isAdmin && <Button onClick={handleClearAll} disabled={clearing || customers.length===0} className="bg-red-700 hover:bg-red-800 text-white font-bold"><Trash2 className="mr-2" size={16} />{clearing ? '⏳ Clearing...' : `🗑 Clear All (${customers.length})`}</Button>}
-            <input ref={fileInputRef} type="file" accept=".xlsx,.xlsm,.xls" onChange={handleExcelImport} style={{ display: 'none' }} />
           </div>
           {importResult && (
             <div className={`mb-4 p-4 rounded-lg border-2 ${importResult.error?'bg-red-50 border-red-400':'bg-green-50 border-green-400'}`}>
@@ -879,7 +891,7 @@ export default function CustomerManagement({ user }) {
             </div>
           )}
           {showForm && (
-            <Card className="mb-6"><CardHeader className="bg-purple-600 text-white"><CardTitle>{editingId === 'view' ? '👁 View Customer' : 'Add New Customer'}</CardTitle></CardHeader><CardContent className="pt-6 space-y-6">
+            <Card className="mb-6"><CardHeader className="bg-purple-600 text-white"><CardTitle>{editingId === 'view' ? '👁 View Customer' : '✏️ Edit Customer'}</CardTitle></CardHeader><CardContent className="pt-6 space-y-6">
               <div><h3 className="font-bold mb-3">Customer Details</h3><div className="grid grid-cols-2 gap-4">
                 <Input placeholder="Name *" value={formData.name} onChange={e=>setFormData({...formData,name:e.target.value})} className="border-2" disabled={editingId==='view'}/>
                 <Input placeholder="Father Name" value={formData.fatherName} onChange={e=>setFormData({...formData,fatherName:e.target.value})} className="border-2" disabled={editingId==='view'}/>

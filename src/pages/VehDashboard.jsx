@@ -8,6 +8,7 @@ import { Upload, Download, Filter, TrendingUp, Calendar, FileText, Share2, Trash
 import * as XLSX from 'xlsx';
 import html2pdf from 'html2pdf.js';
 import { api } from '../utils/apiConfig';
+import { HONDA_MODELS, HONDA_COLORS, FINANCE_COMPANIES, findModel, getHSN, getModelsByCategory, calculateTaxBreakdown } from './hondaRateList';
 
 export default function VehDashboard() {
   const navigate = useNavigate();
@@ -59,9 +60,22 @@ export default function VehDashboard() {
   const [viewOldBike, setViewOldBike] = useState(null);
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [newCustomer, setNewCustomer] = useState({
-    customerName:'', fatherName:'', mobileNo:'', address:'', dist:'', pinCode:'',
-    dob:'', vehicleModel:'', variant:'', color:'', engineNo:'', chassisNo:'',
-    keyNo:'', batteryNo:'', financerName:'', price:0
+    // ⭐ Personal details (Invoice required)
+    customerName:'', fatherName:'', mobileNo:'', altMobile:'',
+    address:'', dist:'', state:'MADHYA PRADESH', pinCode:'462001',
+    dob:'', aadhar:'', pan:'',
+    // Vehicle details
+    vehicleModel:'', variant:'', color:'',
+    chassisNo:'', engineNo:'', keyNo:'', batteryNo:'',
+    hsnNumber:'', billBookNo:'', cc:'', year: new Date().getFullYear(),
+    // ⭐ Pricing — Ex-Showroom is the actual selling price (includes 18% GST)
+    // Tax breakdown is calculated only when generating Tax Invoice
+    price:0, exShowroom:0,
+    // Finance
+    financerName:'CASH',
+    // Meta
+    purchaseDate: new Date().toISOString().split('T')[0],
+    invoiceNo: '',
   });
   const [dbLoading, setDbLoading] = useState(false);
   const [dbError, setDbError] = useState('');
@@ -920,7 +934,12 @@ const syncToMongoDB = async (data) => {
           )}
 
           {showAddCustomer && (
-            <Card className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"><Card className="bg-slate-800 border-slate-700 w-full max-w-2xl max-h-[80vh] overflow-y-auto"><CardHeader className="bg-gradient-to-r from-green-600 to-green-700 sticky top-0"><CardTitle className="text-white flex items-center gap-2"><Plus size={20}/> Add New Customer</CardTitle></CardHeader><CardContent className="pt-6"><div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6"><Input placeholder="Customer Name *" value={newCustomer.customerName} onChange={e=>setNewCustomer({...newCustomer,customerName:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Father Name" value={newCustomer.fatherName} onChange={e=>setNewCustomer({...newCustomer,fatherName:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Mobile *" value={newCustomer.mobileNo} onChange={e=>setNewCustomer({...newCustomer,mobileNo:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Address" value={newCustomer.address} onChange={e=>setNewCustomer({...newCustomer,address:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="District" value={newCustomer.dist} onChange={e=>setNewCustomer({...newCustomer,dist:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Pin Code" value={newCustomer.pinCode} onChange={e=>setNewCustomer({...newCustomer,pinCode:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="DOB (DD-MM-YYYY)" value={newCustomer.dob} onChange={e=>setNewCustomer({...newCustomer,dob:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Vehicle Model" value={newCustomer.vehicleModel} onChange={e=>setNewCustomer({...newCustomer,vehicleModel:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Variant" value={newCustomer.variant} onChange={e=>setNewCustomer({...newCustomer,variant:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Color" value={newCustomer.color} onChange={e=>setNewCustomer({...newCustomer,color:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Engine No" value={newCustomer.engineNo} onChange={e=>setNewCustomer({...newCustomer,engineNo:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Chassis No" value={newCustomer.chassisNo} onChange={e=>setNewCustomer({...newCustomer,chassisNo:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Key No" value={newCustomer.keyNo} onChange={e=>setNewCustomer({...newCustomer,keyNo:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Battery No" value={newCustomer.batteryNo} onChange={e=>setNewCustomer({...newCustomer,batteryNo:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Financer Name" value={newCustomer.financerName} onChange={e=>setNewCustomer({...newCustomer,financerName:e.target.value})} className="bg-slate-700 text-white border-slate-600"/><Input placeholder="Price" type="number" value={newCustomer.price} onChange={e=>setNewCustomer({...newCustomer,price:parseFloat(e.target.value)||0})} className="bg-slate-700 text-white border-slate-600"/></div><div className="flex gap-4"><Button onClick={handleAddNewCustomer} className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold">Save Customer</Button><Button onClick={()=>setShowAddCustomer(false)} className="flex-1 bg-gray-600 hover:bg-gray-700 text-white font-bold">Cancel</Button></div></CardContent></Card></Card>
+            <SmartCustomerForm
+              data={newCustomer}
+              setData={setNewCustomer}
+              onSave={handleAddNewCustomer}
+              onCancel={() => setShowAddCustomer(false)}
+            />
           )}
         </>
       )}
@@ -952,6 +971,219 @@ const syncToMongoDB = async (data) => {
           <Card className="bg-slate-800 border-slate-700"><CardHeader className="bg-gradient-to-r from-orange-700 to-orange-800 py-3"><CardTitle className="text-white text-sm">🚲 Old Bikes ({oldBikes.length})</CardTitle></CardHeader><CardContent className="p-0"><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-700 border-b border-slate-600"><tr>{['#','Seller','Vehicle','Reg No','PS Price','Buyer','SL Price','Status','Actions'].map(h=><th key={h} className="px-3 py-2.5 text-left text-xs font-bold text-slate-300">{h}</th>)}</tr></thead><tbody>{oldBikes.length===0?<tr><td colSpan="9" className="px-6 py-8 text-center text-slate-500">कोई old bike नहीं। Excel Import (OLD BIKE sheet) या Add करें।</td></tr>:oldBikes.slice((oldBikePage-1)*10,oldBikePage*10).map((b,i)=><tr key={b.id} className={`border-b border-slate-700 hover:bg-slate-700/50 ${i%2?'bg-slate-800/30':''}`}><td className="px-3 py-2 text-slate-500 text-xs">{(oldBikePage-1)*10+i+1}</td><td className="px-3 py-2 text-white font-bold text-xs">{b.custName}<br/><span className="text-slate-400 font-normal">{b.custMob||''}</span></td><td className="px-3 py-2 text-blue-300 text-xs">{b.veh} <span className="text-slate-500">{b.mdl}</span></td><td className="px-3 py-2 text-slate-400 text-xs font-mono">{b.regNo||'—'}</td><td className="px-3 py-2 text-yellow-400 text-xs font-bold">₹{(b.psPrice||0).toLocaleString('en-IN')}</td><td className="px-3 py-2 text-green-300 text-xs">{b.buyerName||<span className="text-slate-600">—</span>}</td><td className="px-3 py-2 text-green-400 text-xs font-bold">{b.slPrice ? '₹'+(b.slPrice||0).toLocaleString('en-IN') : '—'}</td><td className="px-3 py-2"><span className={`text-xs font-bold px-2 py-0.5 rounded ${b.status==='Sold'?'bg-red-900 text-red-300':b.status==='Reserved'?'bg-yellow-900 text-yellow-300':'bg-green-900 text-green-300'}`}>{b.status||'Available'}</span></td><td className="px-3 py-2"><div className="flex gap-1"><button onClick={()=>setViewOldBike(b)} className="bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded text-xs">👁</button><button onClick={()=>editOldBike(b)} className="bg-yellow-600 hover:bg-yellow-700 text-white px-2 py-0.5 rounded text-xs">✏️</button>{isAdmin?(<button onClick={()=>deleteOldBike(b.id)} className="bg-red-700 hover:bg-red-600 text-white px-2 py-0.5 rounded text-xs">🗑</button>):(<button disabled className="bg-gray-600 text-gray-400 px-2 py-0.5 rounded text-xs cursor-not-allowed">🔒</button>)}</div></td></tr>)}</tbody></table></div>{Math.ceil(oldBikes.length/10)>1&&(<div className="flex items-center justify-between px-4 py-2.5 bg-slate-700/50 border-t border-slate-600"><span className="text-xs text-slate-400">Page {oldBikePage} of {Math.ceil(oldBikes.length/10)} — {oldBikes.length} bikes</span><div className="flex gap-2"><Button onClick={()=>setOldBikePage(p=>Math.max(1,p-1))} disabled={oldBikePage===1} className="bg-blue-600 text-white h-7 px-3 text-xs disabled:opacity-40">◀ Previous</Button><Button onClick={()=>setOldBikePage(p=>Math.min(Math.ceil(oldBikes.length/10),p+1))} disabled={oldBikePage>=Math.ceil(oldBikes.length/10)} className="bg-blue-600 text-white h-7 px-3 text-xs disabled:opacity-40">Next ▶</Button></div></div>)}</CardContent></Card>
         </div>
       )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 🎨 SMART CUSTOMER FORM
+// Modern, mobile-friendly modal with all invoice fields
+// • Vehicle Model dropdown (Honda models from Excel rate list)
+// • Variant dropdown (CC values)
+// • Color dropdown (Honda colors)
+// • Auto-fill: select model → CC, HSN, Ex-Showroom price auto-set
+// • Finance company dropdown
+// ════════════════════════════════════════════════════════════════════════════
+function SmartCustomerForm({ data, setData, onSave, onCancel }) {
+  const grouped = getModelsByCategory();
+  const variants = [...new Set(HONDA_MODELS.map(m => m.cc))];
+
+  // Auto-fill on model select — only set Ex-Showroom price (includes GST)
+  const handleModelChange = (modelName) => {
+    const model = findModel(modelName);
+    if (model) {
+      setData({
+        ...data,
+        vehicleModel: model.name,
+        cc: model.cc,
+        variant: model.cc,
+        hsnNumber: getHSN(model.name),
+        price: model.exShowroom,
+        exShowroom: model.exShowroom,
+      });
+    } else {
+      setData({ ...data, vehicleModel: modelName });
+    }
+  };
+
+  const handlePriceChange = (val) => {
+    const exShowroom = parseFloat(val) || 0;
+    setData({ ...data, price: exShowroom, exShowroom });
+  };
+
+  // For display preview only — show breakdown so user knows tax
+  const taxPreview = calculateTaxBreakdown(data.exShowroom || data.price || 0);
+
+  const f = { background:'#1e293b', color:'#fff', border:'1px solid #475569', borderRadius:8, padding:'10px 12px', fontSize:13, width:'100%', outline:'none' };
+  const lbl = { color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:4, display:'block', textTransform:'uppercase', letterSpacing:'0.5px' };
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'center', justifyContent:'center', padding:16, zIndex:50 }}
+      onClick={onCancel}>
+      <div style={{ background:'linear-gradient(180deg, #0f172a, #020617)', border:'1px solid #334155', borderRadius:16, width:'100%', maxWidth:900, maxHeight:'90vh', overflowY:'auto' }}
+        onClick={e => e.stopPropagation()}>
+
+        {/* HEADER */}
+        <div style={{ background:'linear-gradient(90deg, #16a34a, #15803d)', padding:'14px 20px', position:'sticky', top:0, zIndex:1, display:'flex', alignItems:'center', justifyContent:'space-between', borderTopLeftRadius:16, borderTopRightRadius:16 }}>
+          <div>
+            <h2 style={{ color:'#fff', fontSize:18, fontWeight:800, margin:0, display:'flex', alignItems:'center', gap:8 }}>
+              <Plus size={20}/> Add New Customer
+            </h2>
+            <p style={{ color:'#bbf7d0', fontSize:11, margin:'2px 0 0' }}>Vehicle sale entry — सब fields invoice के लिए जरूरी हैं</p>
+          </div>
+          <button onClick={onCancel}
+            style={{ background:'rgba(0,0,0,0.3)', border:'1px solid rgba(255,255,255,0.3)', color:'#fff', borderRadius:8, padding:'6px 10px', cursor:'pointer', fontSize:13 }}>
+            ✖
+          </button>
+        </div>
+
+        <div style={{ padding:'18px 20px' }}>
+
+          {/* ───── PERSONAL DETAILS ───── */}
+          <div style={{ marginBottom:18 }}>
+            <h3 style={{ color:'#86efac', fontSize:13, fontWeight:800, marginBottom:10, paddingBottom:6, borderBottom:'1px solid #334155', display:'flex', alignItems:'center', gap:6 }}>
+              👤 Personal Details
+            </h3>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))', gap:12 }}>
+              <div><label style={lbl}>Customer Name *</label><input style={f} placeholder="जैसे: KAVITA AHIRWAR" value={data.customerName} onChange={e => setData({...data, customerName: e.target.value.toUpperCase()})}/></div>
+              <div><label style={lbl}>Father Name (C/O) *</label><input style={f} placeholder="जैसे: ANIL AHIRWAR" value={data.fatherName} onChange={e => setData({...data, fatherName: e.target.value.toUpperCase()})}/></div>
+              <div><label style={lbl}>Mobile *</label><input style={f} placeholder="10 digit number" value={data.mobileNo} maxLength="10" onChange={e => setData({...data, mobileNo: e.target.value.replace(/\D/g,'')})}/></div>
+              <div><label style={lbl}>Alternate Mobile</label><input style={f} placeholder="Optional" value={data.altMobile||''} maxLength="10" onChange={e => setData({...data, altMobile: e.target.value.replace(/\D/g,'')})}/></div>
+              <div><label style={lbl}>Aadhar No</label><input style={f} placeholder="12 digit" value={data.aadhar||''} maxLength="12" onChange={e => setData({...data, aadhar: e.target.value.replace(/\D/g,'')})}/></div>
+              <div><label style={lbl}>PAN No</label><input style={f} placeholder="ABCDE1234F" value={data.pan||''} maxLength="10" onChange={e => setData({...data, pan: e.target.value.toUpperCase()})}/></div>
+              <div><label style={lbl}>DOB</label><input style={f} type="date" value={data.dob} onChange={e => setData({...data, dob: e.target.value})}/></div>
+              <div style={{ gridColumn:'1 / -1' }}><label style={lbl}>Address *</label><input style={f} placeholder="जैसे: H NO- 450 MALI KHEDI HUZUR" value={data.address} onChange={e => setData({...data, address: e.target.value.toUpperCase()})}/></div>
+              <div><label style={lbl}>District *</label><input style={f} placeholder="BHOPAL" value={data.dist} onChange={e => setData({...data, dist: e.target.value.toUpperCase()})}/></div>
+              <div><label style={lbl}>State</label><input style={f} value={data.state||'MADHYA PRADESH'} onChange={e => setData({...data, state: e.target.value.toUpperCase()})}/></div>
+              <div><label style={lbl}>PIN Code</label><input style={f} placeholder="462001" value={data.pinCode} maxLength="6" onChange={e => setData({...data, pinCode: e.target.value.replace(/\D/g,'')})}/></div>
+            </div>
+          </div>
+
+          {/* ───── VEHICLE DETAILS ───── */}
+          <div style={{ marginBottom:18 }}>
+            <h3 style={{ color:'#93c5fd', fontSize:13, fontWeight:800, marginBottom:10, paddingBottom:6, borderBottom:'1px solid #334155', display:'flex', alignItems:'center', gap:6 }}>
+              🏍️ Vehicle Details
+            </h3>
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))', gap:12 }}>
+
+              {/* ⭐ Model dropdown — grouped by category */}
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={lbl}>Vehicle Model * <span style={{ color:'#86efac' }}>(select करते ही price auto-fill होगा)</span></label>
+                <select style={{ ...f, cursor:'pointer' }} value={data.vehicleModel} onChange={e => handleModelChange(e.target.value)}>
+                  <option value="">— Model चुनें —</option>
+                  {Object.entries(grouped).map(([cat, models]) => (
+                    <optgroup key={cat} label={`═══ ${cat} ═══`}>
+                      {models.map(m => (
+                        <option key={m.id} value={m.name}>{m.name} — ₹{m.exShowroom.toLocaleString('en-IN')}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </div>
+
+              {/* ⭐ Variant dropdown (CC) */}
+              <div>
+                <label style={lbl}>Variant (CC)</label>
+                <select style={{ ...f, cursor:'pointer' }} value={data.variant} onChange={e => setData({...data, variant: e.target.value, cc: e.target.value})}>
+                  <option value="">— Variant —</option>
+                  {variants.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+
+              {/* ⭐ Color dropdown */}
+              <div>
+                <label style={lbl}>Color</label>
+                <select style={{ ...f, cursor:'pointer' }} value={data.color} onChange={e => setData({...data, color: e.target.value})}>
+                  <option value="">— Color चुनें —</option>
+                  {HONDA_COLORS.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+
+              <div><label style={lbl}>Chassis No</label><input style={f} placeholder="ME4JK361ATW542678" value={data.chassisNo} onChange={e => setData({...data, chassisNo: e.target.value.toUpperCase()})}/></div>
+              <div><label style={lbl}>Engine No</label><input style={f} placeholder="JK36EW1542422" value={data.engineNo} onChange={e => setData({...data, engineNo: e.target.value.toUpperCase()})}/></div>
+              <div><label style={lbl}>Key No</label><input style={f} placeholder="PL09" value={data.keyNo} onChange={e => setData({...data, keyNo: e.target.value.toUpperCase()})}/></div>
+              <div><label style={lbl}>Battery No</label><input style={f} placeholder="M211271" value={data.batteryNo} onChange={e => setData({...data, batteryNo: e.target.value.toUpperCase()})}/></div>
+              <div><label style={lbl}>HSN Number</label><input style={f} placeholder="87112029" value={data.hsnNumber||''} onChange={e => setData({...data, hsnNumber: e.target.value})}/></div>
+              <div><label style={lbl}>Bill Book No</label><input style={f} placeholder="Optional" value={data.billBookNo||''} onChange={e => setData({...data, billBookNo: e.target.value.toUpperCase()})}/></div>
+              <div><label style={lbl}>Year</label><input style={f} type="number" value={data.year || new Date().getFullYear()} onChange={e => setData({...data, year: e.target.value})}/></div>
+              <div><label style={lbl}>Purchase Date</label><input style={f} type="date" value={data.purchaseDate || new Date().toISOString().split('T')[0]} onChange={e => setData({...data, purchaseDate: e.target.value})}/></div>
+            </div>
+          </div>
+
+          {/* ───── PRICING ───── */}
+          <div style={{ marginBottom:18 }}>
+            <h3 style={{ color:'#fbbf24', fontSize:13, fontWeight:800, marginBottom:10, paddingBottom:6, borderBottom:'1px solid #334155', display:'flex', alignItems:'center', gap:6 }}>
+              💰 Ex-Showroom Price
+            </h3>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:12 }}>
+              <div>
+                <label style={lbl}>Ex-Showroom Price * <span style={{ color:'#86efac' }}>(GST शामिल — यही असली selling price है)</span></label>
+                <input
+                  style={{ ...f, fontWeight:800, color:'#86efac', fontSize:18, padding:'14px 16px' }}
+                  type="number" placeholder="0"
+                  value={data.exShowroom || data.price || ''}
+                  onChange={e => handlePriceChange(e.target.value)}
+                />
+                <p style={{ color:'#64748b', fontSize:11, marginTop:6 }}>
+                  💡 Vehicle Model select करने पर यह automatic भर जाएगी। बदलना हो तो manual edit कर सकते हैं।
+                </p>
+              </div>
+
+              {/* Tax Invoice Breakdown Preview (for reference only) */}
+              {data.exShowroom > 0 && (
+                <div style={{ background:'#1e293b88', border:'1px dashed #475569', borderRadius:10, padding:'12px 14px' }}>
+                  <p style={{ color:'#94a3b8', fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:8 }}>
+                    📋 Tax Invoice Breakdown <span style={{ color:'#fbbf24' }}>(generate करने पर ऐसे दिखेगा)</span>
+                  </p>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6, fontSize:12 }}>
+                    <div style={{ color:'#94a3b8' }}>Taxable Price:</div>
+                    <div style={{ color:'#e2e8f0', textAlign:'right', fontWeight:600 }}>₹{taxPreview.taxable.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div style={{ color:'#94a3b8' }}>SGST @ 9%:</div>
+                    <div style={{ color:'#fcd34d', textAlign:'right' }}>₹{taxPreview.sgst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div style={{ color:'#94a3b8' }}>CGST @ 9%:</div>
+                    <div style={{ color:'#fcd34d', textAlign:'right' }}>₹{taxPreview.cgst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                    <div style={{ color:'#86efac', fontWeight:800, borderTop:'1px solid #475569', paddingTop:6, marginTop:4 }}>Ex-Showroom Total:</div>
+                    <div style={{ color:'#86efac', textAlign:'right', fontWeight:800, borderTop:'1px solid #475569', paddingTop:6, marginTop:4 }}>₹{taxPreview.exShowroom.toLocaleString('en-IN')}</div>
+                  </div>
+                  <p style={{ color:'#64748b', fontSize:10, marginTop:8, fontStyle:'italic' }}>
+                    ↑ यह सिर्फ preview है — Tax Invoice automatic इसी तरह बनेगा
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ───── FINANCE ───── */}
+          <div style={{ marginBottom:18 }}>
+            <h3 style={{ color:'#c4b5fd', fontSize:13, fontWeight:800, marginBottom:10, paddingBottom:6, borderBottom:'1px solid #334155', display:'flex', alignItems:'center', gap:6 }}>
+              🏦 Finance / Payment
+            </h3>
+            <div>
+              <label style={lbl}>Financer Name</label>
+              <select style={{ ...f, cursor:'pointer' }} value={data.financerName||'CASH'} onChange={e => setData({...data, financerName: e.target.value})}>
+                {FINANCE_COMPANIES.map(fc => <option key={fc} value={fc}>{fc}</option>)}
+              </select>
+              <p style={{ color:'#64748b', fontSize:10, marginTop:4 }}>"CASH" = बिना finance के, बाकी = finance company</p>
+            </div>
+          </div>
+
+          {/* ───── ACTIONS ───── */}
+          <div style={{ display:'flex', gap:10, paddingTop:14, borderTop:'1px solid #334155' }}>
+            <button onClick={onSave}
+              style={{ flex:1, background:'linear-gradient(135deg, #16a34a, #15803d)', color:'#fff', border:'none', padding:'12px 18px', borderRadius:10, fontSize:14, fontWeight:800, cursor:'pointer', boxShadow:'0 4px 14px rgba(22,163,74,0.4)' }}>
+              💾 Save Customer & Sync
+            </button>
+            <button onClick={onCancel}
+              style={{ background:'#475569', color:'#fff', border:'none', padding:'12px 18px', borderRadius:10, fontSize:14, fontWeight:700, cursor:'pointer' }}>
+              ✖ Cancel
+            </button>
+          </div>
+
+          <div style={{ marginTop:12, padding:'10px 12px', background:'#1e3a8a22', border:'1px solid #3b82f655', borderRadius:8, color:'#93c5fd', fontSize:11 }}>
+            💡 <b>Tip:</b> यह customer Vehicle Dashboard + Customer Management + Invoices — सब जगह automatically दिखेगा। MongoDB में sync हो जाएगा सभी devices पर।
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
