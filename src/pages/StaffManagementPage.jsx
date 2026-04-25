@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -124,24 +125,166 @@ export default function StaffManagementPage() {
 
   useEffect(() => { loadData(); }, []);
 
+  // ⭐ Auto-refresh salary data every 30 seconds (cross-device sync)
+  useEffect(() => {
+    const interval = setInterval(() => { loadSalaryData(); }, 30000);
+    return () => clearInterval(interval);
+  }, [staffList]);
+
+  // ⭐ NEW: Load salary data from MongoDB and convert to local format
+  const loadSalaryData = async () => {
+    try {
+      // Fetch all payments from /api/salaries (shared with Salary Management)
+      const res = await fetch(api('/api/salaries'));
+      if (!res.ok) return;
+      const allPayments = await res.json();
+
+      // Group by staffId/staffName -> { staffId: [payments] }
+      // Also separate incentive/bonus into incentiveData
+      const paymentsByStaff = {};
+      const incentivesByStaff = {};
+
+      allPayments.forEach(p => {
+        if (p.cancelled) return;
+
+        // Find matching staff (by staffId or by name)
+        const staff = staffList.find(s =>
+          String(s.id) === String(p.staffId) ||
+          s.name?.toLowerCase().trim() === String(p.staffName || '').toLowerCase().trim()
+        );
+        const sid = staff?.id || p.staffId;
+        if (!sid) return;
+
+        // Salary, advance, deduction → paymentHistory
+        if (p.type === 'salary' || p.type === 'advance' || p.type === 'deduction') {
+          if (!paymentsByStaff[sid]) paymentsByStaff[sid] = [];
+          paymentsByStaff[sid].push({
+            id: p._id,
+            date: p.paymentDate,
+            amount: Number(p.amount || 0),
+            type: p.type,
+            note: p.notes || '',
+            forMonth: p.forMonth,
+            forYear: p.forYear,
+            mongoId: p._id,  // for delete/update later
+          });
+        }
+
+        // Bonus, incentive, insurance → incentiveData
+        if (p.type === 'bonus' || p.type === 'incentive' || p.type === 'insurance') {
+          if (!incentivesByStaff[sid]) incentivesByStaff[sid] = [];
+          incentivesByStaff[sid].push({
+            id: p._id,
+            month: p.forMonth,
+            year: p.forYear,
+            amount: Number(p.amount || 0),
+            type: p.type === 'bonus' ? 'bonus' : (p.type === 'insurance' ? 'insurance' : 'incentive'),
+            note: p.notes || '',
+            mongoId: p._id,
+          });
+        }
+      });
+
+      setPaymentHistory(paymentsByStaff);
+      setIncentiveData(incentivesByStaff);
+      setSalaryPayments(allPayments);                                   // ⭐ raw payments for unified access
+      // Cache locally for offline view
+      try { localStorage.setItem('staffPayments', JSON.stringify(paymentsByStaff)); } catch {}
+      try { localStorage.setItem('staffIncentives', JSON.stringify(incentivesByStaff)); } catch {}
+    } catch (err) {
+      console.log('Salary data sync failed:', err.message);
+    }
+  };
+
+  // ⭐ NEW: Load attendance from MongoDB
+  const loadAttendanceData = async () => {
+    try {
+      const res = await fetch(api('/api/attendance'));
+      if (!res.ok) return;
+      const all = await res.json();
+      const byStaff = {};
+      all.forEach(a => {
+        if (!byStaff[a.staffId]) byStaff[a.staffId] = [];
+        byStaff[a.staffId].push({
+          date: a.date,
+          checkInTime: a.checkInTime,
+          checkOutTime: a.checkOutTime,
+          status: a.status || 'Present',
+          location: { lat: a.checkInLat, lng: a.checkInLng, distance: a.checkInDistance },
+          isLate: a.isLate || false,
+          mongoId: a._id,
+        });
+      });
+      setAttendanceRecords(byStaff);
+      try { localStorage.setItem('staffAttendance', JSON.stringify(byStaff)); } catch {}
+    } catch (err) {
+      console.log('Attendance sync failed:', err.message);
+    }
+  };
+
+  // ⭐ NEW STATE: Linked salary entities (single source of truth for salaries)
+  const [salaryEntities, setSalaryEntities] = useState([]);
+  const [salaryPayments, setSalaryPayments] = useState([]);            // raw payments from /api/salaries
+
   const loadData = () => {
     // MongoDB PRIMARY — always fetch fresh staff data
     (async () => {
       try {
         const res = await fetch(api('/api/staff'));
-        if (res.ok) { const db = await res.json(); if (db.length > 0) { setStaffList(db); localStorage.setItem('staffData', JSON.stringify(db)); return; } }
+        if (res.ok) { const db = await res.json(); if (db.length > 0) { setStaffList(db); localStorage.setItem('staffData', JSON.stringify(db)); } }
       } catch {}
-      try { const s = localStorage.getItem('staffData'); if (s) setStaffList(JSON.parse(s)); } catch {}
-    })()
-    try { const a = localStorage.getItem('staffAttendance'); if (a) setAttendanceRecords(JSON.parse(a)); } catch {}
-    try { const p = localStorage.getItem('staffPayments'); if (p) setPaymentHistory(JSON.parse(p)); } catch {}
+      try { const s = localStorage.getItem('staffData'); if (s && staffList.length === 0) setStaffList(JSON.parse(s)); } catch {}
+
+      // ⭐ Load salary-entities (UNIFIED with Salary Management page)
+      try {
+        const res = await fetch(api('/api/salary-entities'));
+        if (res.ok) { const ents = await res.json(); setSalaryEntities(ents || []); }
+      } catch (e) { console.log('Salary entities load failed:', e.message); }
+
+      // ⭐ Now load salary + attendance from MongoDB (linked to Salary Management)
+      await loadSalaryData();
+      await loadAttendanceData();
+    })();
+    // Local-only data
     try { const n = localStorage.getItem('staffNotes'); if (n) setManualNotes(JSON.parse(n)); } catch {}
-    try { const i = localStorage.getItem('staffIncentives'); if (i) setIncentiveData(JSON.parse(i)); } catch {}
     try { if (localStorage.getItem('vpAdminSession') === 'true') { setIsAdmin(true); setShowLandingPage(false); } } catch {}
     try {
       const ls = localStorage.getItem('vpStaffSession');
       if (ls) { setLoggedInStaff(JSON.parse(ls)); setShowLandingPage(false); }
     } catch {}
+    // Fallback: If MongoDB unreachable, load cached salary data
+    try {
+      const p = localStorage.getItem('staffPayments');
+      if (p && Object.keys(paymentHistory).length === 0) setPaymentHistory(JSON.parse(p));
+    } catch {}
+    try {
+      const i = localStorage.getItem('staffIncentives');
+      if (i && Object.keys(incentiveData).length === 0) setIncentiveData(JSON.parse(i));
+    } catch {}
+  };
+
+  // ⭐ NEW: Get authoritative monthly salary for a staff member
+  // Priority: salary-entities (active staff entity matching name) > staff.monthlySalary
+  const getEffectiveMonthlySalary = (staff) => {
+    if (!staff) return 0;
+    // Match salary entity by name (case-insensitive trim) and type='staff' and active
+    const match = salaryEntities.find(e =>
+      e.type === 'staff' &&
+      e.active &&
+      String(e.name || '').trim().toLowerCase() === String(staff.name || '').trim().toLowerCase()
+    );
+    if (match && match.monthlyAmount) return Number(match.monthlyAmount);
+    return Number(staff.monthlySalary || 0);
+  };
+
+  // ⭐ Get linked salary entity for a staff member (or null)
+  const getLinkedEntity = (staff) => {
+    if (!staff) return null;
+    return salaryEntities.find(e =>
+      e.type === 'staff' &&
+      e.active &&
+      String(e.name || '').trim().toLowerCase() === String(staff.name || '').trim().toLowerCase()
+    ) || null;
   };
 
   const saveData = (list) => {
@@ -237,21 +380,49 @@ export default function StaffManagementPage() {
     const m = forMonth !== null ? forMonth : currentMonth;
     const y = forYear !== null ? forYear : currentYear;
 
+    // ⭐ UNIFIED: Get monthly salary from salary-entities (or fallback to staff)
+    const linkedEntity = getLinkedEntity(staff);
+    const effectiveMonthlySalary = getEffectiveMonthlySalary(staff);
+
     const attendance = attendanceRecords[staffId] || [];
-    const payments = paymentHistory[staffId] || [];
     const incList = incentiveData[staffId] || [];
     const daysInMonth = new Date(y, m + 1, 0).getDate();
     const sundays = countSundays(y, m);
     const workingDaysInMonth = daysInMonth - sundays;   // sundays are paid off
+
+    // ⭐ UNIFIED: Get payments from BOTH paymentHistory (legacy) AND linked salary entity
+    // paymentHistory[staffId] holds payments by staff.id (old system)
+    // salaryPayments holds payments by staffName (new system from Salary Mgmt)
+    const legacyPayments = paymentHistory[staffId] || [];
+    const linkedPayments = (salaryPayments || []).filter(p =>
+      !p.cancelled && (
+        String(p.staffName || '').trim().toLowerCase() === String(staff.name || '').trim().toLowerCase() ||
+        String(p.staffId) === String(staffId)
+      )
+    ).map(p => ({
+      // Normalize to legacy shape
+      date: p.paymentDate,
+      amount: Number(p.amount || 0),
+      type: p.type || 'salary',
+      notes: p.notes || '',
+      _id: p._id,
+      _source: 'salary-mgmt',
+    }));
+
+    // Merge but de-dupe by (date+amount+type) - prefer salary-mgmt source
+    const seen = new Set();
+    const allPayments = [];
+    [...linkedPayments, ...legacyPayments].forEach(p => {
+      const key = `${p.date}|${p.amount}|${p.type || 'salary'}`;
+      if (!seen.has(key)) { seen.add(key); allPayments.push(p); }
+    });
 
     // 🕊️ Grace Period check: Are rules active for this month?
     const rulesStart = shopSettings?.attendanceRulesStartDate;  // YYYY-MM-DD
     const rulesActive = (() => {
       if (!rulesStart) return false;  // not configured yet
       const startDate = new Date(rulesStart);
-      // First day of month being calculated
       const thisMonthStart = new Date(y, m, 1);
-      // Last day of rules-start month (whole month from start onwards)
       const startMonthFirst = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
       return thisMonthStart >= startMonthFirst;
     })();
@@ -262,16 +433,11 @@ export default function StaffManagementPage() {
     });
     const presentDays = monthAtt.length;
 
-    // Absent = Working days (non-Sunday) NOT marked present
-    // Note: We only count attendance for non-Sunday dates
-    // Calculate expected non-Sunday dates that have passed (for current month only count till today)
     const today = new Date();
     const isCurrentMonth = (m === today.getMonth() && y === today.getFullYear());
     const isFutureMonth = new Date(y, m, 1) > today;
 
-    // For current month, only count days till today (not future days as absent)
-    let expectedWorkingDays = workingDaysInMonth;
-    let elapsedWorkingDays = workingDaysInMonth;  // for absent calculation
+    let elapsedWorkingDays = workingDaysInMonth;
     if (isCurrentMonth) {
       let count = 0;
       for (let d = 1; d <= today.getDate(); d++) {
@@ -280,18 +446,17 @@ export default function StaffManagementPage() {
       }
       elapsedWorkingDays = count;
     } else if (isFutureMonth) {
-      elapsedWorkingDays = 0;  // future month - no absent yet
+      elapsedWorkingDays = 0;
     }
 
     const absentDays = Math.max(0, elapsedWorkingDays - presentDays);
     const lateDays = monthAtt.filter(a => a.checkInTime && isLateTime(a.checkInTime)).length;
 
-    const perDayRate = workingDaysInMonth > 0 ? (staff.monthlySalary / workingDaysInMonth) : 0;
+    const perDayRate = workingDaysInMonth > 0 ? (effectiveMonthlySalary / workingDaysInMonth) : 0;
 
     let salaryDeduction = 0, deductionDays = 0, deductionReason = '', latePenalty = 0;
 
     if (!rulesActive) {
-      // 🕊️ GRACE PERIOD — पुराने महीने या rules abhi लागू नहीं हुए
       const niceDate = rulesStart
         ? new Date(rulesStart).toLocaleDateString('en-IN', { month:'long', year:'numeric' })
         : 'अगले महीने';
@@ -301,12 +466,9 @@ export default function StaffManagementPage() {
     } else if (presentDays >= elapsedWorkingDays) {
       deductionReason = `✅ पूरे ${elapsedWorkingDays} working days में उपस्थित — कोई कटौती नहीं`;
     } else {
-      // 💼 RULE: per-day deduction for non-Sunday absent
       deductionDays = absentDays;
       salaryDeduction = absentDays * perDayRate;
       deductionReason = `${absentDays} दिन छुट्टी × ₹${perDayRate.toFixed(0)}/दिन (Sundays paid off)`;
-
-      // Late penalty
       latePenalty = lateDays * (shopSettings?.latePenalty || 50);
     }
 
@@ -317,16 +479,18 @@ export default function StaffManagementPage() {
     const totalInsurance = monthIncentives.filter(i => i.type === 'insurance').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
     const otherBonus = monthIncentives.filter(i => i.type === 'bonus').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
 
-    const netSalary = Math.max(0, staff.monthlySalary - totalDeduction + totalIncentive + otherBonus);
+    const netSalary = Math.max(0, effectiveMonthlySalary - totalDeduction + totalIncentive + otherBonus);
 
-    const monthPayments = payments.filter(p => {
+    const monthPayments = allPayments.filter(p => {
       const d = new Date(p.date);
       return d.getMonth() === m && d.getFullYear() === y;
     });
-    const totalPayments = monthPayments.reduce((s, p) => s + p.amount, 0);
+    const totalPayments = monthPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
 
     return {
-      monthlySalary: staff.monthlySalary, presentDays, absentDays, sundays,
+      monthlySalary: effectiveMonthlySalary,                  // ⭐ from salary-entities
+      linkedEntityName: linkedEntity?.name || null,           // ⭐ which entity
+      presentDays, absentDays, sundays,
       workingDaysInMonth, elapsedWorkingDays,
       deductionDays, deductionReason, perDayRate,
       salaryDeduction: salaryDeduction.toFixed(2), lateDays,
@@ -974,14 +1138,47 @@ export default function StaffManagementPage() {
     alert(`✅ ${staff.name} का PIN reset हो गया → 1234`);
   };
 
-  const handleAddPayment = () => {
+  const handleAddPayment = async () => {
     if (!selectedStaffForPayment || !paymentEntry.amount) { alert('कर्मचारी और राशि चुनें'); return; }
-    const p = { ...paymentHistory };
-    if (!p[selectedStaffForPayment]) p[selectedStaffForPayment] = [];
-    p[selectedStaffForPayment].push({ date: paymentEntry.date, amount: parseFloat(paymentEntry.amount), description: paymentEntry.description, id: Date.now() });
-    setPaymentHistory(p); savePayments(p);
-    setPaymentEntry({ amount: 0, date: new Date().toISOString().split('T')[0], description: 'Salary Payment' });
-    setShowPaymentForm(false); alert('✅ पेमेंट जोड़ा गया');
+    const staff = staffList.find(s => s.id === selectedStaffForPayment);
+    if (!staff) { alert('कर्मचारी नहीं मिला'); return; }
+
+    // ⭐ Save to MongoDB /api/salaries (linked with Salary Management page)
+    const dateObj = new Date(paymentEntry.date);
+    const payload = {
+      staffId: String(staff.id),
+      staffName: staff.name,
+      type: 'salary',
+      amount: parseFloat(paymentEntry.amount),
+      paymentDate: paymentEntry.date,
+      forMonth: dateObj.getMonth() + 1,
+      forYear: dateObj.getFullYear(),
+      notes: paymentEntry.description || 'Salary Payment',
+      method: 'Cash',
+    };
+
+    try {
+      const res = await fetch(api('/api/salaries'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error('Server error');
+      // Reload from MongoDB to get fresh data on both pages
+      await loadSalaryData();
+      setPaymentEntry({ amount: 0, date: new Date().toISOString().split('T')[0], description: 'Salary Payment' });
+      setShowPaymentForm(false);
+      alert('✅ पेमेंट जोड़ा गया\n\n💡 यह Salary Management page पर भी दिखेगा');
+    } catch (err) {
+      // Fallback: save locally
+      const p = { ...paymentHistory };
+      if (!p[selectedStaffForPayment]) p[selectedStaffForPayment] = [];
+      p[selectedStaffForPayment].push({ date: paymentEntry.date, amount: parseFloat(paymentEntry.amount), note: paymentEntry.description, id: Date.now(), type: 'salary' });
+      setPaymentHistory(p);
+      try { localStorage.setItem('staffPayments', JSON.stringify(p)); } catch {}
+      alert('⚠️ ऑफलाइन save हुआ। MongoDB connection check करें।');
+      setShowPaymentForm(false);
+    }
   };
   const handleAddNote = () => {
     if (!selectedStaffForNotes || !noteText) { alert('कर्मचारी और नोट भरें'); return; }
@@ -991,14 +1188,45 @@ export default function StaffManagementPage() {
     setManualNotes(n); saveNotes(n);
     setNoteText(''); setHighlightText(''); setShowNotesForm(false); alert('✅ नोट जोड़ा गया');
   };
-  const handleAddIncentive = () => {
+  const handleAddIncentive = async () => {
     if (!selectedStaffForIncentive || !incentiveEntry.amount) { alert('कर्मचारी और राशि भरें'); return; }
-    const inc = { ...incentiveData };
-    if (!inc[selectedStaffForIncentive]) inc[selectedStaffForIncentive] = [];
-    inc[selectedStaffForIncentive].push({ ...incentiveEntry, amount: parseFloat(incentiveEntry.amount), id: Date.now() });
-    setIncentiveData(inc); saveIncentives(inc);
-    setIncentiveEntry({ amount: '', reason: 'अच्छा प्रदर्शन', type: 'incentive', month: new Date().getMonth() + 1, year: new Date().getFullYear() });
-    setShowIncentiveForm(false); alert('✅ जोड़ा गया');
+    const staff = staffList.find(s => s.id === selectedStaffForIncentive);
+    if (!staff) { alert('कर्मचारी नहीं मिला'); return; }
+
+    // ⭐ Save to MongoDB /api/salaries
+    const today = new Date().toISOString().split('T')[0];
+    const payload = {
+      staffId: String(staff.id),
+      staffName: staff.name,
+      type: incentiveEntry.type,  // 'bonus' | 'incentive' | 'insurance'
+      amount: parseFloat(incentiveEntry.amount),
+      paymentDate: today,
+      forMonth: incentiveEntry.month,
+      forYear: incentiveEntry.year,
+      notes: incentiveEntry.reason || '',
+    };
+
+    try {
+      const res = await fetch(api('/api/salaries'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error('Server error');
+      await loadSalaryData();
+      setIncentiveEntry({ amount: '', reason: 'अच्छा प्रदर्शन', type: 'incentive', month: new Date().getMonth() + 1, year: new Date().getFullYear() });
+      setShowIncentiveForm(false);
+      alert('✅ जोड़ा गया\n\n💡 यह Salary Management page पर भी दिखेगा');
+    } catch (err) {
+      // Fallback: save locally
+      const inc = { ...incentiveData };
+      if (!inc[selectedStaffForIncentive]) inc[selectedStaffForIncentive] = [];
+      inc[selectedStaffForIncentive].push({ ...incentiveEntry, amount: parseFloat(incentiveEntry.amount), id: Date.now() });
+      setIncentiveData(inc);
+      try { localStorage.setItem('staffIncentives', JSON.stringify(inc)); } catch {}
+      alert('⚠️ ऑफलाइन save हुआ');
+      setShowIncentiveForm(false);
+    }
   };
 
   const getReminders = () => {
@@ -1230,6 +1458,47 @@ export default function StaffManagementPage() {
           onUpdate={(newSettings) => setShopSettings(newSettings)}
         />
 
+        {/* 🔗 SALARY SYSTEM LINK STATUS — Connects Staff Mgmt with Salary Mgmt */}
+        {isAdmin && (
+          <SalarySystemLinkBanner
+            staffList={staffList}
+            salaryEntities={salaryEntities}
+            onAutoLink={async () => {
+              // Auto-create salary entities for unlinked staff
+              const unlinkedStaff = staffList.filter(s => !salaryEntities.find(e =>
+                e.type === 'staff' && e.active &&
+                String(e.name||'').trim().toLowerCase() === String(s.name||'').trim().toLowerCase()
+              ));
+              if (unlinkedStaff.length === 0) {
+                alert('✅ सभी कर्मचारी पहले से Salary Management से linked हैं!');
+                return;
+              }
+              if (!window.confirm(`${unlinkedStaff.length} कर्मचारी के लिए Salary Entity बनानी है?\n\n${unlinkedStaff.map(s => '• ' + s.name + ' (₹' + (s.monthlySalary||0).toLocaleString('en-IN') + ')').join('\n')}\n\nजारी रखें?`)) return;
+
+              let created = 0, failed = 0;
+              for (const s of unlinkedStaff) {
+                try {
+                  const r = await fetch(api('/api/salary-entities'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      name: s.name,
+                      type: 'staff',
+                      monthlyAmount: Number(s.monthlySalary || 0),
+                      startDate: s.joinDate || new Date().toISOString().split('T')[0],
+                      notes: `Auto-linked from Staff Management. Position: ${s.position || '-'}, Phone: ${s.phone || '-'}`,
+                      photo: s.photo || '',
+                    }),
+                  });
+                  if (r.ok) created++; else failed++;
+                } catch { failed++; }
+              }
+              alert(`✅ ${created} entities बनाई गईं\n${failed > 0 ? '❌ ' + failed + ' fail हुईं\n' : ''}\nLinks update करने के लिए page reload करें।`);
+              await loadData();
+            }}
+          />
+        )}
+
         {/* ADD STAFF */}
         {showAddForm && isAdmin && (
           <Card className="bg-slate-800 border-green-600 border-2">
@@ -1355,6 +1624,12 @@ export default function StaffManagementPage() {
                           </span>
                           {details.lateDays > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-orange-500 text-white font-bold">⚡{details.lateDays}×लेट</span>}
                           {details.totalIncentive > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-500 text-black font-bold">⭐₹{details.totalIncentive.toLocaleString('en-IN')}</span>}
+                          {/* ⭐ Link status with Salary Management */}
+                          {details.linkedEntityName ? (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500 text-white font-bold" title={`Linked to ${details.linkedEntityName} in Salary Mgmt`}>🔗 LINKED</span>
+                          ) : (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-500 text-white font-bold" title="Not linked to Salary Management entity">⚠ UNLINKED</span>
+                          )}
                         </div>
                         <p className="text-blue-200 text-xs mt-0.5">{staff.position} • {staff.phone}</p>
                       </div>
@@ -1697,6 +1972,91 @@ export default function StaffManagementPage() {
           VP Honda Staff System © 2026 · Bhopal
         </div>
       </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 🔗 SALARY SYSTEM LINK BANNER
+// Shows linkage status between Staff Management and Salary Management
+// Allows admin to auto-create salary entities for unlinked staff
+// ════════════════════════════════════════════════════════════════════════════
+function SalarySystemLinkBanner({ staffList, salaryEntities, onAutoLink }) {
+  const navigate = useNavigate();
+
+  // Calculate linkage stats
+  const totalStaff = staffList.length;
+  const linkedCount = staffList.filter(s => salaryEntities.find(e =>
+    e.type === 'staff' && e.active &&
+    String(e.name||'').trim().toLowerCase() === String(s.name||'').trim().toLowerCase()
+  )).length;
+  const unlinkedCount = totalStaff - linkedCount;
+  const allLinked = totalStaff > 0 && unlinkedCount === 0;
+  const hasEntities = salaryEntities.filter(e => e.type === 'staff').length > 0;
+  const totalRentEntities = salaryEntities.filter(e => e.type === 'rent' && e.active).length;
+
+  return (
+    <div className={`rounded-xl border-2 overflow-hidden transition-all ${allLinked ? 'bg-gradient-to-r from-emerald-900/40 to-teal-900/40 border-emerald-600' : unlinkedCount > 0 ? 'bg-gradient-to-r from-orange-900/40 to-amber-900/40 border-orange-500' : 'bg-gradient-to-r from-blue-900/40 to-indigo-900/40 border-blue-500'}`}>
+      <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${allLinked ? 'bg-emerald-600' : unlinkedCount > 0 ? 'bg-orange-600' : 'bg-blue-600'}`}>
+            <span className="text-xl">🔗</span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className={`text-sm font-bold ${allLinked ? 'text-emerald-300' : unlinkedCount > 0 ? 'text-orange-300' : 'text-blue-300'}`}>
+              {allLinked
+                ? `✅ Salary Management से सब Linked (${linkedCount}/${totalStaff})`
+                : unlinkedCount > 0
+                  ? `⚠️ ${unlinkedCount} कर्मचारी Unlinked हैं — Auto-Link करें`
+                  : '🔗 कोई कर्मचारी नहीं है'}
+            </p>
+            <p className="text-slate-400 text-xs mt-0.5">
+              {hasEntities
+                ? `Salary Mgmt में ${salaryEntities.filter(e => e.type === 'staff').length} staff entities + ${totalRentEntities} rentals · पेमेंट दोनों जगह से sync होगी`
+                : 'अभी Salary Management में कोई entity नहीं है — Auto-Link दबाने पर बन जाएंगी'}
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          {unlinkedCount > 0 && (
+            <button
+              onClick={onAutoLink}
+              className="bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold px-3 py-1.5 rounded transition"
+            >
+              🔗 Auto-Link ({unlinkedCount})
+            </button>
+          )}
+          <button
+            onClick={() => navigate('/salary-management')}
+            className={`${allLinked ? 'bg-emerald-700 hover:bg-emerald-600' : 'bg-blue-700 hover:bg-blue-600'} text-white text-xs font-bold px-3 py-1.5 rounded transition flex items-center gap-1`}
+          >
+            💰 Open Salary & Rent →
+          </button>
+        </div>
+      </div>
+
+      {/* Detailed link status (collapsible info) */}
+      {totalStaff > 0 && (
+        <div className="border-t border-slate-700 px-4 py-2 bg-slate-900/40">
+          <div className="flex flex-wrap gap-2 text-xs">
+            {staffList.map(s => {
+              const linked = salaryEntities.find(e =>
+                e.type === 'staff' && e.active &&
+                String(e.name||'').trim().toLowerCase() === String(s.name||'').trim().toLowerCase()
+              );
+              return (
+                <span
+                  key={s.id}
+                  className={`px-2 py-0.5 rounded-full font-semibold ${linked ? 'bg-emerald-900/60 text-emerald-300 border border-emerald-700' : 'bg-orange-900/60 text-orange-300 border border-orange-700'}`}
+                  title={linked ? `₹${(linked.monthlyAmount||0).toLocaleString('en-IN')}/month from Salary Mgmt` : 'Not linked - click Auto-Link'}
+                >
+                  {linked ? '🔗' : '⚠'} {s.name}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

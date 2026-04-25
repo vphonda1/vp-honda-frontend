@@ -67,6 +67,16 @@ export default function SalaryManagementPage() {
 
   useEffect(() => { loadAll(); }, []);
 
+  // ⭐ Auto-refresh every 30s (cross-device sync with Staff Management)
+  useEffect(() => {
+    const interval = setInterval(() => { loadAll(true); }, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // ⭐ NEW: Also load attendance + shop settings for penalty calculation
+  const [attendance, setAttendance] = useState([]);
+  const [shopSettings, setShopSettings] = useState(null);
+
   const loadAll = async () => {
     setLoading(true);
     try {
@@ -257,6 +267,11 @@ export default function SalaryManagementPage() {
               style={{ background:'linear-gradient(135deg, #3b82f6, #6366f1)', color:'#fff', padding:'10px 16px', borderRadius:10, fontWeight:700, fontSize:13, border:'none', cursor:'pointer', display:'flex', alignItems:'center', gap:6 }}>
               <UserPlus size={14}/> Add New
             </button>
+            <button onClick={() => navigate('/staff-management')}
+              style={{ background:'linear-gradient(135deg, #a855f7, #7e22ce)', color:'#fff', padding:'10px 16px', borderRadius:10, fontWeight:700, fontSize:13, border:'none', cursor:'pointer', display:'flex', alignItems:'center', gap:6 }}
+              title="Open Staff Management for attendance & payslips">
+              👔 Staff & Attendance →
+            </button>
             <button onClick={loadAll}
               style={{ background:'#1e293b', color:'#f8fafc', padding:'10px 14px', borderRadius:10, border:'1px solid #334155', cursor:'pointer', display:'flex', alignItems:'center', gap:6, fontSize:13 }}>
               <RefreshCw size={14}/>
@@ -269,6 +284,23 @@ export default function SalaryManagementPage() {
               </button>
             )}
           </div>
+        </div>
+
+        {/* 🔗 LINK INFO BANNER */}
+        <div style={{ background:'linear-gradient(90deg, #16a34a22, #3b82f622)', border:'1px solid #16a34a55', borderRadius:12, padding:'12px 16px', marginBottom:20, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+          <span style={{ fontSize:24 }}>🔗</span>
+          <div style={{ flex:1, minWidth:200 }}>
+            <p style={{ color:'#86efac', fontSize:13, fontWeight:700, margin:0 }}>
+              यह page Staff Management के साथ Auto-Linked है
+            </p>
+            <p style={{ color:'#94a3b8', fontSize:11, margin:'4px 0 0' }}>
+              यहां जोड़ी गई payment Staff Mgmt में दिखेगी • वहां attendance + late penalty से कटौती होगी • दोनों जगह same entity name match होना जरूरी है
+            </p>
+          </div>
+          <button onClick={() => navigate('/staff-management')}
+            style={{ background:'#a855f7', color:'#fff', padding:'6px 12px', borderRadius:8, border:'none', fontSize:11, fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' }}>
+            👔 Open Staff Mgmt
+          </button>
         </div>
 
         {/* FIRST-TIME EMPTY STATE */}
