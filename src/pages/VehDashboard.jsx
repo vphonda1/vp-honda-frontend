@@ -8,6 +8,7 @@ import { Upload, Download, Filter, TrendingUp, Calendar, FileText, Share2, Trash
 import * as XLSX from 'xlsx';
 import html2pdf from 'html2pdf.js';
 import { api } from '../utils/apiConfig';
+import { sendWhatsApp, buildInvoiceWAMessage, showInAppToast } from '../utils/smartUtils';
 import { HONDA_MODELS, HONDA_COLORS, FINANCE_COMPANIES, findModel, getHSN, getModelsByCategory, calculateTaxBreakdown } from './hondaRateList';
 
 export default function VehDashboard() {
@@ -980,6 +981,27 @@ const syncToMongoDB = async (data) => {
                 <Button onClick={() => handleEditVehicle(vehicle)} size="sm" className="bg-yellow-600 hover:bg-yellow-700 text-white" title="Edit">
                   <Edit2 size={14} />
                 </Button>
+                {vehicle.mobileNo && (
+                  <Button
+                    onClick={() => {
+                      const msg = buildInvoiceWAMessage({
+                        customerName: vehicle.customerName,
+                        invoiceNumber: vehicle.invoiceNo || '-',
+                        vehicleModel: vehicle.vehicleModel,
+                        color: vehicle.color,
+                        chassisNo: vehicle.chassisNo,
+                        price: vehicle.price || 0,
+                        invoiceDate: vehicle.date || vehicle.purchaseDate,
+                      });
+                      sendWhatsApp(vehicle.mobileNo, msg);
+                    }}
+                    size="sm"
+                    className="bg-[#25D366] hover:bg-[#1FAA52] text-white"
+                    title="WhatsApp भेजें"
+                  >
+                    📱
+                  </Button>
+                )}
                 {isAdmin && (
                   <Button onClick={() => handleDeleteVehicle(vehicle.id)} size="sm" className="bg-red-600 hover:bg-red-700 text-white">
                     <Trash2 size={14} />
@@ -1101,10 +1123,29 @@ const syncToMongoDB = async (data) => {
                     </div>
                   )}
 
-                  <div className="flex gap-3">
-                    <Button onClick={generateInvoicePDF} className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold">
-                      <Download size={16} className="mr-2"/> PDF Download करें
+                  <div className="flex gap-2 flex-wrap">
+                    <Button onClick={generateInvoicePDF} className="flex-1 min-w-[120px] bg-green-600 hover:bg-green-700 text-white font-bold">
+                      <Download size={16} className="mr-2"/> PDF Download
                     </Button>
+                    {invoiceData.mobileNo && (
+                      <Button
+                        onClick={() => {
+                          const msg = buildInvoiceWAMessage({
+                            customerName: invoiceData.customerName,
+                            invoiceNumber: invoiceData.invoiceNumber || `SMH/${new Date(invoiceData.invoiceDate).getFullYear() % 100}-${(new Date(invoiceData.invoiceDate).getFullYear() + 1) % 100} ${vehicleData.length + 1}`,
+                            vehicleModel: invoiceData.vehicleModel,
+                            color: invoiceData.color,
+                            chassisNo: invoiceData.chassisNo,
+                            price: invoiceData.price,
+                            invoiceDate: invoiceData.invoiceDate,
+                          });
+                          sendWhatsApp(invoiceData.mobileNo, msg);
+                          showInAppToast('📱 WhatsApp खुल रहा है', 'Customer को invoice की जानकारी भेजें', 'success');
+                        }}
+                        className="flex-1 min-w-[120px] bg-[#25D366] hover:bg-[#1FAA52] text-white font-bold">
+                        📱 WhatsApp भेजें
+                      </Button>
+                    )}
                     <Button onClick={()=>setShowInvoiceModal(false)} className="bg-gray-600 hover:bg-gray-700 text-white">
                       Cancel
                     </Button>

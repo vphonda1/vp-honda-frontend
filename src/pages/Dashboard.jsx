@@ -24,7 +24,7 @@ import {
   RefreshCw, Clock, TrendingUp, TrendingDown, AlertTriangle,
   Users, Bike, FileText, Package, DollarSign, Bell, ArrowUpRight,
   Zap, Activity, Calendar, CheckCircle, XCircle, AlertCircle,
-  Wrench, ShieldAlert, CreditCard, Eye, ChevronRight,
+  Wrench, ShieldAlert, CreditCard, Eye, ChevronRight, Truck,
 } from 'lucide-react';
 import { api } from '../utils/apiConfig';
 
@@ -402,6 +402,13 @@ export default function Dashboard({ user }) {
           <KPITile icon={Bell} label="Pending Amount" value={fmtShort(data.alerts.totalPending)}
             color="#ef4444" alert={data.alerts.overduePayments > 0 ? `${data.alerts.overduePayments} overdue` : null}
             onClick={() => navigate('/reminders')} />
+          {/* ⭐ Smart features */}
+          <KPITile icon={Users} label="Today Visitors" value={(JSON.parse(localStorage.getItem('vp_visitors') || '[]').filter(v => v.visitTime?.startsWith(new Date().toISOString().split('T')[0])).length)}
+            color="#DC0000" trendLabel="Showroom traffic"
+            onClick={() => navigate('/visitors')} />
+          <KPITile icon={Truck} label="Active Pickups" value={(JSON.parse(localStorage.getItem('vp_pickup_drops') || '[]').filter(p => p.status === 'scheduled' || p.status === 'in-transit').length)}
+            color="#0891b2" trendLabel="Service pickup/drop"
+            onClick={() => navigate('/pickup-drop')} />
         </div>
 
         {/* ─── REVENUE CHART + VEHICLES ─── */}

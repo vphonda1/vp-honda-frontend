@@ -26,7 +26,11 @@ import VPHondaDashboard from './pages/VPHondaDashboard';
 import AddServiceCustomerPage from './pages/AddServiceCustomerPage';
 import ServiceCustomerListPage from './pages/ServiceCustomerListPage';
 import Dashboardwebpage from './pages/Dashboardwebpage';
+import VisitorCounter from './pages/VisitorCounter';
+import PickupDropTracker from './pages/PickupDropTracker';
 import Navbar from './components/Navbar';
+import UniversalSearch from './components/UniversalSearch';
+import { requestNotificationPermission, showInAppToast } from './utils/smartUtils';
 
 function ProtectedRoute({ children, user }) {
   return user ? children : <Navigate to="/login" />;
@@ -89,6 +93,16 @@ export default function App() {
     if (userData.role === 'admin') {
       localStorage.setItem('vpAdminSession', 'true');
     }
+    // ⭐ Request notification permission on first login
+    setTimeout(() => {
+      requestNotificationPermission().then(granted => {
+        if (granted) {
+          showInAppToast('🔔 Notifications enabled', `नमस्ते ${userData.name || 'User'}! VP Honda की updates आपको अब सीधे मिलेंगी`, 'success');
+        } else {
+          showInAppToast(`👋 Welcome ${userData.name || 'User'}!`, 'VP Honda में आपका स्वागत है', 'info');
+        }
+      });
+    }, 1500);
   };
 
   const handleLogout = () => {
@@ -365,12 +379,35 @@ export default function App() {
             }
           />
 
+          {/* ⭐ NEW: Smart Features */}
+          <Route path="/visitors"
+            element={
+              <ProtectedRoute user={user}>
+                <RoleRoute user={user} requiredRole="staff">
+                  <VisitorCounter user={user} />
+                </RoleRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/pickup-drop"
+            element={
+              <ProtectedRoute user={user}>
+                <RoleRoute user={user} requiredRole="staff">
+                  <PickupDropTracker user={user} />
+                </RoleRoute>
+              </ProtectedRoute>
+            }
+          />
+
           {/* Public */}
           <Route path="/showroom" element={<Dashboardwebpage />} />
 
           {/* Redirect to login */}
           <Route path="*" element={<Navigate to={user ? "/dashboard" : "/login"} />} />
         </Routes>
+
+        {/* ⭐ Universal Search — floating button on every page (when logged in) */}
+        {user && <UniversalSearch />}
       </div>
     </Router>
   );
