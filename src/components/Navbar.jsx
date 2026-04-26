@@ -21,6 +21,9 @@ export default function Navbar({ user, onLogout }) {
     { label: 'Admin',                path: '/admin',                  roles: ['admin'],         icon: '⚙️' },
     { label: 'Staff Management',     path: '/staff-management',       roles: ['admin','staff'], icon: '👥' },
     { label: 'Salary & Rent',     path: '/salary-management',       roles: ['admin'], icon: '💰' },
+    { label: 'Smart Cust Hub',     path: '/customer-hub',       roles: ['admin'], icon: '📋' },
+    { label: 'Business',     path: '/business-intelligence',       roles: ['admin'], icon: '🏍️' },
+    { label: 'Manager',     path: '/manager',       roles: ['admin'], icon: '⚙️' },
   ];
 
   const visibleMenuItems = menuItems.filter(item => item.roles.includes(user?.role));
