@@ -28,6 +28,9 @@ import ServiceCustomerListPage from './pages/ServiceCustomerListPage';
 import Dashboardwebpage from './pages/Dashboardwebpage';
 import VisitorCounter from './pages/VisitorCounter';
 import PickupDropTracker from './pages/PickupDropTracker';
+import SmartCustomerHub from './pages/SmartCustomerHub';
+import BusinessIntelligence from './pages/BusinessIntelligence';
+import ManagerView from './pages/ManagerView';
 import Navbar from './components/Navbar';
 import UniversalSearch from './components/UniversalSearch';
 import { requestNotificationPermission, showInAppToast } from './utils/smartUtils';
@@ -242,6 +245,36 @@ export default function App() {
               <ProtectedRoute user={user}>
                 <AdminRoute user={user}>
                   <DataManagement user={user} />
+                </AdminRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/customer-hub"
+            element={
+              <ProtectedRoute user={user}>
+                <AdminRoute user={user}>
+                  <SmartCustomerHub user={user} />
+                </AdminRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/business-intelligence"
+            element={
+              <ProtectedRoute user={user}>
+                <AdminRoute user={user}>
+                  <BusinessIntelligence user={user} />
+                </AdminRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/manager"
+            element={
+              <ProtectedRoute user={user}>
+                <AdminRoute user={user}>
+                  <ManagerView user={user} />
                 </AdminRoute>
               </ProtectedRoute>
             }
