@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Bell, RefreshCw, Clock, Phone, PhoneCall, ChevronDown, ChevronUp, AlertTriangle, CheckCircle, MessageSquare, Calendar, X, TrendingUp } from 'lucide-react';
 import { api } from '../utils/apiConfig';
+import { sendTestNotification, scheduleReminderNotifications, getReminderSummary } from '../utils/notificationScheduler';
+import { requestNotificationPermission, showInAppToast } from '../utils/smartUtils';
 
 const getLS = (k, fb=[]) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;} };
 const setLS = (k, v) => { try{localStorage.setItem(k, JSON.stringify(v));}catch{} };
@@ -122,6 +124,10 @@ export default function RemindersPage() {
   const [tickerPause,  setTickerPause] = useState(false);
   const [syncMsg,      setSyncMsg]     = useState('');
   const [showFU,       setShowFU]      = useState(false);
+  const [notifStatus,  setNotifStatus] = useState(
+    typeof Notification !== 'undefined' ? Notification.permission : 'default'
+  );
+  const [notifSummary, setNotifSummary] = useState(null);
   const [showDone,     setShowDone]    = useState(false);
   const [activeR,      setActiveR]     = useState(null);
   const [fuForm,       setFuForm]      = useState({status:'called',note:'',nextCallDate:''});
@@ -163,7 +169,8 @@ export default function RemindersPage() {
             const fields = ['purchaseDate','firstServiceDate','firstServiceKm','secondServiceDate','secondServiceKm',
               'thirdServiceDate','thirdServiceKm','fourthServiceDate','fourthServiceKm',
               'fifthServiceDate','fifthServiceKm','sixthServiceDate','sixthServiceKm',
-              'seventhServiceDate','seventhServiceKm','pendingAmount','paymentDueDate','insuranceDate'];
+              'seventhServiceDate','seventhServiceKm','pendingAmount','paymentDueDate','insuranceDate',
+              'insuranceStartDate','insuranceRenewalDate','insuranceRenewed'];   // ⭐ New insurance fields
             fields.forEach(f => { if (rec[f]) merged[reg][f] = rec[f]; });
             if (rec.customerName) merged[reg].customerName = rec.customerName;
             if (rec.phone)        merged[reg].phone        = rec.phone;
@@ -256,6 +263,51 @@ export default function RemindersPage() {
               lastCallStatus:fu[`ins-${regNo}`]?.slice(-1)[0]?.status||null,callCount:0});}
         }
 
+        // ⭐ FIRST PARTY INSURANCE RENEWAL (11 months = 335 days after insurance start)
+        // Priority: insuranceStartDate field → insuranceDate field → purchaseDate + 3 days (estimate)
+        const insStartRaw = data.insuranceStartDate || data.insuranceDate ||
+          (data.purchaseDate ? new Date(new Date(data.purchaseDate).getTime() + 3*864e5).toISOString().split('T')[0] : null);
+
+        if (insStartRaw && !data.insuranceRenewed) {
+          const insStart = new Date(insStartRaw); insStart.setHours(0,0,0,0);
+          // Insurance expires at 12 months, remind at 11 months (335 days)
+          const renewalDue = new Date(insStart.getTime() + 335*864e5);
+          const dr = Math.floor((renewalDue - today) / 864e5);
+          const rid = `insr-${regNo}`;
+
+          // Show reminder if: within 60 days before due OR up to 30 days overdue
+          if (dr >= -30 && dr <= 60) {
+            dbg.insuranceRenewal = (dbg.insuranceRenewal || 0) + 1;
+            const insExpiry = new Date(insStart.getTime() + 365*864e5);
+            const sourceLabel = data.insuranceStartDate
+              ? 'Insurance date set'
+              : data.insuranceDate
+              ? 'Insurance date (estimated from RTO date)'
+              : `Purchase date + 3 days (estimate)`;
+            all.push({
+              id: rid,
+              type: 'insurance-renewal',
+              serviceType: null,
+              customerId: custId,
+              customerName: nm,
+              customerPhone: ph,
+              vehicle: vh,
+              regNo,
+              title: dr <= 0 ? '🛡️ Insurance Expired!' : '🛡️ Insurance Renewal Due',
+              description: `Insurance Start: ${fmtDate(insStart)} | Expiry: ${fmtDate(insExpiry)} | Renewal Due: ${fmtDate(renewalDue)} | ${sourceLabel}`,
+              daysRemaining: dr,
+              daysToExpiry: Math.floor((insExpiry - today) / 864e5),
+              status: dr <= 0 ? 'critical' : dr <= 15 ? 'critical' : 'warning',
+              dueDate: renewalDue,
+              insuranceStartDate: insStartRaw,
+              insuranceExpiryDate: insExpiry.toISOString().split('T')[0],
+              isEstimated: !data.insuranceStartDate,
+              lastCallStatus: fu[rid]?.slice(-1)[0]?.status || null,
+              callCount: fu[rid]?.length || 0,
+            });
+          }
+        }
+
         if(data.purchaseDate&&!data.firstServiceDate){
           const pd=new Date(data.purchaseDate);pd.setHours(0,0,0,0);
           const due=new Date(pd.getTime()+30*864e5);const dr=Math.floor((due-today)/864e5);
@@ -286,6 +338,13 @@ export default function RemindersPage() {
 
       all.sort((a,b)=>{if(a.status!==b.status)return a.status==='critical'?-1:1;return a.daysRemaining-b.daysRemaining;});
       setReminders(all);setDebugInfo(dbg);setLastRefresh(new Date());setLoading(false);
+
+      // ⭐ Schedule notifications for today/tomorrow reminders
+      if (all.length > 0 && notifStatus === 'granted') {
+        const summary = getReminderSummary(customers);
+        setNotifSummary(summary);
+        scheduleReminderNotifications(customers).catch(() => {});
+      }
     }catch(e){console.error(e);setLoading(false);}
   };
 
@@ -411,6 +470,93 @@ export default function RemindersPage() {
       </div>
 
       <div style={{padding:'18px 22px',maxWidth:'1200px',margin:'0 auto'}}>
+
+        {/* 🔔 NOTIFICATION PANEL */}
+        <div style={{
+          background: notifStatus === 'granted'
+            ? 'linear-gradient(135deg, #16a34a22, #16a34a08)'
+            : 'linear-gradient(135deg, #1e3a8a22, #1e3a8a08)',
+          border: `1px solid ${notifStatus === 'granted' ? '#16a34a55' : '#3b82f655'}`,
+          borderRadius: 12, padding: '12px 16px', marginBottom: 16,
+          display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+        }}>
+          <div style={{fontSize: 24}}>
+            {notifStatus === 'granted' ? '🔔' : notifStatus === 'denied' ? '🔕' : '🔔'}
+          </div>
+          <div style={{flex: 1, minWidth: 200}}>
+            {notifStatus === 'granted' ? (
+              <>
+                <p style={{color: '#86efac', fontWeight: 700, fontSize: 13, margin: 0}}>
+                  ✅ Notifications चालू हैं
+                </p>
+                <p style={{color: '#64748b', fontSize: 11, margin: '3px 0 0'}}>
+                  {notifSummary
+                    ? `आज: ${notifSummary.today} due, कल: ${notifSummary.tomorrow} due, Overdue: ${notifSummary.overdue}`
+                    : 'Service reminders automatically phone पर आएंगे — app बंद हो तब भी'}
+                </p>
+              </>
+            ) : notifStatus === 'denied' ? (
+              <>
+                <p style={{color: '#fca5a5', fontWeight: 700, fontSize: 13, margin: 0}}>
+                  🔕 Notifications blocked हैं
+                </p>
+                <p style={{color: '#64748b', fontSize: 11, margin: '3px 0 0'}}>
+                  Browser settings में VP Honda को allow करें: Settings → Site Settings → Notifications
+                </p>
+              </>
+            ) : (
+              <>
+                <p style={{color: '#93c5fd', fontWeight: 700, fontSize: 13, margin: 0}}>
+                  📱 Phone पर Reminder Notifications चालू करें
+                </p>
+                <p style={{color: '#64748b', fontSize: 11, margin: '3px 0 0'}}>
+                  एक बार allow करें — service due होने पर automatic notification आएगी, app बंद हो तब भी
+                </p>
+              </>
+            )}
+          </div>
+          <div style={{display: 'flex', gap: 8, flexWrap: 'wrap'}}>
+            {notifStatus !== 'granted' && notifStatus !== 'denied' && (
+              <button onClick={async () => {
+                const granted = await requestNotificationPermission();
+                setNotifStatus(Notification.permission);
+                if (granted) {
+                  showInAppToast('🔔 Notifications enabled!', 'अब reminders automatic आएंगे', 'success');
+                }
+              }} style={{
+                background: '#3b82f6', color: '#fff', border: 'none',
+                padding: '8px 16px', borderRadius: 8, fontWeight: 700,
+                fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
+              }}>
+                🔔 Allow Notifications
+              </button>
+            )}
+            {notifStatus === 'granted' && (
+              <>
+                <button onClick={async () => {
+                  await sendTestNotification();
+                  showInAppToast('📱 Test notification भेजी!', 'ऊपर notification bar देखें', 'success');
+                }} style={{
+                  background: '#1e293b', color: '#94a3b8', border: '1px solid #334155',
+                  padding: '8px 12px', borderRadius: 8, fontWeight: 700,
+                  fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap',
+                }}>
+                  🧪 Test करें
+                </button>
+                <button onClick={async () => {
+                  const result = await scheduleReminderNotifications([]);
+                  showInAppToast('🔄 Reminders scheduled', 'Next check on next refresh', 'info');
+                }} style={{
+                  background: '#16a34a', color: '#fff', border: 'none',
+                  padding: '8px 12px', borderRadius: 8, fontWeight: 700,
+                  fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap',
+                }}>
+                  ↻ Re-schedule
+                </button>
+              </>
+            )}
+          </div>
+        </div>
 
         {/* STATS */}
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:'10px',marginBottom:'18px'}}>
