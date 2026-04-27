@@ -1,44 +1,59 @@
-// VP Honda PWA Service Worker v2.0.0
-// Features: Caching + Auto-update + 🔔 Background Reminder Notifications
+// ════════════════════════════════════════════════════════════════════════════
+// VP Honda Service Worker v2.1.0
+// All reminder types → phone notifications
+// ════════════════════════════════════════════════════════════════════════════
 
-const VERSION = 'v2.0.0';
+const VERSION      = 'v2.1.0';
 const STATIC_CACHE = `vp-honda-static-${VERSION}`;
 const API_CACHE    = `vp-honda-api-${VERSION}`;
-const PRECACHE_URLS = ['/', '/index.html', '/manifest.json', '/icons/icon-192x192.png', '/icons/icon-512x512.png'];
+const PRECACHE     = ['/', '/index.html', '/manifest.json',
+  '/icons/icon-192x192.png', '/icons/icon-512x512.png'];
+
+// ── Notification icons per type ─────────────────────────────────────────────
+const TYPE_META = {
+  'service':          { badge: '🔧', color: '#ea580c', tag: 'svc' },
+  'payment':          { badge: '💰', color: '#16a34a', tag: 'pay' },
+  'insurance':        { badge: '🚗', color: '#7c3aed', tag: 'rto' },
+  'insurance-renewal':{ badge: '🛡️', color: '#DC0000', tag: 'ins' },
+};
 
 // ── INSTALL ──────────────────────────────────────────────────────────────────
-self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(STATIC_CACHE).then(c => c.addAll(PRECACHE_URLS).catch(() => {})));
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(STATIC_CACHE).then(c => c.addAll(PRECACHE).catch(() => {})));
   self.skipWaiting();
 });
 
 // ── ACTIVATE ─────────────────────────────────────────────────────────────────
-self.addEventListener('activate', (e) => {
+self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== STATIC_CACHE && k !== API_CACHE).map(k => caches.delete(k))))
+      .then(keys => Promise.all(
+        keys.filter(k => k !== STATIC_CACHE && k !== API_CACHE).map(k => caches.delete(k))
+      ))
       .then(() => self.clients.claim())
   );
 });
 
-// ── FETCH ─────────────────────────────────────────────────────────────────────
-self.addEventListener('fetch', (e) => {
+// ── FETCH (Caching strategy) ─────────────────────────────────────────────────
+self.addEventListener('fetch', e => {
   const { request } = e;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
 
+  // API → Network first, cache fallback
   if (url.pathname.startsWith('/api/') || url.hostname.includes('onrender.com')) {
     e.respondWith(
-      fetch(request).then(res => {
-        caches.open(API_CACHE).then(c => c.put(request, res.clone()));
-        return res;
-      }).catch(() => caches.match(request).then(c => c ||
-        new Response(JSON.stringify({ error: 'Offline', message: 'Internet नहीं है' }), { status: 503, headers: { 'Content-Type': 'application/json' } })
-      ))
+      fetch(request)
+        .then(res => { caches.open(API_CACHE).then(c => c.put(request, res.clone())); return res; })
+        .catch(() => caches.match(request).then(c => c ||
+          new Response(JSON.stringify({ error:'Offline', message:'इंटरनेट नहीं है' }),
+            { status:503, headers:{'Content-Type':'application/json'} })
+        ))
     );
     return;
   }
 
+  // Static → Cache first, network fallback
   e.respondWith(
     caches.match(request).then(cached => {
       if (cached) return cached;
@@ -51,56 +66,66 @@ self.addEventListener('fetch', (e) => {
 });
 
 // ── MESSAGES FROM APP ─────────────────────────────────────────────────────────
-self.addEventListener('message', (e) => {
+self.addEventListener('message', e => {
   const { type, payload } = e.data || {};
   if (type === 'SKIP_WAITING')       self.skipWaiting();
-  if (type === 'SCHEDULE_REMINDERS') scheduleReminders(payload);
-  if (type === 'SHOW_NOTIFICATION')  showNotif(payload.title, payload.body, payload.data);
-  if (type === 'PING')               e.source?.postMessage({ type: 'PONG', version: VERSION });
+  if (type === 'SCHEDULE_REMINDERS') processSchedule(payload);
+  if (type === 'SHOW_NOTIFICATION')  showNotif(payload.title, payload.body, payload.data || {});
+  if (type === 'PING')               e.source?.postMessage({ type:'PONG', version:VERSION });
 });
 
 // ── NOTIFICATION CLICK ────────────────────────────────────────────────────────
-self.addEventListener('notificationclick', (e) => {
+self.addEventListener('notificationclick', e => {
   e.notification.close();
-  const url = e.notification.data?.url || '/reminders';
+  const { action } = e;
+  const data = e.notification.data || {};
+  const url  = data.url || '/reminders';
+
   e.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    clients.matchAll({ type:'window', includeUncontrolled:true }).then(list => {
+      // Try to focus existing window
       const found = list.find(c => c.url.includes(self.location.origin));
-      if (found) { found.focus(); found.postMessage({ type: 'NAVIGATE', url }); return; }
+      if (found) {
+        found.focus();
+        found.postMessage({ type:'NAVIGATE', url });
+        return;
+      }
       return clients.openWindow(url);
     })
   );
 });
 
 // ── PUSH (server-sent, future) ────────────────────────────────────────────────
-self.addEventListener('push', (e) => {
+self.addEventListener('push', e => {
   if (!e.data) return;
   try { const d = e.data.json(); e.waitUntil(showNotif(d.title, d.body, d)); } catch {}
 });
 
-// ── PERIODIC BACKGROUND SYNC (Chrome Android) ────────────────────────────────
-self.addEventListener('periodicsync', (e) => {
-  if (e.tag === 'vp-reminder-check') e.waitUntil(bgReminderCheck());
+// ── PERIODIC BACKGROUND SYNC ──────────────────────────────────────────────────
+self.addEventListener('periodicsync', e => {
+  if (e.tag === 'vp-reminder-check') e.waitUntil(bgCheck());
 });
 
-// ── BACKGROUND SYNC ───────────────────────────────────────────────────────────
-self.addEventListener('sync', (e) => {
-  if (e.tag === 'vp-reminder-sync') e.waitUntil(bgReminderCheck());
+self.addEventListener('sync', e => {
+  if (e.tag === 'vp-reminder-sync') e.waitUntil(bgCheck());
 });
 
-// ════════════════════════════════════════════════════════════════════════════════
-// NOTIFICATION HELPER
-// ════════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+// NOTIFICATION DISPLAY
+// ════════════════════════════════════════════════════════════════════════════
 function showNotif(title, body, data = {}) {
+  const meta = TYPE_META[data.type] || { badge:'🔔', tag:'vp' };
+
   return self.registration.showNotification(title, {
     body,
-    icon:             '/icons/icon-192x192.png',
-    badge:            '/icons/icon-96x96.png',
-    vibrate:          [200, 100, 200, 100, 300],
-    tag:              data.tag  || 'vp-honda',
-    renotify:         true,
+    icon:               '/icons/icon-192x192.png',
+    badge:              '/icons/icon-96x96.png',
+    vibrate:            [200, 100, 200, 100, 300],
+    tag:                data.tag || `vp-${meta.tag}`,
+    renotify:           true,
     requireInteraction: data.requireInteraction || false,
-    data:             { url: data.url || '/reminders', ...data },
+    silent:             false,
+    data:               { url: data.url || '/reminders', type: data.type, ...data },
     actions: [
       { action: 'view',    title: '👁️ देखें'    },
       { action: 'whatsapp', title: '📱 WA भेजें' },
@@ -109,58 +134,136 @@ function showNotif(title, body, data = {}) {
   });
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// SCHEDULE REMINDERS (called from app with reminder list)
-// ════════════════════════════════════════════════════════════════════════════════
-function scheduleReminders(reminders = []) {
-  if (!Array.isArray(reminders)) return;
+// ════════════════════════════════════════════════════════════════════════════
+// SCHEDULE PROCESSING (from app message)
+// ════════════════════════════════════════════════════════════════════════════
+const scheduledTimers = new Map();
+
+function processSchedule(items = []) {
+  if (!Array.isArray(items)) return;
+
+  // Cancel old timers
+  scheduledTimers.forEach(t => clearTimeout(t));
+  scheduledTimers.clear();
+
   const now = Date.now();
-  reminders.forEach(r => {
-    const fireAt = new Date(r.fireAt).getTime();
+
+  items.forEach(item => {
+    const fireAt = new Date(item.fireAt).getTime();
     const delay  = fireAt - now;
-    if (delay <= 0) {
-      // Already due — show immediately
-      showNotif(r.title, r.body, { tag: r.id, url: '/reminders', requireInteraction: true });
-    } else if (delay <= 48 * 60 * 60 * 1000) {
-      // Due within 48 hours — schedule with setTimeout
-      setTimeout(() => {
-        showNotif(r.title, r.body, { tag: r.id, url: '/reminders', requireInteraction: delay < 3600000 });
+
+    if (delay <= 500) {
+      // Fire immediately
+      showNotif(item.title, item.body, {
+        url:                item.url || '/reminders',
+        tag:                item.tag,
+        type:               item.type,
+        requireInteraction: item.requireInteraction,
+      });
+    } else if (delay <= 48 * 3600 * 1000) {
+      // Schedule within 48 hours
+      const timer = setTimeout(() => {
+        showNotif(item.title, item.body, {
+          url:                item.url || '/reminders',
+          tag:                item.tag,
+          type:               item.type,
+          requireInteraction: item.requireInteraction,
+        });
       }, Math.min(delay, 2147483647));
+      scheduledTimers.set(item.id, timer);
     }
   });
+
+  console.log(`[SW] ${items.length} reminders processed`);
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// BACKGROUND REMINDER CHECK (from IndexedDB — works even when app is closed)
-// ════════════════════════════════════════════════════════════════════════════════
-async function bgReminderCheck() {
+// ════════════════════════════════════════════════════════════════════════════
+// BACKGROUND CHECK (from periodic sync / IDB)
+// ════════════════════════════════════════════════════════════════════════════
+async function bgCheck() {
   try {
-    const db = await openDB();
+    const db        = await openDB();
     const reminders = await getAll(db);
-    const today    = new Date().toISOString().split('T')[0];
-    const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+    if (!reminders.length) return;
+
+    const now      = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+    const tmrwStr  = new Date(now.getTime() + 86400000).toISOString().split('T')[0];
 
     for (const r of reminders) {
-      if (r.dueDate === today && !r.notifiedToday) {
+      const meta = TYPE_META[r.type] || TYPE_META['service'];
+
+      // Today due
+      if (r.dueDate === todayStr && !r.notifiedToday) {
         await showNotif(
-          `🚨 आज Service Due है!`,
-          `${r.customerName} — ${r.serviceLabel}\n🏍️ ${r.vehicleModel || ''}\n📞 ${r.phone || ''}`,
-          { tag: `today-${r.id}`, url: '/reminders', requireInteraction: true }
+          buildBgTitle(r, 'today'),
+          buildBgBody(r),
+          { tag:`td-${r.id}`, url:'/reminders', type:r.type, requireInteraction:true }
         );
-        await update(db, r.id, { notifiedToday: true });
+        await markField(db, r.id, 'notifiedToday', true);
       }
-      if (r.dueDate === tomorrow && !r.notifiedTomorrow) {
+
+      // Tomorrow due
+      if (r.dueDate === tmrwStr && !r.notifiedTomorrow) {
         await showNotif(
-          `⏰ कल Service Due है`,
-          `${r.customerName} — ${r.serviceLabel}\n🏍️ ${r.vehicleModel || ''}\n📞 ${r.phone || ''}`,
-          { tag: `tmrw-${r.id}`, url: '/reminders' }
+          buildBgTitle(r, 'tomorrow'),
+          buildBgBody(r),
+          { tag:`tm-${r.id}`, url:'/reminders', type:r.type }
         );
-        await update(db, r.id, { notifiedTomorrow: true });
+        await markField(db, r.id, 'notifiedTomorrow', true);
+      }
+
+      // Overdue (notify once per day)
+      if (r.daysRemaining < 0 && !r.notifiedOverdue) {
+        await showNotif(
+          buildBgTitle(r, 'overdue'),
+          buildBgBody(r),
+          { tag:`ov-${r.id}`, url:'/reminders', type:r.type, requireInteraction:true }
+        );
+        await markField(db, r.id, 'notifiedOverdue', true);
       }
     }
-  } catch (err) {
-    console.log('[SW BG] Reminder check error:', err);
+  } catch(err) {
+    console.log('[SW BG] Check failed:', err);
   }
+}
+
+// ── Background notification text builders ────────────────────────────────────
+function buildBgTitle(r, when) {
+  const name = r.customerName || 'Customer';
+  const map = {
+    service: {
+      today:    `🔧 Service Due Today — ${name}`,
+      tomorrow: `🔧 Service Due कल — ${name}`,
+      overdue:  `⚠️ Service Overdue! — ${name}`,
+    },
+    payment: {
+      today:    `💰 Payment Due Today — ${name}`,
+      tomorrow: `💰 Payment Due कल — ${name}`,
+      overdue:  `🚨 Payment Overdue! — ${name}`,
+    },
+    insurance: {
+      today:    `🚗 RTO Deadline Today — ${name}`,
+      tomorrow: `🚗 RTO Deadline कल — ${name}`,
+      overdue:  `🚗 RTO Overdue! — ${name}`,
+    },
+    'insurance-renewal': {
+      today:    `🛡️ Insurance Expires Today — ${name}`,
+      tomorrow: `🛡️ Insurance कल Expire — ${name}`,
+      overdue:  `🛡️ Insurance Expired! — ${name}`,
+    },
+  };
+  return map[r.type]?.[when] || `🔔 Reminder — ${name}`;
+}
+
+function buildBgBody(r) {
+  const parts = [r.serviceLabel];
+  if (r.vehicleModel) parts.push(`🏍️ ${r.vehicleModel}`);
+  if (r.regNo)        parts.push(r.regNo);
+  if (r.phone)        parts.push(`📞 ${r.phone}`);
+  if (r.amount > 0)   parts.push(`₹${Number(r.amount).toLocaleString('en-IN')}`);
+  if (r.daysRemaining < 0) parts.push(`⚠️ ${Math.abs(r.daysRemaining)} दिन overdue`);
+  return parts.join('\n');
 }
 
 // ── IndexedDB helpers ─────────────────────────────────────────────────────────
@@ -169,7 +272,7 @@ function openDB() {
     const req = indexedDB.open('vp-reminders', 1);
     req.onupgradeneeded = e => {
       if (!e.target.result.objectStoreNames.contains('reminders'))
-        e.target.result.createObjectStore('reminders', { keyPath: 'id' });
+        e.target.result.createObjectStore('reminders', { keyPath:'id' });
     };
     req.onsuccess = e => res(e.target.result);
     req.onerror   = () => rej(req.error);
@@ -177,18 +280,18 @@ function openDB() {
 }
 function getAll(db) {
   return new Promise((res, rej) => {
-    const req = db.transaction('reminders', 'readonly').objectStore('reminders').getAll();
+    const req = db.transaction('reminders','readonly').objectStore('reminders').getAll();
     req.onsuccess = () => res(req.result || []);
     req.onerror   = () => rej(req.error);
   });
 }
-function update(db, id, changes) {
-  return new Promise((res) => {
-    const tx    = db.transaction('reminders', 'readwrite');
-    const store = tx.objectStore('reminders');
-    const get   = store.get(id);
+function markField(db, id, field, value) {
+  return new Promise(res => {
+    const tx  = db.transaction('reminders','readwrite');
+    const s   = tx.objectStore('reminders');
+    const get = s.get(id);
     get.onsuccess = () => {
-      if (get.result) store.put({ ...get.result, ...changes });
+      if (get.result) s.put({ ...get.result, [field]: value });
       res();
     };
     get.onerror = () => res();
