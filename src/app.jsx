@@ -31,9 +31,15 @@ import PickupDropTracker from './pages/PickupDropTracker';
 import SmartCustomerHub from './pages/SmartCustomerHub';
 import BusinessIntelligence from './pages/BusinessIntelligence';
 import ManagerView from './pages/ManagerView';
+import CalendarView from './pages/CalendarView';
+import PaymentTracker from './pages/PaymentTracker';
+import DocumentVault from './pages/DocumentVault';
+import TeamChat from './pages/TeamChat';
+import MeetingRoom from './pages/MeetingRoom';
 import Navbar from './components/Navbar';
 import UniversalSearch from './components/UniversalSearch';
-import { requestNotificationPermission, showInAppToast } from './utils/smartUtils';
+import SmartFAB from './components/SmartFAB';
+import { requestNotificationPermission, showInAppToast, getTheme, setTheme } from './utils/smartUtils';
 
 function ProtectedRoute({ children, user }) {
   return user ? children : <Navigate to="/login" />;
@@ -100,7 +106,14 @@ export default function App() {
     setTimeout(() => {
       requestNotificationPermission().then(granted => {
         if (granted) {
-          showInAppToast('🔔 Notifications enabled', `नमस्ते ${userData.name || 'User'}! VP Honda की updates आपको अब सीधे मिलेंगी`, 'success');
+          showInAppToast('🔔 Notifications enabled', `नमस्ते ${userData.name || 'User'}! Reminders automatic आएंगे`, 'success');
+          // Schedule reminders in background
+          import('./utils/notificationScheduler').then(({ scheduleReminderNotifications }) => {
+            const cached = localStorage.getItem('vpCustomers');
+            if (cached) {
+              try { scheduleReminderNotifications(JSON.parse(cached)).catch(() => {}); } catch {}
+            }
+          }).catch(() => {});
         } else {
           showInAppToast(`👋 Welcome ${userData.name || 'User'}!`, 'VP Honda में आपका स्वागत है', 'info');
         }
@@ -245,36 +258,6 @@ export default function App() {
               <ProtectedRoute user={user}>
                 <AdminRoute user={user}>
                   <DataManagement user={user} />
-                </AdminRoute>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/customer-hub"
-            element={
-              <ProtectedRoute user={user}>
-                <AdminRoute user={user}>
-                  <SmartCustomerHub user={user} />
-                </AdminRoute>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/business-intelligence"
-            element={
-              <ProtectedRoute user={user}>
-                <AdminRoute user={user}>
-                  <BusinessIntelligence user={user} />
-                </AdminRoute>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/manager"
-            element={
-              <ProtectedRoute user={user}>
-                <AdminRoute user={user}>
-                  <ManagerView user={user} />
                 </AdminRoute>
               </ProtectedRoute>
             }
@@ -431,6 +414,78 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          <Route path="/customer-hub"
+            element={
+              <ProtectedRoute user={user}>
+                <RoleRoute user={user} requiredRole="staff">
+                  <SmartCustomerHub user={user} />
+                </RoleRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/business-intelligence"
+            element={
+              <ProtectedRoute user={user}>
+                <AdminRoute user={user}>
+                  <BusinessIntelligence user={user} />
+                </AdminRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/manager"
+            element={
+              <ProtectedRoute user={user}>
+                <AdminRoute user={user}>
+                  <ManagerView user={user} />
+                </AdminRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/calendar"
+            element={
+              <ProtectedRoute user={user}>
+                <RoleRoute user={user} requiredRole="staff">
+                  <CalendarView user={user} />
+                </RoleRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/payments"
+            element={
+              <ProtectedRoute user={user}>
+                <RoleRoute user={user} requiredRole="staff">
+                  <PaymentTracker user={user} />
+                </RoleRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/documents"
+            element={
+              <ProtectedRoute user={user}>
+                <RoleRoute user={user} requiredRole="staff">
+                  <DocumentVault user={user} />
+                </RoleRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/chat"
+            element={
+              <ProtectedRoute user={user}>
+                <RoleRoute user={user} requiredRole="staff">
+                  <TeamChat user={user} />
+                </RoleRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/meeting"
+            element={
+              <ProtectedRoute user={user}>
+                <RoleRoute user={user} requiredRole="staff">
+                  <MeetingRoom user={user} />
+                </RoleRoute>
+              </ProtectedRoute>
+            }
+          />
 
           {/* Public */}
           <Route path="/showroom" element={<Dashboardwebpage />} />
@@ -441,6 +496,8 @@ export default function App() {
 
         {/* ⭐ Universal Search — floating button on every page (when logged in) */}
         {user && <UniversalSearch />}
+        {/* ⭐ Smart FAB — Voice, QR, Theme, Language */}
+        {user && <SmartFAB user={user} />}
       </div>
     </Router>
   );

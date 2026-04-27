@@ -16,7 +16,13 @@ import { sendWhatsApp, buildCustomWA, getServiceSchedule, showInAppToast } from 
 
 export default function ManagerView({ user }) {
   const navigate = useNavigate();
-  const [data, setData] = useState({});
+  const [data, setData] = useState({
+    todayInvoices: [], todayServices: [], todayRevenue: 0,
+    todayVisitors: [], todayPickups: [], presentStaff: 0,
+    absentStaff: 0, overdueReminders: [], lowStock: [],
+    pendingAdvances: 0, activePickups: [],
+    customers: [], staff: [], invoices: [], services: [], salaries: [],
+  });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -168,6 +174,8 @@ export default function ManagerView({ user }) {
           <ActionTile icon="💰" label="Salary & Rent" onClick={() => navigate('/salary-management')}/>
           <ActionTile icon="❤️" label="Customer Hub" onClick={() => navigate('/customer-hub')}/>
           <ActionTile icon="👔" label="Staff Mgmt" onClick={() => navigate('/staff-management')}/>
+          <ActionTile icon="💬" label="Team Chat" onClick={() => navigate('/chat')}/>
+          <ActionTile icon="🎥" label="Video Meeting" onClick={() => navigate('/meeting')}/>
         </div>
       </div>
 

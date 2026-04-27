@@ -25,6 +25,7 @@ import {
   Users, Bike, FileText, Package, DollarSign, Bell, ArrowUpRight,
   Zap, Activity, Calendar, CheckCircle, XCircle, AlertCircle,
   Wrench, ShieldAlert, CreditCard, Eye, ChevronRight, Truck,
+  MessageCircle, Video,
 } from 'lucide-react';
 import { api } from '../utils/apiConfig';
 
@@ -409,6 +410,12 @@ export default function Dashboard({ user }) {
           <KPITile icon={Truck} label="Active Pickups" value={(JSON.parse(localStorage.getItem('vp_pickup_drops') || '[]').filter(p => p.status === 'scheduled' || p.status === 'in-transit').length)}
             color="#0891b2" trendLabel="Service pickup/drop"
             onClick={() => navigate('/pickup-drop')} />
+          <KPITile icon={MessageCircle} label="Team Chat" value="💬"
+            color="#7c3aed" trendLabel="Staff messages"
+            onClick={() => navigate('/chat')} />
+          <KPITile icon={Video} label="Meeting Room" value="🎥"
+            color="#0891b2" trendLabel="Video call"
+            onClick={() => navigate('/meeting')} />
         </div>
 
         {/* ─── REVENUE CHART + VEHICLES ─── */}
