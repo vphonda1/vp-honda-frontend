@@ -1,15 +1,14 @@
 // ════════════════════════════════════════════════════════════════════════════
-// VP Honda Service Worker v2.3.0
-// Fixed clone() + Chat Notifications via SW (mobile friendly)
+// VP Honda Service Worker v2.4.0
+// Ultimate fix: clone() error + bodyUsed check + opaque safe
 // ════════════════════════════════════════════════════════════════════════════
 
-const VERSION      = 'v2.3.0';
+const VERSION      = 'v2.4.0';
 const STATIC_CACHE = `vp-honda-static-${VERSION}`;
 const API_CACHE    = `vp-honda-api-${VERSION}`;
 const PRECACHE     = ['/', '/index.html', '/manifest.json',
   '/icons/icon-192x192.png', '/icons/icon-512x512.png'];
 
-// ── Notification icons per type ─────────────────────────────────────────────
 const TYPE_META = {
   'service':          { badge: '🔧', color: '#ea580c', tag: 'svc' },
   'payment':          { badge: '💰', color: '#16a34a', tag: 'pay' },
@@ -34,22 +33,29 @@ self.addEventListener('activate', e => {
   );
 });
 
-// ── FETCH (Caching strategy with opaque response fix) ────────────────────────
+// ── FETCH (SAFE CLONE) ───────────────────────────────────────────────────────
 self.addEventListener('fetch', e => {
   const { request } = e;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
 
+  // API / cross-origin requests
   if (url.pathname.startsWith('/api/') || url.hostname.includes('onrender.com')) {
     e.respondWith(
       fetch(request)
         .then(res => {
-          if (res.type !== 'opaque') {
-            caches.open(API_CACHE)
-              .then(c => c.put(request, res.clone()))
-              .catch(err => console.warn('[SW] API cache put failed:', err));
+          // ✅ CRITICAL: check if body is already used OR opaque
+          if (!res.bodyUsed && res.type !== 'opaque') {
+            try {
+              const clone = res.clone();
+              caches.open(API_CACHE)
+                .then(c => c.put(request, clone))
+                .catch(err => console.warn('[SW] API cache put error:', err));
+            } catch (cloneErr) {
+              console.warn('[SW] clone() failed for API:', url.href, cloneErr);
+            }
           } else {
-            console.warn('[SW] Opaque response, not cached:', url.href);
+            console.log('[SW] Skipped caching (bodyUsed or opaque):', url.href);
           }
           return res;
         })
@@ -61,14 +67,18 @@ self.addEventListener('fetch', e => {
     return;
   }
 
+  // Static assets (same-origin)
   e.respondWith(
     caches.match(request).then(cached => {
       if (cached) return cached;
       return fetch(request).then(res => {
-        if (res.status === 200 && res.type !== 'opaque') {
-          caches.open(STATIC_CACHE)
-            .then(c => c.put(request, res.clone()))
-            .catch(err => console.warn('[SW] Static cache put failed:', err));
+        if (res.status === 200 && !res.bodyUsed && res.type !== 'opaque') {
+          try {
+            const clone = res.clone();
+            caches.open(STATIC_CACHE)
+              .then(c => c.put(request, clone))
+              .catch(err => console.warn('[SW] Static cache put error:', err));
+          } catch (e) {}
         }
         return res;
       }).catch(() => request.mode === 'navigate' ? caches.match('/index.html') : null);
@@ -76,58 +86,46 @@ self.addEventListener('fetch', e => {
   );
 });
 
-// ── MESSAGES FROM APP ─────────────────────────────────────────────────────────
+// ── MESSAGES (including chat notifications) ─────────────────────────────────
 self.addEventListener('message', e => {
   const { type, payload } = e.data || {};
   if (type === 'SKIP_WAITING')       self.skipWaiting();
   if (type === 'SCHEDULE_REMINDERS') processSchedule(payload);
   if (type === 'SHOW_NOTIFICATION')  showNotif(payload.title, payload.body, payload.data || {});
   if (type === 'SHOW_CHAT_NOTIFICATION') {
-    // WhatsApp-like chat notification
     self.registration.showNotification(payload.title, {
       body: payload.body,
       icon: '/icons/icon-192x192.png',
       badge: '/icons/icon-96x96.png',
       tag: payload.tag || 'vp-chat',
       data: { url: payload.url || '/team-chat' },
-      requireInteraction: false,
       vibrate: [100, 50, 100]
     });
   }
   if (type === 'PING')               e.source?.postMessage({ type:'PONG', version:VERSION });
 });
 
-// ── NOTIFICATION CLICK ────────────────────────────────────────────────────────
+// ── NOTIFICATION CLICK ──────────────────────────────────────────────────────
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  const data = e.notification.data || {};
-  let url = data.url || '/reminders';
-  
-  // If it's a chat notification, ensure correct path
-  if (e.notification.tag && e.notification.tag.includes('chat')) {
-    url = '/team-chat';
-  }
-
+  let url = e.notification.data?.url || '/reminders';
+  if (e.notification.tag && e.notification.tag.includes('chat')) url = '/team-chat';
   e.waitUntil(
     clients.matchAll({ type:'window', includeUncontrolled:true }).then(list => {
       const found = list.find(c => c.url.includes(self.location.origin));
-      if (found) {
-        found.focus();
-        found.postMessage({ type:'NAVIGATE', url });
-        return;
-      }
+      if (found) { found.focus(); found.postMessage({ type:'NAVIGATE', url }); return; }
       return clients.openWindow(url);
     })
   );
 });
 
-// ── PUSH (server-sent) ───────────────────────────────────────────────────────
+// ── PUSH ────────────────────────────────────────────────────────────────────
 self.addEventListener('push', e => {
   if (!e.data) return;
   try { const d = e.data.json(); e.waitUntil(showNotif(d.title, d.body, d)); } catch {}
 });
 
-// ── PERIODIC BACKGROUND SYNC ──────────────────────────────────────────────────
+// ── BACKGROUND SYNC ─────────────────────────────────────────────────────────
 self.addEventListener('periodicsync', e => {
   if (e.tag === 'vp-reminder-check') e.waitUntil(bgCheck());
 });
@@ -142,18 +140,17 @@ function showNotif(title, body, data = {}) {
   const meta = TYPE_META[data.type] || { badge:'🔔', tag:'vp' };
   return self.registration.showNotification(title, {
     body,
-    icon:               '/icons/icon-192x192.png',
-    badge:              '/icons/icon-96x96.png',
-    vibrate:            [200, 100, 200, 100, 300],
-    tag:                data.tag || `vp-${meta.tag}`,
-    renotify:           true,
+    icon: '/icons/icon-192x192.png',
+    badge: '/icons/icon-96x96.png',
+    vibrate: [200, 100, 200, 100, 300],
+    tag: data.tag || `vp-${meta.tag}`,
+    renotify: true,
     requireInteraction: data.requireInteraction || false,
-    silent:             false,
-    data:               { url: data.url || '/reminders', type: data.type, ...data },
+    data: { url: data.url || '/reminders', type: data.type, ...data },
     actions: [
-      { action: 'view',    title: '👁️ देखें'    },
+      { action: 'view', title: '👁️ देखें' },
       { action: 'whatsapp', title: '📱 WA भेजें' },
-      { action: 'dismiss', title: '✕ बाद में'   },
+      { action: 'dismiss', title: '✕ बाद में' },
     ],
   });
 }
@@ -162,15 +159,13 @@ function showNotif(title, body, data = {}) {
 // SCHEDULE PROCESSING (reminders)
 // ════════════════════════════════════════════════════════════════════════════
 const scheduledTimers = new Map();
-
 function processSchedule(items = []) {
   if (!Array.isArray(items)) return;
   scheduledTimers.forEach(t => clearTimeout(t));
   scheduledTimers.clear();
   const now = Date.now();
   const immediate = items.filter(i => new Date(i.fireAt).getTime() <= now + 5000);
-  const scheduled_items = items.filter(i => new Date(i.fireAt).getTime() > now + 5000);
-
+  const future = items.filter(i => new Date(i.fireAt).getTime() > now + 5000);
   immediate.forEach((item, idx) => {
     setTimeout(() => {
       showNotif(item.title, item.body, {
@@ -181,10 +176,9 @@ function processSchedule(items = []) {
       });
     }, idx * 1500);
   });
-
-  scheduled_items.forEach(item => {
+  future.forEach(item => {
     const fireAt = new Date(item.fireAt).getTime();
-    const delay  = fireAt - now;
+    const delay = fireAt - now;
     if (delay <= 48 * 3600 * 1000) {
       const timer = setTimeout(() => {
         showNotif(item.title, item.body, {
@@ -197,36 +191,36 @@ function processSchedule(items = []) {
       scheduledTimers.set(item.id, timer);
     }
   });
-  console.log(`[SW] ${immediate.length} immediate + ${scheduled_items.length} scheduled reminders`);
+  console.log(`[SW] ${immediate.length} immediate + ${future.length} future`);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// BACKGROUND CHECK (reminders)
+// BACKGROUND CHECK (reminders from IndexedDB)
 // ════════════════════════════════════════════════════════════════════════════
 async function bgCheck() {
   try {
-    const db        = await openDB();
+    const db = await openDB();
     const reminders = await getAll(db);
     if (!reminders.length) return;
-    const now      = new Date();
+    const now = new Date();
     const todayStr = now.toISOString().split('T')[0];
-    const tmrwStr  = new Date(now.getTime() + 86400000).toISOString().split('T')[0];
+    const tomorrowStr = new Date(now.getTime() + 86400000).toISOString().split('T')[0];
     for (const r of reminders) {
       if (r.dueDate === todayStr && !r.notifiedToday) {
-        await showNotif(buildBgTitle(r, 'today'), buildBgBody(r), { tag:`td-${r.id}`, url:'/reminders', type:r.type, requireInteraction:true });
+        await showNotif(buildBgTitle(r, 'today'), buildBgBody(r), { tag: `td-${r.id}`, url: '/reminders', type: r.type, requireInteraction: true });
         await markField(db, r.id, 'notifiedToday', true);
       }
-      if (r.dueDate === tmrwStr && !r.notifiedTomorrow) {
-        await showNotif(buildBgTitle(r, 'tomorrow'), buildBgBody(r), { tag:`tm-${r.id}`, url:'/reminders', type:r.type });
+      if (r.dueDate === tomorrowStr && !r.notifiedTomorrow) {
+        await showNotif(buildBgTitle(r, 'tomorrow'), buildBgBody(r), { tag: `tm-${r.id}`, url: '/reminders', type: r.type });
         await markField(db, r.id, 'notifiedTomorrow', true);
       }
       if (r.daysRemaining < 0 && !r.notifiedOverdue) {
-        await showNotif(buildBgTitle(r, 'overdue'), buildBgBody(r), { tag:`ov-${r.id}`, url:'/reminders', type:r.type, requireInteraction:true });
+        await showNotif(buildBgTitle(r, 'overdue'), buildBgBody(r), { tag: `ov-${r.id}`, url: '/reminders', type: r.type, requireInteraction: true });
         await markField(db, r.id, 'notifiedOverdue', true);
       }
     }
-  } catch(err) {
-    console.log('[SW BG] Check failed:', err);
+  } catch (err) {
+    console.log('[SW BG] Error:', err);
   }
 }
 
@@ -250,27 +244,28 @@ function buildBgBody(r) {
   return parts.join('\n');
 }
 
+// IndexedDB helpers
 function openDB() {
   return new Promise((res, rej) => {
     const req = indexedDB.open('vp-reminders', 1);
-    req.onupgradeneeded = e => { if (!e.target.result.objectStoreNames.contains('reminders')) e.target.result.createObjectStore('reminders', { keyPath:'id' }); };
+    req.onupgradeneeded = e => { if (!e.target.result.objectStoreNames.contains('reminders')) e.target.result.createObjectStore('reminders', { keyPath: 'id' }); };
     req.onsuccess = e => res(e.target.result);
-    req.onerror   = () => rej(req.error);
+    req.onerror = () => rej(req.error);
   });
 }
 function getAll(db) {
   return new Promise((res, rej) => {
-    const req = db.transaction('reminders','readonly').objectStore('reminders').getAll();
+    const req = db.transaction('reminders', 'readonly').objectStore('reminders').getAll();
     req.onsuccess = () => res(req.result || []);
-    req.onerror   = () => rej(req.error);
+    req.onerror = () => rej(req.error);
   });
 }
 function markField(db, id, field, value) {
   return new Promise(res => {
-    const tx  = db.transaction('reminders','readwrite');
-    const s   = tx.objectStore('reminders');
-    const get = s.get(id);
-    get.onsuccess = () => { if (get.result) s.put({ ...get.result, [field]: value }); res(); };
+    const tx = db.transaction('reminders', 'readwrite');
+    const store = tx.objectStore('reminders');
+    const get = store.get(id);
+    get.onsuccess = () => { if (get.result) store.put({ ...get.result, [field]: value }); res(); };
     get.onerror = () => res();
   });
 }
