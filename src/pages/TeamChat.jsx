@@ -1,6 +1,6 @@
-// TeamChat.jsx — No duplicate messages, fixed polling
+// TeamChat.jsx — With Push Notifications (WhatsApp-like)
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, MessageCircle, Phone, Video, Image, X, Search, Menu } from 'lucide-react';
+import { Send, MessageCircle, Phone, Video, Image, X, Search, Menu, Bell, BellOff } from 'lucide-react';
 import { captureFromCamera, sendWhatsApp, showInAppToast } from '../utils/smartUtils';
 import { api } from '../utils/apiConfig';
 
@@ -14,24 +14,17 @@ const GROUPS = [
 
 const EMOJIS = ['👍','❤️','✅','🔧','🏍️','💰','📞','⚠️','🎉','👏','🙏','💪'];
 
-const playBeep = () => {
-  try {
-    const ctx  = new (window.AudioContext || window.webkitAudioContext)();
-    const osc  = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain); gain.connect(ctx.destination);
-    osc.frequency.value = 800; osc.type = 'sine';
-    gain.gain.setValueAtTime(0.2, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
-    osc.start(); osc.stop(ctx.currentTime + 0.25);
-  } catch {}
-};
-
-const requestNotifPermission = () => {
-  if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
+// Helper: Convert VAPID public key to Uint8Array
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
   }
-};
+  return outputArray;
+}
 
 export default function TeamChat({ user }) {
   const [tab,        setTab]        = useState('groups');
@@ -44,11 +37,12 @@ export default function TeamChat({ user }) {
   const [replyTo,    setReplyTo]    = useState(null);
   const [showEmoji,  setShowEmoji]  = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [notifEnabled, setNotifEnabled] = useState(false);
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
   const pollRef   = useRef(null);
   const sendingRef = useRef(false);
-  const lastMessageIdRef = useRef(null); // track last fetched message id
+  const lastMessageIdRef = useRef(null);
 
   const myName = user?.name || user?.email || 'Me';
   const currentRoom = tab === 'groups'
@@ -60,12 +54,55 @@ export default function TeamChat({ user }) {
     fetch(api('/api/staff')).then(r => r.ok ? r.json() : []).then(setStaff).catch(() => {});
   }, []);
 
-  // Request permission
+  // Check if already subscribed
   useEffect(() => {
-    requestNotifPermission();
+    const checkSubscription = async () => {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+      const swReg = await navigator.serviceWorker.ready;
+      const sub = await swReg.pushManager.getSubscription();
+      setNotifEnabled(!!sub);
+    };
+    checkSubscription();
   }, []);
 
-  // Function to load messages (only newer than lastMessageId)
+  // Enable notifications (call this after user clicks a button)
+  const enablePushNotifications = async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      alert('आपका ब्राउज़र Push Notifications सपोर्ट नहीं करता');
+      return;
+    }
+    try {
+      const swReg = await navigator.serviceWorker.ready;
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        alert('नोटिफिकेशन की अनुमति नहीं दी गई');
+        return;
+      }
+      // ⚠️ IMPORTANT: Replace with your own VAPID public key (generate via `web-push generate-vapid-keys`)
+      const VAPID_PUBLIC_KEY = 'BA...YOUR_PUBLIC_KEY_HERE...'; // <-- यहाँ अपनी public key डालें
+      const subscription = await swReg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+      });
+      // Send subscription to your backend
+      const res = await fetch(api('/api/save-push-subscription'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(subscription)
+      });
+      if (res.ok) {
+        setNotifEnabled(true);
+        alert('नोटिफिकेशन सक्रिय हो गए! अब आपको मोबाइल पर मैसेज दिखेंगे।');
+      } else {
+        throw new Error('Backend error');
+      }
+    } catch (err) {
+      console.error('Push subscription failed', err);
+      alert('नोटिफिकेशन सक्रिय नहीं हो सके। कृपया बाद में फिर प्रयास करें।');
+    }
+  };
+
+  // Load messages (only new ones)
   const loadMessages = useCallback(async (initial = false) => {
     if (!currentRoom) return;
     try {
@@ -79,42 +116,33 @@ export default function TeamChat({ user }) {
       
       if (initial) {
         setMessages(data);
-        if (data.length > 0) {
-          lastMessageIdRef.current = data[data.length - 1]._id;
-        }
+        if (data.length > 0) lastMessageIdRef.current = data[data.length-1]._id;
       } else if (data.length > 0) {
-        // Only add messages that are not already in state
         setMessages(prev => {
           const existingIds = new Set(prev.map(m => m._id));
           const newMsgs = data.filter(m => !existingIds.has(m._id));
           if (newMsgs.length === 0) return prev;
-          // Update lastMessageId
-          const latestMsg = newMsgs[newMsgs.length - 1];
-          if (latestMsg._id) lastMessageIdRef.current = latestMsg._id;
-          // Play beep and notify for messages from others
+          const latest = newMsgs[newMsgs.length-1];
+          if (latest._id) lastMessageIdRef.current = latest._id;
+          // Play beep & possibly send push? Push is handled by backend, not here.
           const fromOthers = newMsgs.filter(m => m.sender !== myName);
           if (fromOthers.length > 0) {
-            playBeep();
-            if (document.hidden && navigator.serviceWorker.controller) {
-              fromOthers.forEach(msg => {
-                navigator.serviceWorker.controller.postMessage({
-                  type: 'SHOW_CHAT_NOTIFICATION',
-                  payload: {
-                    title: msg.sender,
-                    body: msg.text || '📷 Photo',
-                    tag: `chat-${currentRoom}`,
-                    url: window.location.href
-                  }
-                });
-              });
-            }
+            // Simple beep when app is open
+            try {
+              const ctx = new (window.AudioContext || window.webkitAudioContext)();
+              const osc = ctx.createOscillator();
+              const gain = ctx.createGain();
+              osc.connect(gain); gain.connect(ctx.destination);
+              osc.frequency.value = 800;
+              gain.gain.setValueAtTime(0.1, ctx.currentTime);
+              gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+              osc.start(); osc.stop(ctx.currentTime + 0.3);
+            } catch {}
           }
           return [...prev, ...newMsgs];
         });
       }
-    } catch (err) {
-      console.error('Load messages error:', err);
-    }
+    } catch (err) { console.error(err); }
   }, [currentRoom, myName]);
 
   // Poll every 3 seconds
@@ -133,13 +161,14 @@ export default function TeamChat({ user }) {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
   }, [messages]);
 
+  // Send message
   const sendMsg = async (extra = {}) => {
     if (sendingRef.current) return;
     const text = input.trim();
     if (!text && !extra.photo) return;
     if (!currentRoom) return;
-
     sendingRef.current = true;
+
     const msgData = {
       sender: myName,
       senderRole: user?.role || 'staff',
@@ -147,13 +176,10 @@ export default function TeamChat({ user }) {
       photo: extra.photo || null,
       replyTo: replyTo ? { id: replyTo._id, sender: replyTo.sender, text: replyTo.text?.slice(0,60) } : null,
     };
-
-    // Optimistic add
     const tempId = `opt_${Date.now()}`;
     const optimistic = { ...msgData, _id: tempId, createdAt: new Date().toISOString(), optimistic: true };
     setMessages(prev => [...prev, optimistic]);
-    setInput('');
-    setReplyTo(null);
+    setInput(''); setReplyTo(null);
     inputRef.current?.focus();
 
     try {
@@ -164,14 +190,9 @@ export default function TeamChat({ user }) {
       });
       if (res.ok) {
         const saved = await res.json();
-        setMessages(prev => {
-          // Replace optimistic with real message
-          const filtered = prev.filter(m => m._id !== tempId);
-          return [...filtered, saved];
-        });
+        setMessages(prev => prev.map(m => m._id === tempId ? saved : m));
         if (saved._id) lastMessageIdRef.current = saved._id;
       } else {
-        // If failed, remove optimistic
         setMessages(prev => prev.filter(m => m._id !== tempId));
       }
     } catch {
@@ -260,9 +281,6 @@ export default function TeamChat({ user }) {
           ))}
           {tab === 'direct' && <>
             <p style={{ color:'#64748b', fontSize:9, fontWeight:700, textTransform:'uppercase', padding:'7px 10px 3px' }}>Staff</p>
-            {filteredStaff.length === 0 && !search && (
-              <p style={{ color:'#64748b', fontSize:11, padding:'10px 10px' }}>Staff Management में staff add करें</p>
-            )}
             {filteredStaff.map(s => (
               <div key={s._id || s.name} onClick={() => { setActiveDM(s); setActiveRoom(null); setSearch(''); setSidebarOpen(false); }}
                 style={{ padding:'8px 10px', cursor:'pointer', background:activeDM?.name === s.name?'#DC000015':'transparent', borderLeft:activeDM?.name === s.name?'3px solid #DC0000':'3px solid transparent', display:'flex', alignItems:'center', gap:8 }}>
@@ -289,7 +307,15 @@ export default function TeamChat({ user }) {
             <h3 style={{ fontSize:14, fontWeight:800, margin:0 }}>{roomLabel}</h3>
             <p style={{ color:'#94a3b8', fontSize:10, margin:'2px 0 0' }}>Synced across all devices</p>
           </div>
-          <div style={{ display:'flex', gap:6 }}>
+          <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+            <button
+              onClick={enablePushNotifications}
+              title={notifEnabled ? "नोटिफिकेशन ऑन हैं" : "नोटिफिकेशन चालू करें"}
+              style={{ background: notifEnabled ? '#16a34a' : '#334155', border:'none', borderRadius:6, padding:'5px 8px', cursor:'pointer', color:'white', fontSize:11, fontWeight:700 }}
+            >
+              {notifEnabled ? <Bell size={12}/> : <BellOff size={12}/>}
+              <span style={{ marginLeft:4 }}>{notifEnabled ? 'On' : 'Off'}</span>
+            </button>
             {tab === 'direct' && activeDM?.phone && (
               <button onClick={() => window.location.href=`tel:${activeDM.phone}`} style={{ background:'#16a34a', border:'none', color:'#fff', borderRadius:6, padding:'5px 10px', fontSize:11, fontWeight:700 }}><Phone size={12}/> Call</button>
             )}
