@@ -44,17 +44,22 @@ self.addEventListener('fetch', e => {
   if (url.pathname.startsWith('/api/') || url.hostname.includes('onrender.com')) {
     e.respondWith(
       fetch(request)
-        .then(res => {
-          // ✅ Clone ONLY if response is NOT opaque (CORS-enabled or same-origin)
-          if (res.type !== 'opaque') {
-            caches.open(API_CACHE)
-              .then(c => c.put(request, res.clone()))
-              .catch(err => console.warn('[SW] API cache put failed:', err));
-          } else {
-            console.warn('[SW] Opaque response, not cached:', url.href);
-          }
-          return res;
-        })
+  .then(res => {
+    let resClone;
+    try {
+      resClone = res.clone();
+    } catch (e) {
+      return res;
+    }
+
+    if (res.ok && res.type !== 'opaque') {
+      caches.open(API_CACHE)
+        .then(c => c.put(request, resClone))
+        .catch(() => {});
+    }
+
+    return res;
+  })
         .catch(() => caches.match(request).then(c => c ||
           new Response(JSON.stringify({ error:'Offline', message:'इंटरनेट नहीं है' }),
             { status:503, headers:{'Content-Type':'application/json'} })
