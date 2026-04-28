@@ -151,6 +151,8 @@ const syncToMongoDB = async (data) => {
         if (!res.ok) throw new Error('Server error');
         const db = await res.json();
         setCustomers(db);                                                           // ⭐ keep raw customers for lookup
+        // ⭐ Cache for Service Worker notification scheduling
+        try { localStorage.setItem('vpCustomers', JSON.stringify(db.slice(0, 500))); } catch {}
         const valid = db.filter(c => (c.customerName || c.name || '').trim());
         if (valid.length) {
           const transformed = valid.map((c, i) => ({

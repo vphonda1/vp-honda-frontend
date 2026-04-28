@@ -1,82 +1,230 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Menu, X, LogOut } from 'lucide-react';
+import { Menu, X, LogOut, Bell, MessageCircle, Video, Users, Truck, Calendar, DollarSign, FolderOpen, Brain, Eye } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 
 export default function Navbar({ user, onLogout }) {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const location = useLocation();
+  const [open, setOpen]       = useState(false);
+  const [group, setGroup]     = useState(null); // for dropdown groups
+  const location              = useLocation();
+  const isActive = (p)        => location.pathname === p;
+  const isAdmin               = user?.role === 'admin';
+  const isStaff               = user?.role === 'admin' || user?.role === 'staff';
 
-  const menuItems = [
-    { label: 'V P Dashboard',       path: '/vph-dashboard',          roles: ['admin'],         icon: '📋' },
-    { label: 'Dashboard',            path: '/dashboard',              roles: ['admin','staff']          },
-    { label: 'Veh Dashboard',        path: '/veh-dashboard',          roles: ['admin'],         icon: '🏍️' },
-    { label: 'Job Cards',            path: '/job-cards',              roles: ['admin','staff'], icon: '🎫' },
-    { label: 'Parts',                path: '/parts',                  roles: ['admin','staff'], icon: '📦' },
-    { label: 'Customers',            path: '/customers',              roles: ['admin','staff'], icon: '👥' },
-    { label: 'Reminders',            path: '/reminders',              roles: ['admin','staff'], icon: '🔔' },
-    { label: 'Reports',              path: '/reports',                roles: ['admin'],         icon: '📊' },
-    { label: 'Management',           path: '/invoice-management',     roles: ['admin'],         icon: '📄' },
-    { label: 'Quotation',            path: '/quotation',              roles: ['admin','staff'], icon: '📋' },
-    { label: 'Admin',                path: '/admin',                  roles: ['admin'],         icon: '⚙️' },
-    { label: 'Staff Management',     path: '/staff-management',       roles: ['admin','staff'], icon: '👥' },
-    { label: 'Salary & Rent',     path: '/salary-management',       roles: ['admin'], icon: '💰' },
-    { label: 'Smart Cust Hub',     path: '/customer-hub',       roles: ['admin'], icon: '📋' },
-    { label: 'Business',     path: '/business-intelligence',       roles: ['admin'], icon: '🏍️' },
-    { label: 'Manager',     path: '/manager',       roles: ['admin'], icon: '⚙️' },
-  ];
+  // ── Main nav items (always visible in top bar) ────────────────────────────
+  const mainItems = [
+    { label:'Dashboard',     path:'/dashboard',          show: isStaff, icon:'🏠' },
+    { label:'VP Dashboard',  path:'/vph-dashboard',      show: isAdmin, icon:'📋' },
+    { label:'Veh Sales',     path:'/veh-dashboard',      show: isAdmin, icon:'🏍️' },
+    { label:'Customers',     path:'/customers',          show: isStaff, icon:'👥' },
+    { label:'Reminders',     path:'/reminders',          show: isStaff, icon:'🔔' },
+    { label:'Job Cards',     path:'/job-cards',          show: isStaff, icon:'🎫' },
+    { label:'Parts',         path:'/parts',              show: isStaff, icon:'📦' },
+    { label:'Reports',       path:'/reports',            show: isAdmin, icon:'📊' },
+  ].filter(i => i.show);
 
-  const visibleMenuItems = menuItems.filter(item => item.roles.includes(user?.role));
-  const isActive = (path) => location.pathname === path;
+  // ── Smart Features group ──────────────────────────────────────────────────
+  const smartItems = [
+    { label:'Manager View',    path:'/manager',              show: isAdmin, icon:'👔' },
+    { label:'BI Analytics',    path:'/business-intelligence',show: isAdmin, icon:'🧠' },
+    { label:'Visitors',        path:'/visitors',             show: isStaff, icon:'👁️' },
+    { label:'Pickup-Drop',     path:'/pickup-drop',          show: isStaff, icon:'🛵' },
+    { label:'Customer Hub',    path:'/customer-hub',         show: isStaff, icon:'❤️' },
+    { label:'Calendar',        path:'/calendar',             show: isStaff, icon:'📅' },
+    { label:'Payments',        path:'/payments',             show: isStaff, icon:'💰' },
+    { label:'Documents',       path:'/documents',            show: isStaff, icon:'📂' },
+  ].filter(i => i.show);
+
+  // ── Manage group ──────────────────────────────────────────────────────────
+  const manageItems = [
+    { label:'Staff Mgmt',      path:'/staff-management',    show: isStaff, icon:'👥' },
+    { label:'Salary & Rent',   path:'/salary-management',   show: isAdmin, icon:'💵' },
+    { label:'Invoice Mgmt',    path:'/invoice-management',  show: isAdmin, icon:'📄' },
+    { label:'Quotation',       path:'/quotation',           show: isStaff, icon:'📋' },
+    { label:'Data Mgmt',       path:'/data-management',     show: isAdmin, icon:'📊' },
+    { label:'Admin',           path:'/admin',               show: isAdmin, icon:'⚙️' },
+    { label:'Diagnostic',      path:'/diagnostic',          show: isAdmin, icon:'🔍' },
+  ].filter(i => i.show);
+
+  const NavLink = ({ item, onClick }) => (
+    <Link
+      to={item.path}
+      onClick={onClick}
+      className={`flex items-center gap-1 px-2 py-1.5 rounded text-xs font-bold whitespace-nowrap transition-all ${
+        isActive(item.path)
+          ? 'bg-white text-red-600 shadow-sm'
+          : 'text-white hover:bg-white/20'
+      }`}
+    >
+      <span>{item.icon}</span>
+      <span>{item.label}</span>
+    </Link>
+  );
+
+  const Dropdown = ({ label, icon, items, id }) => {
+    const anyActive = items.some(i => isActive(i.path));
+    return (
+      <div className="relative" onMouseLeave={() => setGroup(null)}>
+        <button
+          onMouseEnter={() => setGroup(id)}
+          onClick={() => setGroup(g => g === id ? null : id)}
+          className={`flex items-center gap-1 px-2 py-1.5 rounded text-xs font-bold whitespace-nowrap transition-all ${
+            anyActive || group === id ? 'bg-white text-red-600 shadow-sm' : 'text-white hover:bg-white/20'
+          }`}
+        >
+          <span>{icon}</span>
+          <span>{label}</span>
+          <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
+        </button>
+        {group === id && (
+          <div className="absolute top-full left-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl z-50 min-w-[180px] py-1" style={{ backdropFilter: 'blur(10px)' }}>
+            {items.map(item => (
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={() => setGroup(null)}
+                className={`flex items-center gap-2 px-4 py-2 text-xs font-bold transition-all ${
+                  isActive(item.path) ? 'bg-red-600 text-white' : 'text-slate-200 hover:bg-slate-700'
+                }`}
+              >
+                <span>{item.icon}</span>
+                <span>{item.label}</span>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
-    <nav className="bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg sticky top-0 z-50">
-      <div className="max-w-full mx-auto px-4">
-        <div className="flex justify-between items-center h-14">
-          <Link to="/vph-dashboard" className="flex items-center gap-2 flex-shrink-0">
-            <div className="bg-white text-red-600 rounded px-2.5 py-0.5 font-black text-lg">V P</div>
-          </Link>
-          <div className="hidden md:flex items-center gap-0.5 overflow-x-auto max-w-[calc(100%-240px)]">
-            {visibleMenuItems.map(item => (
-              <Link key={item.path} to={item.path}
-                className={`px-2 py-1.5 rounded text-xs font-bold whitespace-nowrap transition ${
-                  isActive(item.path) ? 'bg-white text-purple-600 shadow' : 'text-white hover:bg-white/20'
-                }`}>
-                {item.icon} {item.label}
-              </Link>
-            ))}
-          </div>
-          <div className="hidden md:flex items-center gap-2 flex-shrink-0">
-            <div className="bg-white/20 px-3 py-1 rounded text-xs">
-              <span className="font-bold">{user?.name}</span>
-              <span className="ml-1 opacity-75 uppercase text-[10px]">{user?.role}</span>
+    <nav className="sticky top-0 z-50 shadow-lg" style={{ background: 'linear-gradient(135deg, #1e1b4b, #DC0000)' }}>
+      <div className="max-w-full mx-auto px-3">
+        <div className="flex justify-between items-center h-12">
+
+          {/* Logo */}
+          <Link to="/dashboard" className="flex items-center gap-2 flex-shrink-0">
+            <div className="bg-white text-red-600 rounded px-2 py-0.5 font-black text-base leading-tight">
+              VP
             </div>
-            <Button onClick={onLogout} className="bg-red-600 hover:bg-red-700 text-white h-8 px-3 text-xs">
-              <LogOut size={14} className="mr-1" /> Logout
+            <span className="text-white font-black text-sm hidden sm:block">Honda</span>
+          </Link>
+
+          {/* Desktop nav */}
+          <div className="hidden lg:flex items-center gap-0.5 overflow-x-auto flex-1 mx-3">
+            {/* Main items */}
+            {mainItems.map(item => <NavLink key={item.path} item={item} />)}
+
+            {/* Smart features dropdown */}
+            {smartItems.length > 0 && (
+              <Dropdown label="Smart" icon="⚡" items={smartItems} id="smart" />
+            )}
+
+            {/* Manage dropdown */}
+            {manageItems.length > 0 && (
+              <Dropdown label="Manage" icon="⚙️" items={manageItems} id="manage" />
+            )}
+          </div>
+
+          {/* Right side: Chat, Meeting, User, Logout */}
+          <div className="hidden lg:flex items-center gap-1.5 flex-shrink-0">
+            {/* Chat Button */}
+            <Link to="/chat" title="Team Chat"
+              className={`p-2 rounded-lg transition-all ${isActive('/chat') ? 'bg-white text-purple-600' : 'text-white hover:bg-white/20'}`}>
+              <MessageCircle size={16} />
+            </Link>
+
+            {/* Meeting Button */}
+            <Link to="/meeting" title="Video Meeting"
+              className={`p-2 rounded-lg transition-all ${isActive('/meeting') ? 'bg-white text-purple-600' : 'text-white hover:bg-white/20'}`}>
+              <Video size={16} />
+            </Link>
+
+            {/* User badge */}
+            <div className="bg-white/15 px-2.5 py-1 rounded-lg text-xs border border-white/20">
+              <span className="font-bold text-white">{user?.name?.split(' ')[0] || 'User'}</span>
+              <span className="ml-1 text-white/60 uppercase text-[9px]">{user?.role}</span>
+            </div>
+
+            {/* Logout */}
+            <Button onClick={onLogout} className="bg-red-700 hover:bg-red-800 text-white h-7 px-2.5 text-xs">
+              <LogOut size={12} className="mr-1" /> Logout
             </Button>
           </div>
-          <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="md:hidden p-2 rounded hover:bg-white/20">
-            {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
+
+          {/* Mobile hamburger */}
+          <button onClick={() => setOpen(!open)} className="lg:hidden p-2 rounded hover:bg-white/20 text-white">
+            {open ? <X size={20} /> : <Menu size={20} />}
           </button>
         </div>
-        {mobileMenuOpen && (
-          <div className="md:hidden pb-4 border-t border-white/20 space-y-1 mt-1">
-            {visibleMenuItems.map(item => (
-              <Link key={item.path} to={item.path} onClick={() => setMobileMenuOpen(false)}
-                className={`block px-4 py-2 rounded text-sm font-bold transition ${
-                  isActive(item.path) ? 'bg-white text-purple-600' : 'text-white hover:bg-white/20'
-                }`}>
-                {item.icon} {item.label}
+
+        {/* Mobile menu */}
+        {open && (
+          <div className="lg:hidden pb-4 border-t border-white/20 mt-1 max-h-[80vh] overflow-y-auto">
+
+            {/* Quick actions */}
+            <div className="flex gap-2 p-3 border-b border-white/10">
+              <Link to="/chat" onClick={() => setOpen(false)}
+                className="flex-1 flex items-center justify-center gap-2 bg-purple-700 hover:bg-purple-600 text-white py-2 rounded-lg text-xs font-bold">
+                <MessageCircle size={14}/> Chat
               </Link>
-            ))}
-            <hr className="border-white/20 my-2" />
-            <div className="px-4 py-2 bg-white/20 rounded">
-              <span className="font-bold">{user?.name}</span>
-              <span className="ml-2 text-xs uppercase opacity-75">{user?.role}</span>
+              <Link to="/meeting" onClick={() => setOpen(false)}
+                className="flex-1 flex items-center justify-center gap-2 bg-indigo-700 hover:bg-indigo-600 text-white py-2 rounded-lg text-xs font-bold">
+                <Video size={14}/> Meeting
+              </Link>
+              <Link to="/reminders" onClick={() => setOpen(false)}
+                className="flex-1 flex items-center justify-center gap-2 bg-red-700 hover:bg-red-600 text-white py-2 rounded-lg text-xs font-bold">
+                <Bell size={14}/> Alerts
+              </Link>
             </div>
-            <Button onClick={() => { onLogout(); setMobileMenuOpen(false); }} className="w-full bg-red-600 hover:bg-red-700 text-white mt-2">
-              <LogOut size={16} className="mr-2" /> Logout
-            </Button>
+
+            {/* All items grouped */}
+            <div className="p-3 space-y-1">
+              <p className="text-white/40 text-[10px] font-bold uppercase px-2 py-1">Main</p>
+              {mainItems.map(item => (
+                <Link key={item.path} to={item.path} onClick={() => setOpen(false)}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-bold transition ${
+                    isActive(item.path) ? 'bg-white text-red-600' : 'text-white hover:bg-white/15'
+                  }`}>
+                  <span>{item.icon}</span><span>{item.label}</span>
+                </Link>
+              ))}
+
+              {smartItems.length > 0 && <>
+                <p className="text-white/40 text-[10px] font-bold uppercase px-2 py-1 mt-3">⚡ Smart Features</p>
+                {smartItems.map(item => (
+                  <Link key={item.path} to={item.path} onClick={() => setOpen(false)}
+                    className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-bold transition ${
+                      isActive(item.path) ? 'bg-white text-red-600' : 'text-white hover:bg-white/15'
+                    }`}>
+                    <span>{item.icon}</span><span>{item.label}</span>
+                  </Link>
+                ))}
+              </>}
+
+              {manageItems.length > 0 && <>
+                <p className="text-white/40 text-[10px] font-bold uppercase px-2 py-1 mt-3">⚙️ Manage</p>
+                {manageItems.map(item => (
+                  <Link key={item.path} to={item.path} onClick={() => setOpen(false)}
+                    className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-bold transition ${
+                      isActive(item.path) ? 'bg-white text-red-600' : 'text-white hover:bg-white/15'
+                    }`}>
+                    <span>{item.icon}</span><span>{item.label}</span>
+                  </Link>
+                ))}
+              </>}
+            </div>
+
+            {/* User + Logout */}
+            <div className="px-3 mt-2 border-t border-white/20 pt-3">
+              <div className="bg-white/15 px-3 py-2 rounded-lg mb-2">
+                <span className="font-bold text-white text-sm">{user?.name}</span>
+                <span className="ml-2 text-white/60 text-xs uppercase">{user?.role}</span>
+              </div>
+              <Button onClick={() => { onLogout(); setOpen(false); }} className="w-full bg-red-700 hover:bg-red-800 text-white">
+                <LogOut size={15} className="mr-2" /> Logout
+              </Button>
+            </div>
           </div>
         )}
       </div>

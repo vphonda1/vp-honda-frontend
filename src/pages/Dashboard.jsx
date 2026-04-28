@@ -25,7 +25,7 @@ import {
   Users, Bike, FileText, Package, DollarSign, Bell, ArrowUpRight,
   Zap, Activity, Calendar, CheckCircle, XCircle, AlertCircle,
   Wrench, ShieldAlert, CreditCard, Eye, ChevronRight, Truck,
-  MessageCircle, Video,
+  MessageCircle, Video, FolderOpen,
 } from 'lucide-react';
 import { api } from '../utils/apiConfig';
 
@@ -416,6 +416,15 @@ export default function Dashboard({ user }) {
           <KPITile icon={Video} label="Meeting Room" value="🎥"
             color="#0891b2" trendLabel="Video call"
             onClick={() => navigate('/meeting')} />
+          <KPITile icon={Calendar} label="Appointments" value={JSON.parse(localStorage.getItem('vp_appointments')||'[]').filter(a=>a.date>=new Date().toISOString().split('T')[0]).length}
+            color="#16a34a" trendLabel="Upcoming"
+            onClick={() => navigate('/calendar')} />
+          <KPITile icon={DollarSign} label="Pending Dues" value={JSON.parse(localStorage.getItem('vp_payments')||'[]').filter(p=>p.status!=='paid').length}
+            color="#fbbf24" trendLabel="payments pending"
+            onClick={() => navigate('/payments')} />
+          <KPITile icon={FolderOpen} label="Documents" value={JSON.parse(localStorage.getItem('vp_documents')||'[]').length}
+            color="#94a3b8" trendLabel="stored docs"
+            onClick={() => navigate('/documents')} />
         </div>
 
         {/* ─── REVENUE CHART + VEHICLES ─── */}

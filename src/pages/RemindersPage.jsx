@@ -39,6 +39,15 @@ const CALL_STATUS = [
 const getWAMessage = (r) => {
   const name = (r.customerName||'').replace(/^\d+\s*/,'').split(' ')[0] || 'महोदय/महोदया';
   const due  = r.dueDate instanceof Date ? fmtDate(r.dueDate) : (r.dueDate||'');
+
+  // ⭐ Special message for First Party Insurance Renewal
+  if (r.type === 'insurance-renewal') {
+    const expiry = r.insuranceExpiryDate ? fmtDate(new Date(r.insuranceExpiryDate)) : 'जल्दी';
+    return encodeURIComponent(
+      `नमस्ते ${name} जी! 🙏\n\n*वी.पी. होंडा* की तरफ से महत्वपूर्ण सूचना:\n\n🛡️ आपकी *${r.vehicle||'गाड़ी'}* (${r.regNo||''}) का *First Party Insurance* जल्दी Expire होने वाला है।\n\n📅 Insurance Expiry: *${expiry}*\n📋 Renewal करने की Last Date: *${due}*\n\nसमय पर Renewal न करने पर:\n❌ आपकी गाड़ी Uninsured हो जाएगी\n❌ दुर्घटना में Coverage नहीं मिलेगी\n\n✅ अभी Renewal करवाएं!\n\n🏍️ वी.पी. होंडा, भोपाल\n📞 9713394738`
+    );
+  }
+
   const svcLabel = r.serviceType ? `${r.serviceType} सर्विस` : 'सर्विस';
   return encodeURIComponent(
     `नमस्ते ${name} जी! 🙏\n\nवी.पी. होंडा की तरफ से आपको याद दिलाना चाहते हैं कि आपकी *${r.vehicle||'गाड़ी'}* (${r.regNo}) की *${svcLabel}* की तारीख आ चुकी है।\n\n📅 सर्विस की तारीख: ${due}\n\nकृपया अपनी गाड़ी की सर्विस कराने के लिए हमारे शोरूम पर पधारें।\n\n🏍️ वी.पी. होंडा\nपरवलिया सड़क, भोपाल\n📞 9713394738`
@@ -264,11 +273,14 @@ export default function RemindersPage() {
         }
 
         // ⭐ FIRST PARTY INSURANCE RENEWAL (11 months = 335 days after insurance start)
-        // Priority: insuranceStartDate field → insuranceDate field → purchaseDate + 3 days (estimate)
-        const insStartRaw = data.insuranceStartDate || data.insuranceDate ||
+        // Priority: 1) localStorage custom date, 2) insuranceStartDate, 3) insuranceDate, 4) purchaseDate+3
+        const lsInsKey   = `vp_ins_${regNo||custId}`;
+        const lsRenewed  = localStorage.getItem(`vp_ins_renewed_${regNo||custId}`);
+        const lsInsDate  = localStorage.getItem(lsInsKey);
+        const insStartRaw = lsInsDate || data.insuranceStartDate || data.insuranceDate ||
           (data.purchaseDate ? new Date(new Date(data.purchaseDate).getTime() + 3*864e5).toISOString().split('T')[0] : null);
 
-        if (insStartRaw && !data.insuranceRenewed) {
+        if (insStartRaw && !data.insuranceRenewed && !lsRenewed) {
           const insStart = new Date(insStartRaw); insStart.setHours(0,0,0,0);
           // Insurance expires at 12 months, remind at 11 months (335 days)
           const renewalDue = new Date(insStart.getTime() + 335*864e5);
@@ -301,7 +313,7 @@ export default function RemindersPage() {
               dueDate: renewalDue,
               insuranceStartDate: insStartRaw,
               insuranceExpiryDate: insExpiry.toISOString().split('T')[0],
-              isEstimated: !data.insuranceStartDate,
+              isEstimated: !lsInsDate && !data.insuranceStartDate,
               lastCallStatus: fu[rid]?.slice(-1)[0]?.status || null,
               callCount: fu[rid]?.length || 0,
             });
@@ -387,6 +399,7 @@ export default function RemindersPage() {
     {t:'all',l:'सभी',n:reminders.length,grad:'linear-gradient(135deg,#2563eb,#1d4ed8)'},
     {t:'pay',l:'💳 Payment',n:cnt(r=>r.type==='payment'),grad:'linear-gradient(135deg,#059669,#047857)'},
     {t:'ins',l:'🚗 RTO',n:cnt(r=>r.type==='insurance'),grad:'linear-gradient(135deg,#7c3aed,#6d28d9)'},
+    {t:'insr',l:'🛡️ Insurance',n:cnt(r=>r.type==='insurance-renewal'),grad:'linear-gradient(135deg,#DC0000,#B91C1C)'},
     {t:'svc',l:'🔧 सर्विस',n:cnt(r=>r.type==='service'),grad:'linear-gradient(135deg,#ea580c,#c2410c)'},
     {t:'s1',l:'1st',n:cnt(r=>r.serviceType==='1st'),grad:'linear-gradient(135deg,#0284c7,#0369a1)'},
     {t:'s2',l:'2nd',n:cnt(r=>r.serviceType==='2nd'),grad:'linear-gradient(135deg,#d97706,#b45309)'},
@@ -400,6 +413,7 @@ export default function RemindersPage() {
   const filtered=reminders.filter(r=>{
     if(filterType==='pay'&&r.type!=='payment') return false;
     if(filterType==='ins'&&r.type!=='insurance') return false;
+    if(filterType==='insr'&&r.type!=='insurance-renewal') return false;
     if(filterType==='svc'&&r.type!=='service') return false;
     if(svcMap[filterType]&&r.serviceType!==svcMap[filterType]) return false;
     if(searchTerm){const s=searchTerm.toLowerCase();return[r.customerName,r.customerPhone,r.vehicle,r.regNo].some(v=>(v||'').toLowerCase().includes(s));}
@@ -486,14 +500,36 @@ export default function RemindersPage() {
           <div style={{flex: 1, minWidth: 200}}>
             {notifStatus === 'granted' ? (
               <>
-                <p style={{color: '#86efac', fontWeight: 700, fontSize: 13, margin: 0}}>
-                  ✅ Notifications चालू हैं
+                <p style={{color:'#86efac', fontWeight:700, fontSize:13, margin:0}}>
+                  ✅ Phone Notifications चालू हैं
                 </p>
-                <p style={{color: '#64748b', fontSize: 11, margin: '3px 0 0'}}>
-                  {notifSummary
-                    ? `आज: ${notifSummary.today} due, कल: ${notifSummary.tomorrow} due, Overdue: ${notifSummary.overdue}`
-                    : 'Service reminders automatically phone पर आएंगे — app बंद हो तब भी'}
-                </p>
+                {notifSummary ? (
+                  <div style={{marginTop:6, display:'flex', gap:10, flexWrap:'wrap'}}>
+                    {[
+                      { label:'🔧 Service',   val: notifSummary.byType?.service          || 0, color:'#ea580c' },
+                      { label:'💰 Payment',   val: notifSummary.byType?.payment          || 0, color:'#16a34a' },
+                      { label:'🚗 RTO',       val: notifSummary.byType?.rto              || 0, color:'#7c3aed' },
+                      { label:'🛡️ Insurance', val: notifSummary.byType?.insuranceRenewal || 0, color:'#DC0000' },
+                    ].map((t,i) => (
+                      <div key={i} style={{background:`${t.color}22`, border:`1px solid ${t.color}55`, borderRadius:6, padding:'3px 10px', display:'flex', gap:5, alignItems:'center'}}>
+                        <span style={{color:t.color, fontWeight:800, fontSize:14}}>{t.val}</span>
+                        <span style={{color:'#94a3b8', fontSize:10, fontWeight:600}}>{t.label}</span>
+                      </div>
+                    ))}
+                    <div style={{background:'#fbbf2422', border:'1px solid #fbbf2455', borderRadius:6, padding:'3px 10px', display:'flex', gap:5, alignItems:'center'}}>
+                      <span style={{color:'#fbbf24', fontWeight:800, fontSize:14}}>{notifSummary.overdue || 0}</span>
+                      <span style={{color:'#94a3b8', fontSize:10, fontWeight:600}}>🚨 Overdue</span>
+                    </div>
+                    <div style={{background:'#3b82f622', border:'1px solid #3b82f655', borderRadius:6, padding:'3px 10px', display:'flex', gap:5, alignItems:'center'}}>
+                      <span style={{color:'#60a5fa', fontWeight:800, fontSize:14}}>{notifSummary.today || 0}</span>
+                      <span style={{color:'#94a3b8', fontSize:10, fontWeight:600}}>📅 आज</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p style={{color:'#64748b', fontSize:11, margin:'3px 0 0'}}>
+                    Service, Payment, RTO, Insurance — सब reminders automatically phone पर आएंगे
+                  </p>
+                )}
               </>
             ) : notifStatus === 'denied' ? (
               <>
@@ -647,6 +683,8 @@ export default function RemindersPage() {
                         {r.serviceType&&<span style={{background:'rgba(59,130,246,0.1)',border:'1px solid rgba(59,130,246,0.22)',color:'#93c5fd',fontSize:'9px',fontWeight:'700',padding:'2px 8px',borderRadius:'20px'}}>{r.serviceType} Service</span>}
                         {r.type==='payment'&&<span style={{background:'rgba(34,197,94,0.1)',border:'1px solid rgba(34,197,94,0.22)',color:'#86efac',fontSize:'9px',fontWeight:'700',padding:'2px 8px',borderRadius:'20px'}}>💳 Payment</span>}
                         {r.type==='insurance'&&<span style={{background:'rgba(139,92,246,0.1)',border:'1px solid rgba(139,92,246,0.22)',color:'#c4b5fd',fontSize:'9px',fontWeight:'700',padding:'2px 8px',borderRadius:'20px'}}>🚗 RTO</span>}
+                        {r.type==='insurance-renewal'&&<span style={{background:'rgba(220,0,0,0.15)',border:'1px solid rgba(220,0,0,0.4)',color:'#fca5a5',fontSize:'9px',fontWeight:'700',padding:'2px 8px',borderRadius:'20px'}}>🛡️ 1st Party</span>}
+                        {r.type==='insurance-renewal'&&r.isEstimated&&<span style={{background:'rgba(251,191,36,0.1)',border:'1px solid rgba(251,191,36,0.3)',color:'#fbbf24',fontSize:'9px',fontWeight:'600',padding:'2px 8px',borderRadius:'20px'}}>⚠️ Estimated</span>}
                         {lastFup&&<span style={{background:'rgba(255,255,255,0.05)',color:csColor(lastFup.status),fontSize:'9px',fontWeight:'700',padding:'2px 8px',borderRadius:'20px'}}>{csLabel(lastFup.status)}</span>}
                         {lastFup?.nextCallDate&&<span style={{background:'rgba(249,115,22,0.1)',border:'1px solid rgba(249,115,22,0.18)',color:'#fdba74',fontSize:'9px',fontWeight:'600',padding:'2px 8px',borderRadius:'20px'}}>📅 {fmtDate(lastFup.nextCallDate)}</span>}
                       </div>
@@ -692,6 +730,23 @@ export default function RemindersPage() {
                         {r.customerPhone&&<a href={`https://wa.me/91${r.customerPhone}?text=${getWAMessage(r)}`} target="_blank" rel="noreferrer" className="hov" style={S.btn('linear-gradient(135deg,#059669,#047857)','0 2px 10px rgba(5,150,105,0.25)')}><MessageSquare size={10}/> WA</a>}
                         <button onClick={()=>{setActiveR(r);setShowFU(true);}} className="hov" style={S.btn('linear-gradient(135deg,#7c3aed,#6d28d9)','0 2px 10px rgba(124,58,237,0.25)')}><PhoneCall size={10}/> Log</button>
                         {r.type==='service'&&<button onClick={()=>{setActiveR(r);setDoneForm({km:'',date:new Date().toISOString().split('T')[0],remarks:''});setShowDone(true);}} className="hov" style={S.btn('linear-gradient(135deg,#ea580c,#c2410c)','0 2px 10px rgba(234,88,12,0.25)')}>✅ Done</button>}
+                        {r.type==='insurance-renewal'&&<button onClick={()=>{
+                          const newDate = prompt(`📅 Insurance Date enter करें (YYYY-MM-DD):\n\nCurrent: ${r.insuranceStartDate||'Not set'}\n\nखरीद के 2-3 दिन बाद की date डालें`);
+                          if(!newDate) return;
+                          if(!/^\d{4}-\d{2}-\d{2}$/.test(newDate)){alert('Format: YYYY-MM-DD\nExample: 2024-04-15');return;}
+                          // Save to localStorage with regNo as key
+                          const key=`vp_ins_${r.regNo||r.customerId}`;
+                          localStorage.setItem(key,newDate);
+                          alert(`✅ Insurance date saved!\n${newDate}\n\nPage refresh करें — नया reminder calculate होगा।`);
+                          loadReminders();
+                        }} className="hov" style={S.btn('linear-gradient(135deg,#0369a1,#0284c7)','0 2px 10px rgba(3,105,161,0.25)')}>✏️ Edit Date</button>}
+                        {r.type==='insurance-renewal'&&<button onClick={()=>{
+                          if(!window.confirm(`${r.customerName} का Insurance Renewed mark करना है?`)) return;
+                          const key=`vp_ins_renewed_${r.regNo||r.customerId}`;
+                          localStorage.setItem(key,'true');
+                          alert('✅ Marked as Renewed! अगले साल का reminder automatic set होगा।');
+                          loadReminders();
+                        }} className="hov" style={S.btn('linear-gradient(135deg,#16a34a,#15803d)','0 2px 10px rgba(22,163,74,0.25)')}>🛡️ Renewed</button>}
                         <button onClick={()=>navigate(`/customer-profile/${r.customerId}`)} className="hov" style={S.btn('linear-gradient(135deg,#1e293b,#0f172a)','none')}>👁 View</button>
                       </div>
                     </div>
