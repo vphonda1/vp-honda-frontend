@@ -120,6 +120,7 @@ const buildServiceData = (invoices) => {
 export default function RemindersPage() {
   const navigate = useNavigate();
   const [reminders,    setReminders]   = useState([]);
+  const [customers,    setCustomers]   = useState([]);
   const [filterType,   setFilterType]  = useState('all');
   const [searchTerm,   setSearchTerm]  = useState('');
   const [loading,      setLoading]     = useState(true);
@@ -232,6 +233,7 @@ export default function RemindersPage() {
     try {
       let custs=[];
       try{const r=await fetch(api('/api/customers'));if(r.ok)custs=await r.json();}catch{}
+      setCustomers(custs);
       const sd=getLS('customerServiceData',{});
       // Use latest merged follow-up data (from MongoDB + localStorage)
       const fu=getLS('followUpLog',{});
@@ -353,9 +355,9 @@ export default function RemindersPage() {
 
       // ⭐ Schedule notifications for today/tomorrow reminders
       if (all.length > 0 && notifStatus === 'granted') {
-        const summary = getReminderSummary(customers);
+        const summary = getReminderSummary(custs);
         setNotifSummary(summary);
-        scheduleReminderNotifications(customers).catch(() => {});
+        scheduleReminderNotifications(custs).catch(() => {});
       }
     }catch(e){console.error(e);setLoading(false);}
   };
