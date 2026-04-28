@@ -26,8 +26,16 @@ export const registerServiceWorker = () => {
         });
       });
 
-      // Schedule reminders after SW is ready (small delay to let app load)
-      setTimeout(() => scheduleRemindersNow(), 3000);
+      // Schedule reminders after SW is ready
+      // Wait 5 seconds for app to fully load and fetch customers
+      setTimeout(() => scheduleRemindersNow(), 5000);
+
+      // Also schedule again when page becomes visible (user returns to app)
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          scheduleRemindersNow();
+        }
+      });
 
     } catch (err) {
       console.warn('SW registration failed:', err);

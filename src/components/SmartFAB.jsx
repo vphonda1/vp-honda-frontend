@@ -7,9 +7,27 @@ import { showInAppToast } from '../utils/smartUtils';
 
 // ── THEME ──────────────────────────────────────────────
 const applyTheme = (dark) => {
-  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
-  document.body.style.background = dark ? '#020617' : '#f1f5f9';
-  document.body.style.color = dark ? '#fff' : '#0f172a';
+  const root = document.documentElement;
+  if (dark) {
+    // Dark mode: set CSS variables, but DON'T set body color globally
+    // This prevents white text bleeding into light-background tables
+    root.setAttribute('data-theme', 'dark');
+    root.style.setProperty('--vp-bg', '#020617');
+    root.style.setProperty('--vp-text', '#f1f5f9');
+    root.style.setProperty('--vp-surface', '#0f172a');
+    document.body.style.background = '#020617';
+    // Only set color on dark-bg containers, NOT globally
+    // Remove any previously set body color
+    document.body.style.removeProperty('color');
+  } else {
+    // Light mode
+    root.setAttribute('data-theme', 'light');
+    root.style.setProperty('--vp-bg', '#f1f5f9');
+    root.style.setProperty('--vp-text', '#0f172a');
+    root.style.setProperty('--vp-surface', '#ffffff');
+    document.body.style.background = '#f1f5f9';
+    document.body.style.removeProperty('color');
+  }
   localStorage.setItem('vp_theme', dark ? 'dark' : 'light');
 };
 

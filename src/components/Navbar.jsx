@@ -64,7 +64,7 @@ export default function Navbar({ user, onLogout }) {
   const Dropdown = ({ label, icon, items, id }) => {
     const anyActive = items.some(i => isActive(i.path));
     return (
-      <div className="relative" onMouseLeave={() => setGroup(null)}>
+      <div className="relative" style={{ overflow: 'visible' }} onMouseLeave={() => setGroup(null)}>
         <button
           onMouseEnter={() => setGroup(id)}
           onClick={() => setGroup(g => g === id ? null : id)}
@@ -77,17 +77,41 @@ export default function Navbar({ user, onLogout }) {
           <span style={{ fontSize: 9, opacity: 0.7 }}>▾</span>
         </button>
         {group === id && (
-          <div className="absolute top-full left-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl z-50 min-w-[180px] py-1" style={{ backdropFilter: 'blur(10px)' }}>
+          <div
+            style={{
+              position: 'fixed',
+              top: 48,
+              zIndex: 9999,
+              background: '#0f172a',
+              border: '1px solid #334155',
+              borderRadius: 10,
+              minWidth: 200,
+              boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+              padding: '4px 0',
+            }}
+          >
             {items.map(item => (
               <Link
                 key={item.path}
                 to={item.path}
                 onClick={() => setGroup(null)}
-                className={`flex items-center gap-2 px-4 py-2 text-xs font-bold transition-all ${
-                  isActive(item.path) ? 'bg-red-600 text-white' : 'text-slate-200 hover:bg-slate-700'
-                }`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '10px 16px',
+                  color: isActive(item.path) ? '#fff' : '#cbd5e1',
+                  background: isActive(item.path) ? '#DC0000' : 'transparent',
+                  fontWeight: 700,
+                  fontSize: 12,
+                  textDecoration: 'none',
+                  transition: 'background 0.15s',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={e => { if (!isActive(item.path)) e.currentTarget.style.background = '#1e293b'; }}
+                onMouseLeave={e => { if (!isActive(item.path)) e.currentTarget.style.background = 'transparent'; }}
               >
-                <span>{item.icon}</span>
+                <span style={{ fontSize: 16 }}>{item.icon}</span>
                 <span>{item.label}</span>
               </Link>
             ))}
@@ -110,8 +134,8 @@ export default function Navbar({ user, onLogout }) {
             <span className="text-white font-black text-sm hidden sm:block">Honda</span>
           </Link>
 
-          {/* Desktop nav */}
-          <div className="hidden lg:flex items-center gap-0.5 overflow-x-auto flex-1 mx-3">
+          {/* Desktop nav - overflow visible for dropdowns */}
+          <div className="hidden lg:flex items-center gap-0.5 flex-1 mx-3" style={{ overflow: 'visible' }}>
             {/* Main items */}
             {mainItems.map(item => <NavLink key={item.path} item={item} />)}
 

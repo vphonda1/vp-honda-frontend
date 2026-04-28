@@ -445,19 +445,19 @@ export default function PartsManagement({ user }) {
             <CardContent className="p-0">
               <table className="w-full text-sm">
                 <thead className="bg-gray-100 border-b-2">
-                  <tr>{['#','Part No','Description','MRP','Used','Vehicles','Last Invoice'].map(h => <th key={h} className="px-4 py-2 text-left font-bold text-gray-600">{h}</th>)}</tr>
+                  <tr>{['#','Part No','Description','MRP','Used','Vehicles','Last Invoice'].map(h => <th key={h} className="px-4 py-2 text-left font-bold text-gray-700 text-sm">{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {stats.topUsed.length === 0 ? (
                     <tr><td colSpan="7" className="px-6 py-8 text-center text-gray-400">PDF invoices import करें — parts usage यहां दिखेगा</td></tr>
                   ) : stats.topUsed.slice(0, 8).map((p, i) => (
-                    <tr key={i} className="border-b hover:bg-gray-50">
-                      <td className="px-4 py-2 text-gray-400">{i + 1}</td>
+                    <tr key={i} className="border-b hover:bg-gray-50 bg-white">
+                      <td className="px-4 py-2 text-gray-500">{i + 1}</td>
                       <td className="px-4 py-2 text-blue-700 font-bold font-mono">{p.partNo}</td>
-                      <td className="px-4 py-2">{p.description}</td>
-                      <td className="px-4 py-2">{fmtINR(p.mrp)}</td>
+                      <td className="px-4 py-2 text-gray-800 font-medium">{p.description}</td>
+                      <td className="px-4 py-2 text-gray-700">{fmtINR(p.mrp)}</td>
                       <td className="px-4 py-2 text-green-700 font-bold">{p.usedCount}×</td>
-                      <td className="px-4 py-2 text-gray-500 text-xs">
+                      <td className="px-4 py-2 text-gray-600 text-xs">
                         {(p.vehicles || []).slice(0, 2).map((v, j) => <span key={j} className="block">{v.vehicle} ({v.regNo}) — {v.customer}</span>)}
                         {(p.vehicles || []).length > 2 && <span className="text-gray-400">+{p.vehicles.length - 2} more</span>}
                       </td>
@@ -571,16 +571,16 @@ export default function PartsManagement({ user }) {
               <table className="w-full">
                 <thead className="bg-gray-100 border-b-2">
                   <tr>
-                    <th className="px-4 py-3 text-left font-bold">#</th>
-                    <th className="px-4 py-3 text-left font-bold">Part No</th>
-                    <th className="px-4 py-3 text-left font-bold">Description</th>
-                    <th className="px-4 py-3 text-left font-bold">Category</th>
-                    <th className="px-4 py-3 text-left font-bold">HSN</th>
-                    <th className="px-4 py-3 text-left font-bold">MRP</th>
-                    <th className="px-4 py-3 text-left font-bold">Unit Price</th>
-                    <th className="px-4 py-3 text-left font-bold">GST%</th>
-                    <th className="px-4 py-3 text-left font-bold">Stock</th>
-                    <th className="px-4 py-3 text-left font-bold">Action</th>
+                    <th className="px-4 py-3 text-left font-bold text-gray-700 text-sm">#</th>
+                    <th className="px-4 py-3 text-left font-bold text-gray-700 text-sm">Part No</th>
+                    <th className="px-4 py-3 text-left font-bold text-gray-700 text-sm">Description</th>
+                    <th className="px-4 py-3 text-left font-bold text-gray-700 text-sm">Category</th>
+                    <th className="px-4 py-3 text-left font-bold text-gray-700 text-sm">HSN</th>
+                    <th className="px-4 py-3 text-left font-bold text-gray-700 text-sm">MRP</th>
+                    <th className="px-4 py-3 text-left font-bold text-gray-700 text-sm">Unit Price</th>
+                    <th className="px-4 py-3 text-left font-bold text-gray-700 text-sm">GST%</th>
+                    <th className="px-4 py-3 text-left font-bold text-gray-700 text-sm">Stock</th>
+                    <th className="px-4 py-3 text-left font-bold text-gray-700 text-sm">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -588,16 +588,16 @@ export default function PartsManagement({ user }) {
                     <tr><td colSpan="10" className="px-6 py-6 text-center text-gray-500">No parts found</td></tr>
                   ) : (
                     paginatedParts.map((part, idx) => (
-                      <tr key={part._id} className="border-b hover:bg-gray-50">
-                        <td className="px-4 py-3 text-gray-400 text-sm">{(currentPage - 1) * PARTS_PER_PAGE + idx + 1}</td>
+                      <tr key={part._id} className="border-b hover:bg-gray-50 bg-white">
+                        <td className="px-4 py-3 text-gray-500 text-sm">{(currentPage - 1) * PARTS_PER_PAGE + idx + 1}</td>
                         <td className="px-4 py-3 font-bold text-blue-700 text-sm">{part.partNo}</td>
-                        <td className="px-4 py-3 text-sm">{part.description}</td>
+                        <td className="px-4 py-3 text-sm text-gray-800 font-medium">{part.description}</td>
                         <td className="px-4 py-3">
                           <span className="bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full text-xs font-bold">
                             {part.category || 'Other'}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-sm">{part.hsnCode}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700">{part.hsnCode}</td>
                         <td className="px-4 py-3 text-sm">₹{part.mrp?.toFixed(2)}</td>
                         <td className="px-4 py-3 font-bold text-green-700 text-sm">₹{part.unitPrice?.toFixed(2)}</td>
                         <td className="px-4 py-3 text-sm">{part.gstRate || 18}%</td>

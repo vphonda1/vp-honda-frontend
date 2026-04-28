@@ -873,7 +873,7 @@ export default function CustomerManagement({ user }) {
           )}
 
           {/* Recent Customers */}
-          <Card><CardHeader className="py-3 bg-gray-50"><CardTitle className="text-base">🆕 Recent Customers</CardTitle></CardHeader><CardContent className="p-0"><table className="w-full text-sm"><thead className="bg-gray-100"><tr><th className="px-4 py-2">Name</th><th className="px-4 py-2">Phone</th><th className="px-4 py-2">Vehicle</th><th className="px-4 py-2">Reg No</th><th className="px-4 py-2">Finance</th><th className="px-4 py-2">District</th></tr></thead><tbody>{customers.slice(0,8).map(c=><tr key={c._id} className="border-b"><td className="px-4 py-2 font-bold">{c.name}</td><td className="px-4 py-2">{c.phone}</td><td className="px-4 py-2 text-blue-600">{c.linkedVehicle?.name||'—'}</td><td className="px-4 py-2 font-mono">{c.linkedVehicle?.regNo||'—'}</td><td className="px-4 py-2">{c.financerName && c.financerName!=='0' && c.financerName!=='NA'?<span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded">{c.financerName}</span>:<span className="bg-green-100 text-green-700 px-2 py-0.5 rounded">CASH</span>}</td><td className="px-4 py-2">{c.district||'—'}</td></tr>)}</tbody></table></CardContent></Card>
+          <Card><CardHeader className="py-3 bg-gray-50"><CardTitle className="text-base text-gray-800">🆕 Recent Customers</CardTitle></CardHeader><CardContent className="p-0"><table className="w-full text-sm"><thead className="bg-gray-100"><tr><th className="px-4 py-2 text-left text-gray-700 font-bold">Name</th><th className="px-4 py-2 text-left text-gray-700 font-bold">Phone</th><th className="px-4 py-2 text-left text-gray-700 font-bold">Vehicle</th><th className="px-4 py-2 text-left text-gray-700 font-bold">Reg No</th><th className="px-4 py-2 text-left text-gray-700 font-bold">Finance</th><th className="px-4 py-2 text-left text-gray-700 font-bold">District</th></tr></thead><tbody>{customers.slice(0,8).map(c=><tr key={c._id} className="border-b bg-white hover:bg-gray-50"><td className="px-4 py-2 font-bold text-gray-900">{c.name}</td><td className="px-4 py-2 text-gray-700">{c.phone}</td><td className="px-4 py-2 text-blue-600">{c.linkedVehicle?.name||'—'}</td><td className="px-4 py-2 font-mono text-gray-700">{c.linkedVehicle?.regNo||'—'}</td><td className="px-4 py-2">{c.financerName && c.financerName!=='0' && c.financerName!=='NA'?<span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded">{c.financerName}</span>:<span className="bg-green-100 text-green-700 px-2 py-0.5 rounded">CASH</span>}</td><td className="px-4 py-2 text-gray-700">{c.district||'—'}</td></tr>)}</tbody></table></CardContent></Card>
         </div>
       )}
 
@@ -928,18 +928,18 @@ export default function CustomerManagement({ user }) {
             </CardContent></Card>
           )}
           <div className="mb-6"><div className="relative"><Search className="absolute left-3 top-3 text-gray-400" size={20}/><Input placeholder="Search by name or phone..." value={searchTerm} onChange={e=>{setSearchTerm(e.target.value);setCurrentPage(1);}} className="pl-10 border-2"/></div></div>
-          <Card><CardContent className="p-0"><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-100 border-b-2"><tr><th className="px-3 py-3 text-xs">#</th><th className="px-3 py-3 text-xs">Name</th><th className="px-3 py-3 text-xs">Phone</th><th className="px-3 py-3 text-xs">Vehicle</th><th className="px-3 py-3 text-xs">Reg No</th><th className="px-3 py-3 text-xs">Finance</th><th className="px-3 py-3 text-xs">Status</th><th className="px-3 py-3 text-xs">Action</th></tr></thead><tbody>{paginatedCustomers.length===0?<tr><td colSpan="8" className="px-6 py-6 text-center text-gray-500">No customers found</td></tr>:paginatedCustomers.map((cust,idx)=>{
+          <Card><CardContent className="p-0"><div className="overflow-x-auto"><table className="w-full"><thead className="bg-gray-100 border-b-2"><tr><th className="px-3 py-3 text-xs text-gray-700 font-bold text-left">#</th><th className="px-3 py-3 text-xs text-gray-700 font-bold text-left">Name</th><th className="px-3 py-3 text-xs text-gray-700 font-bold text-left">Phone</th><th className="px-3 py-3 text-xs text-gray-700 font-bold text-left">Vehicle</th><th className="px-3 py-3 text-xs text-gray-700 font-bold text-left">Reg No</th><th className="px-3 py-3 text-xs text-gray-700 font-bold text-left">Finance</th><th className="px-3 py-3 text-xs text-gray-700 font-bold text-left">Status</th><th className="px-3 py-3 text-xs text-gray-700 font-bold text-left">Action</th></tr></thead><tbody>{paginatedCustomers.length===0?<tr><td colSpan="8" className="px-6 py-6 text-center text-gray-500">No customers found</td></tr>:paginatedCustomers.map((cust,idx)=>{
             const sd = serviceData[cust.linkedVehicle?.regNo] || serviceData[cust._id] || {};
             const pendingAmt = parseFloat(sd.pendingAmount || 0);
             const hasPending = pendingAmt > 0 && !sd.paymentReceivedDate;
             const hasService = !!(sd.firstServiceDate || sd.secondServiceDate);
             return (
-              <tr key={cust._id} className="border-b hover:bg-gray-50">
-                <td className="px-3 py-2 text-gray-400 text-xs">{(currentPage-1)*CUSTOMERS_PER_PAGE+idx+1}</td>
-                <td className="px-3 py-2 font-bold text-sm">{cust.name}</td>
-                <td className="px-3 py-2 text-sm">{cust.phone}</td>
-                <td className="px-3 py-2 text-sm">{cust.linkedVehicle?.name||'-'}</td>
-                <td className="px-3 py-2 text-sm">{cust.linkedVehicle?.regNo||'-'}</td>
+              <tr key={cust._id} className="border-b hover:bg-gray-50 bg-white">
+                <td className="px-3 py-2 text-gray-500 text-xs">{(currentPage-1)*CUSTOMERS_PER_PAGE+idx+1}</td>
+                <td className="px-3 py-2 font-bold text-sm text-gray-900">{cust.name}</td>
+                <td className="px-3 py-2 text-sm text-gray-700">{cust.phone}</td>
+                <td className="px-3 py-2 text-sm text-blue-700 font-medium">{cust.linkedVehicle?.name||'-'}</td>
+                <td className="px-3 py-2 text-sm font-mono text-gray-700">{cust.linkedVehicle?.regNo||'-'}</td>
                 <td className="px-3 py-2">{(()=>{const f=String(cust.financerName||'').trim();return (f&&f!=='0'&&f!=='NA'&&!/^cash$/i.test(f))?<span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-xs font-bold">{f.slice(0,12)}</span>:<span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-bold">CASH</span>;})()}</td>
                 <td className="px-3 py-2 text-xs">
                   <div className="flex flex-col gap-1">

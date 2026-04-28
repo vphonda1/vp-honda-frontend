@@ -44,11 +44,7 @@ self.addEventListener('fetch', e => {
   if (url.pathname.startsWith('/api/') || url.hostname.includes('onrender.com')) {
     e.respondWith(
       fetch(request)
-        .then(res => {
-          const resClone = res.clone(); // ✅ FIX: तुरंत clone करो
-          caches.open(API_CACHE).then(c => c.put(request, resClone));
-          return res;
-        })
+        .then(res => { caches.open(API_CACHE).then(c => c.put(request, res.clone())); return res; })
         .catch(() => caches.match(request).then(c => c ||
           new Response(JSON.stringify({ error:'Offline', message:'इंटरनेट नहीं है' }),
             { status:503, headers:{'Content-Type':'application/json'} })
@@ -62,10 +58,7 @@ self.addEventListener('fetch', e => {
     caches.match(request).then(cached => {
       if (cached) return cached;
       return fetch(request).then(res => {
-        if (res.status === 200) {
-          const resClone = res.clone(); // ✅ FIX: तुरंत clone करो
-          caches.open(STATIC_CACHE).then(c => c.put(request, resClone));
-        }
+        if (res.status === 200) caches.open(STATIC_CACHE).then(c => c.put(request, res.clone()));
         return res;
       }).catch(() => request.mode === 'navigate' ? caches.match('/index.html') : null);
     })
@@ -155,20 +148,27 @@ function processSchedule(items = []) {
 
   const now = Date.now();
 
-  items.forEach(item => {
-    const fireAt = new Date(item.fireAt).getTime();
-    const delay  = fireAt - now;
+  // Show overdue/today immediately (with small stagger to avoid spam)
+  const immediate = items.filter(i => new Date(i.fireAt).getTime() <= now + 5000);
+  const scheduled_items = items.filter(i => new Date(i.fireAt).getTime() > now + 5000);
 
-    if (delay <= 500) {
-      // Fire immediately
+  // Show immediate notifications with stagger
+  immediate.forEach((item, idx) => {
+    setTimeout(() => {
       showNotif(item.title, item.body, {
         url:                item.url || '/reminders',
-        tag:                item.tag,
+        tag:                item.tag || `vp-${idx}`,
         type:               item.type,
         requireInteraction: item.requireInteraction,
       });
-    } else if (delay <= 48 * 3600 * 1000) {
-      // Schedule within 48 hours
+    }, idx * 1500);  // 1.5 sec stagger
+  });
+
+  // Schedule future ones
+  scheduled_items.forEach(item => {
+    const fireAt = new Date(item.fireAt).getTime();
+    const delay  = fireAt - now;
+    if (delay <= 48 * 3600 * 1000) {
       const timer = setTimeout(() => {
         showNotif(item.title, item.body, {
           url:                item.url || '/reminders',
@@ -181,7 +181,7 @@ function processSchedule(items = []) {
     }
   });
 
-  console.log(`[SW] ${items.length} reminders processed`);
+  console.log(`[SW] ${immediate.length} immediate + ${scheduled_items.length} scheduled reminders`);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
