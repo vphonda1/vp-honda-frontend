@@ -44,7 +44,11 @@ self.addEventListener('fetch', e => {
   if (url.pathname.startsWith('/api/') || url.hostname.includes('onrender.com')) {
     e.respondWith(
       fetch(request)
-        .then(res => { caches.open(API_CACHE).then(c => c.put(request, res.clone())); return res; })
+        .then(res => {
+          const resClone = res.clone(); // ✅ FIX: तुरंत clone करो
+          caches.open(API_CACHE).then(c => c.put(request, resClone));
+          return res;
+        })
         .catch(() => caches.match(request).then(c => c ||
           new Response(JSON.stringify({ error:'Offline', message:'इंटरनेट नहीं है' }),
             { status:503, headers:{'Content-Type':'application/json'} })
@@ -58,7 +62,10 @@ self.addEventListener('fetch', e => {
     caches.match(request).then(cached => {
       if (cached) return cached;
       return fetch(request).then(res => {
-        if (res.status === 200) caches.open(STATIC_CACHE).then(c => c.put(request, res.clone()));
+        if (res.status === 200) {
+          const resClone = res.clone(); // ✅ FIX: तुरंत clone करो
+          caches.open(STATIC_CACHE).then(c => c.put(request, resClone));
+        }
         return res;
       }).catch(() => request.mode === 'navigate' ? caches.match('/index.html') : null);
     })
