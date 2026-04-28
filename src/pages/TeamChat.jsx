@@ -1,4 +1,4 @@
-// TeamChat.jsx — With fixed duplicate messages + WhatsApp-like notifications via SW
+// TeamChat.jsx — No duplicate messages, fixed polling
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, MessageCircle, Phone, Video, Image, X, Search, Menu } from 'lucide-react';
 import { captureFromCamera, sendWhatsApp, showInAppToast } from '../utils/smartUtils';
@@ -27,20 +27,9 @@ const playBeep = () => {
   } catch {}
 };
 
-// Request notification permission
 const requestNotifPermission = () => {
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
-  }
-};
-
-// Send notification via Service Worker (works on mobile)
-const sendChatNotification = (title, body, tag, url) => {
-  if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-    navigator.serviceWorker.controller.postMessage({
-      type: 'SHOW_CHAT_NOTIFICATION',
-      payload: { title, body, tag, url }
-    });
   }
 };
 
@@ -58,7 +47,8 @@ export default function TeamChat({ user }) {
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
   const pollRef   = useRef(null);
-  const sendingRef = useRef(false); // prevent duplicate sends
+  const sendingRef = useRef(false);
+  const lastMessageIdRef = useRef(null); // track last fetched message id
 
   const myName = user?.name || user?.email || 'Me';
   const currentRoom = tab === 'groups'
@@ -70,81 +60,101 @@ export default function TeamChat({ user }) {
     fetch(api('/api/staff')).then(r => r.ok ? r.json() : []).then(setStaff).catch(() => {});
   }, []);
 
-  // Request notification permission on mount
+  // Request permission
   useEffect(() => {
     requestNotifPermission();
   }, []);
 
-  // Load messages + poll every 3 sec
+  // Function to load messages (only newer than lastMessageId)
+  const loadMessages = useCallback(async (initial = false) => {
+    if (!currentRoom) return;
+    try {
+      let url = api(`/api/messages/${currentRoom}`);
+      if (!initial && lastMessageIdRef.current) {
+        url += `?after=${lastMessageIdRef.current}`;
+      }
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+      
+      if (initial) {
+        setMessages(data);
+        if (data.length > 0) {
+          lastMessageIdRef.current = data[data.length - 1]._id;
+        }
+      } else if (data.length > 0) {
+        // Only add messages that are not already in state
+        setMessages(prev => {
+          const existingIds = new Set(prev.map(m => m._id));
+          const newMsgs = data.filter(m => !existingIds.has(m._id));
+          if (newMsgs.length === 0) return prev;
+          // Update lastMessageId
+          const latestMsg = newMsgs[newMsgs.length - 1];
+          if (latestMsg._id) lastMessageIdRef.current = latestMsg._id;
+          // Play beep and notify for messages from others
+          const fromOthers = newMsgs.filter(m => m.sender !== myName);
+          if (fromOthers.length > 0) {
+            playBeep();
+            if (document.hidden && navigator.serviceWorker.controller) {
+              fromOthers.forEach(msg => {
+                navigator.serviceWorker.controller.postMessage({
+                  type: 'SHOW_CHAT_NOTIFICATION',
+                  payload: {
+                    title: msg.sender,
+                    body: msg.text || '📷 Photo',
+                    tag: `chat-${currentRoom}`,
+                    url: window.location.href
+                  }
+                });
+              });
+            }
+          }
+          return [...prev, ...newMsgs];
+        });
+      }
+    } catch (err) {
+      console.error('Load messages error:', err);
+    }
+  }, [currentRoom, myName]);
+
+  // Poll every 3 seconds
   useEffect(() => {
     if (!currentRoom) return;
     setMessages([]);
+    lastMessageIdRef.current = null;
     loadMessages(true);
     clearInterval(pollRef.current);
     pollRef.current = setInterval(() => loadMessages(false), 3000);
     return () => clearInterval(pollRef.current);
-  }, [currentRoom]);
+  }, [currentRoom, loadMessages]);
 
   // Auto scroll
   useEffect(() => {
-    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
   }, [messages]);
 
-  const loadMessages = useCallback(async (initial = false) => {
-    if (!currentRoom) return;
-    try {
-      const sinceParam = !initial && messages.length > 0
-        ? `?since=${messages[messages.length-1]?.createdAt || ''}`
-        : '';
-      const res = await fetch(api(`/api/messages/${currentRoom}${sinceParam}`));
-      if (!res.ok) return;
-      const data = await res.json();
-
-      if (initial) {
-        setMessages(data);
-      } else if (data.length > 0) {
-        const existingIds = new Set(messages.map(m => m._id || m.id));
-        const newMsgs = data.filter(m => !existingIds.has(m._id || m.id));
-        if (newMsgs.length > 0) {
-          const fromOthers = newMsgs.filter(m => m.sender !== myName);
-          if (fromOthers.length > 0) {
-            playBeep();
-            // If page is hidden, send notification via Service Worker
-            if (document.hidden) {
-              fromOthers.forEach(msg => {
-                sendChatNotification(
-                  msg.sender,
-                  msg.text || '📷 Photo',
-                  `chat-${currentRoom}`,
-                  window.location.href
-                );
-              });
-            }
-          }
-          setMessages(prev => [...prev, ...newMsgs]);
-        }
-      }
-    } catch { /* offline */ }
-  }, [currentRoom, messages, myName]);
-
   const sendMsg = async (extra = {}) => {
-    if (sendingRef.current) return; // already sending
+    if (sendingRef.current) return;
     const text = input.trim();
     if (!text && !extra.photo) return;
     if (!currentRoom) return;
 
     sendingRef.current = true;
     const msgData = {
-      sender:     myName,
+      sender: myName,
       senderRole: user?.role || 'staff',
       text,
-      photo:      extra.photo || null,
-      replyTo:    replyTo ? { id: replyTo._id, sender: replyTo.sender, text: replyTo.text?.slice(0,60) } : null,
+      photo: extra.photo || null,
+      replyTo: replyTo ? { id: replyTo._id, sender: replyTo.sender, text: replyTo.text?.slice(0,60) } : null,
     };
 
-    const optimistic = { ...msgData, _id: `opt_${Date.now()}`, createdAt: new Date().toISOString(), optimistic: true };
+    // Optimistic add
+    const tempId = `opt_${Date.now()}`;
+    const optimistic = { ...msgData, _id: tempId, createdAt: new Date().toISOString(), optimistic: true };
     setMessages(prev => [...prev, optimistic]);
-    setInput(''); setReplyTo(null); inputRef.current?.focus();
+    setInput('');
+    setReplyTo(null);
+    inputRef.current?.focus();
 
     try {
       const res = await fetch(api(`/api/messages/${currentRoom}`), {
@@ -154,10 +164,18 @@ export default function TeamChat({ user }) {
       });
       if (res.ok) {
         const saved = await res.json();
-        setMessages(prev => prev.map(m => m._id === optimistic._id ? saved : m));
+        setMessages(prev => {
+          // Replace optimistic with real message
+          const filtered = prev.filter(m => m._id !== tempId);
+          return [...filtered, saved];
+        });
+        if (saved._id) lastMessageIdRef.current = saved._id;
+      } else {
+        // If failed, remove optimistic
+        setMessages(prev => prev.filter(m => m._id !== tempId));
       }
     } catch {
-      // keep optimistic
+      setMessages(prev => prev.filter(m => m._id !== tempId));
     } finally {
       setTimeout(() => { sendingRef.current = false; }, 500);
     }
@@ -166,7 +184,7 @@ export default function TeamChat({ user }) {
   const deleteMsg = async (msg) => {
     if (msg.sender !== myName) return;
     if (!window.confirm('Delete?')) return;
-    setMessages(prev => prev.filter(m => (m._id || m.id) !== (msg._id || msg.id)));
+    setMessages(prev => prev.filter(m => m._id !== msg._id));
     try {
       await fetch(api(`/api/messages/${currentRoom}/${msg._id}`), { method: 'DELETE' });
     } catch {}
@@ -192,7 +210,7 @@ export default function TeamChat({ user }) {
     }
   };
 
-  const filteredStaff  = staff.filter(s => s.name !== myName && (!search || s.name.toLowerCase().includes(search.toLowerCase())));
+  const filteredStaff = staff.filter(s => s.name !== myName && (!search || s.name.toLowerCase().includes(search.toLowerCase())));
   const filteredGroups = GROUPS.filter(g => !search || g.name.toLowerCase().includes(search.toLowerCase()));
   const roomLabel = tab === 'groups'
     ? GROUPS.find(g => g.id === activeRoom)?.name
@@ -200,7 +218,6 @@ export default function TeamChat({ user }) {
 
   return (
     <div style={{ display:'flex', height:'calc(100dvh - 48px)', background:'#020617', color:'#fff', overflow:'hidden' }}>
-
       {/* Mobile sidebar toggle */}
       <button onClick={() => setSidebarOpen(true)} className="lg:hidden fixed bottom-4 left-4 z-50 bg-red-600 p-2 rounded-full shadow-lg">
         <Menu size={20} color="white"/>
@@ -243,6 +260,9 @@ export default function TeamChat({ user }) {
           ))}
           {tab === 'direct' && <>
             <p style={{ color:'#64748b', fontSize:9, fontWeight:700, textTransform:'uppercase', padding:'7px 10px 3px' }}>Staff</p>
+            {filteredStaff.length === 0 && !search && (
+              <p style={{ color:'#64748b', fontSize:11, padding:'10px 10px' }}>Staff Management में staff add करें</p>
+            )}
             {filteredStaff.map(s => (
               <div key={s._id || s.name} onClick={() => { setActiveDM(s); setActiveRoom(null); setSearch(''); setSidebarOpen(false); }}
                 style={{ padding:'8px 10px', cursor:'pointer', background:activeDM?.name === s.name?'#DC000015':'transparent', borderLeft:activeDM?.name === s.name?'3px solid #DC0000':'3px solid transparent', display:'flex', alignItems:'center', gap:8 }}>
@@ -278,11 +298,11 @@ export default function TeamChat({ user }) {
         </div>
 
         <div style={{ flex:1, overflowY:'auto', padding:'12px 14px', display:'flex', flexDirection:'column', gap:4 }}>
-          {messages.map((msg, i) => {
+          {messages.map((msg, idx) => {
             const isMe = msg.sender === myName;
-            const prevSame = i > 0 && messages[i-1].sender === msg.sender;
+            const prevSame = idx > 0 && messages[idx-1].sender === msg.sender;
             return (
-              <div key={msg._id || i} style={{ display:'flex', flexDirection:isMe?'row-reverse':'row', alignItems:'flex-end', gap:6 }}>
+              <div key={msg._id || idx} style={{ display:'flex', flexDirection:isMe?'row-reverse':'row', alignItems:'flex-end', gap:6 }}>
                 {!isMe && !prevSame && (
                   <div style={{ width:26, height:26, borderRadius:'50%', background:'#1e40af', display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:800, flexShrink:0 }}>
                     {msg.sender?.[0]?.toUpperCase()}
@@ -296,7 +316,15 @@ export default function TeamChat({ user }) {
                       <span style={{ color:'#fbbf24', fontWeight:700 }}>{msg.replyTo.sender}:</span> {msg.replyTo.text}
                     </div>
                   )}
-                  <div style={{ background: isMe ? 'linear-gradient(135deg,#DC0000,#B91C1C)' : '#1e293b', borderRadius: msg.replyTo ? (isMe ? '0 0 4px 14px' : '0 0 14px 4px') : (isMe ? '14px 4px 14px 14px' : '4px 14px 14px 14px'), padding: msg.photo ? '3px' : '8px 12px', opacity: msg.optimistic ? 0.7 : 1 }} onDoubleClick={() => setReplyTo(msg)}>
+                  <div
+                    style={{
+                      background: isMe ? 'linear-gradient(135deg,#DC0000,#B91C1C)' : '#1e293b',
+                      borderRadius: msg.replyTo ? (isMe ? '0 0 4px 14px' : '0 0 14px 4px') : (isMe ? '14px 4px 14px 14px' : '4px 14px 14px 14px'),
+                      padding: msg.photo ? '3px' : '8px 12px',
+                      opacity: msg.optimistic ? 0.7 : 1,
+                    }}
+                    onDoubleClick={() => setReplyTo(msg)}
+                  >
                     {msg.photo && <img src={msg.photo} alt="photo" onClick={() => window.open(msg.photo,'_blank')} style={{ width:'100%', maxWidth:220, borderRadius:8, cursor:'zoom-in' }}/>}
                     {msg.text && <p style={{ fontSize:13, margin: msg.photo?'5px 8px 3px':0, lineHeight:1.5, wordBreak:'break-word' }}>{msg.text}</p>}
                     <p style={{ fontSize:9, color:isMe?'rgba(255,255,255,0.55)':'#64748b', margin: msg.photo?'0 8px 3px':'3px 0 0', textAlign:isMe?'right':'left' }}>
