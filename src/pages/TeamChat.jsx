@@ -1,4 +1,4 @@
-// TeamChat.jsx — With WhatsApp-like Notifications
+// TeamChat.jsx — With fixed duplicate messages + WhatsApp-like notifications via SW
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, MessageCircle, Phone, Video, Image, X, Search, Menu } from 'lucide-react';
 import { captureFromCamera, sendWhatsApp, showInAppToast } from '../utils/smartUtils';
@@ -34,6 +34,16 @@ const requestNotifPermission = () => {
   }
 };
 
+// Send notification via Service Worker (works on mobile)
+const sendChatNotification = (title, body, tag, url) => {
+  if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({
+      type: 'SHOW_CHAT_NOTIFICATION',
+      payload: { title, body, tag, url }
+    });
+  }
+};
+
 export default function TeamChat({ user }) {
   const [tab,        setTab]        = useState('groups');
   const [activeRoom, setActiveRoom] = useState('general');
@@ -48,6 +58,7 @@ export default function TeamChat({ user }) {
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
   const pollRef   = useRef(null);
+  const sendingRef = useRef(false); // prevent duplicate sends
 
   const myName = user?.name || user?.email || 'Me';
   const currentRoom = tab === 'groups'
@@ -92,34 +103,21 @@ export default function TeamChat({ user }) {
       if (initial) {
         setMessages(data);
       } else if (data.length > 0) {
-        // Filter new messages (not already in state)
         const existingIds = new Set(messages.map(m => m._id || m.id));
         const newMsgs = data.filter(m => !existingIds.has(m._id || m.id));
         if (newMsgs.length > 0) {
-          // Separate messages from others
           const fromOthers = newMsgs.filter(m => m.sender !== myName);
           if (fromOthers.length > 0) {
             playBeep();
-            // Show browser notification if page is hidden
-            if (document.hidden && Notification.permission === 'granted') {
+            // If page is hidden, send notification via Service Worker
+            if (document.hidden) {
               fromOthers.forEach(msg => {
-                const notif = new Notification(`💬 ${msg.sender}`, {
-                  body: msg.text || '📷 Photo',
-                  icon: '/icons/icon-192x192.png',
-                  tag: `chat-${currentRoom}`,
-                  requireInteraction: false,
-                });
-                notif.onclick = () => {
-                  window.focus();
-                  // Optionally switch to this room if different
-                  if (tab === 'groups' && activeRoom !== currentRoom.split('_')[1]) {
-                    setActiveRoom(currentRoom.split('_')[1]);
-                  } else if (tab === 'direct' && activeDM?.name !== msg.sender) {
-                    const staffMember = staff.find(s => s.name === msg.sender);
-                    if (staffMember) setActiveDM(staffMember);
-                  }
-                  setTab(tab);
-                };
+                sendChatNotification(
+                  msg.sender,
+                  msg.text || '📷 Photo',
+                  `chat-${currentRoom}`,
+                  window.location.href
+                );
               });
             }
           }
@@ -127,13 +125,15 @@ export default function TeamChat({ user }) {
         }
       }
     } catch { /* offline */ }
-  }, [currentRoom, messages, myName, tab, activeRoom, activeDM, staff]);
+  }, [currentRoom, messages, myName]);
 
   const sendMsg = async (extra = {}) => {
+    if (sendingRef.current) return; // already sending
     const text = input.trim();
     if (!text && !extra.photo) return;
     if (!currentRoom) return;
 
+    sendingRef.current = true;
     const msgData = {
       sender:     myName,
       senderRole: user?.role || 'staff',
@@ -156,7 +156,11 @@ export default function TeamChat({ user }) {
         const saved = await res.json();
         setMessages(prev => prev.map(m => m._id === optimistic._id ? saved : m));
       }
-    } catch {}
+    } catch {
+      // keep optimistic
+    } finally {
+      setTimeout(() => { sendingRef.current = false; }, 500);
+    }
   };
 
   const deleteMsg = async (msg) => {
@@ -182,7 +186,10 @@ export default function TeamChat({ user }) {
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMsg();
+    }
   };
 
   const filteredStaff  = staff.filter(s => s.name !== myName && (!search || s.name.toLowerCase().includes(search.toLowerCase())));
