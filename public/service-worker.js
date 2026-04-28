@@ -1,9 +1,9 @@
 // ════════════════════════════════════════════════════════════════════════════
-// VP Honda Service Worker v2.1.0
-// All reminder types → phone notifications
+// VP Honda Service Worker v2.2.0
+// Fixed clone() error for opaque responses + proper error handling
 // ════════════════════════════════════════════════════════════════════════════
 
-const VERSION      = 'v2.1.0';
+const VERSION      = 'v2.2.0';
 const STATIC_CACHE = `vp-honda-static-${VERSION}`;
 const API_CACHE    = `vp-honda-api-${VERSION}`;
 const PRECACHE     = ['/', '/index.html', '/manifest.json',
@@ -34,17 +34,27 @@ self.addEventListener('activate', e => {
   );
 });
 
-// ── FETCH (Caching strategy) ─────────────────────────────────────────────────
+// ── FETCH (Caching strategy with opaque response fix) ────────────────────────
 self.addEventListener('fetch', e => {
   const { request } = e;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
 
-  // API → Network first, cache fallback
+  // API → Network first, cache fallback (only if response is cloneable)
   if (url.pathname.startsWith('/api/') || url.hostname.includes('onrender.com')) {
     e.respondWith(
       fetch(request)
-        .then(res => { caches.open(API_CACHE).then(c => c.put(request, res.clone())); return res; })
+        .then(res => {
+          // ✅ Clone ONLY if response is NOT opaque (CORS-enabled or same-origin)
+          if (res.type !== 'opaque') {
+            caches.open(API_CACHE)
+              .then(c => c.put(request, res.clone()))
+              .catch(err => console.warn('[SW] API cache put failed:', err));
+          } else {
+            console.warn('[SW] Opaque response, not cached:', url.href);
+          }
+          return res;
+        })
         .catch(() => caches.match(request).then(c => c ||
           new Response(JSON.stringify({ error:'Offline', message:'इंटरनेट नहीं है' }),
             { status:503, headers:{'Content-Type':'application/json'} })
@@ -53,12 +63,16 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Static → Cache first, network fallback
+  // Static → Cache first, network fallback (same-origin, always cloneable)
   e.respondWith(
     caches.match(request).then(cached => {
       if (cached) return cached;
       return fetch(request).then(res => {
-        if (res.status === 200) caches.open(STATIC_CACHE).then(c => c.put(request, res.clone()));
+        if (res.status === 200 && res.type !== 'opaque') {
+          caches.open(STATIC_CACHE)
+            .then(c => c.put(request, res.clone()))
+            .catch(err => console.warn('[SW] Static cache put failed:', err));
+        }
         return res;
       }).catch(() => request.mode === 'navigate' ? caches.match('/index.html') : null);
     })
@@ -83,7 +97,6 @@ self.addEventListener('notificationclick', e => {
 
   e.waitUntil(
     clients.matchAll({ type:'window', includeUncontrolled:true }).then(list => {
-      // Try to focus existing window
       const found = list.find(c => c.url.includes(self.location.origin));
       if (found) {
         found.focus();
@@ -142,17 +155,14 @@ const scheduledTimers = new Map();
 function processSchedule(items = []) {
   if (!Array.isArray(items)) return;
 
-  // Cancel old timers
   scheduledTimers.forEach(t => clearTimeout(t));
   scheduledTimers.clear();
 
   const now = Date.now();
 
-  // Show overdue/today immediately (with small stagger to avoid spam)
   const immediate = items.filter(i => new Date(i.fireAt).getTime() <= now + 5000);
   const scheduled_items = items.filter(i => new Date(i.fireAt).getTime() > now + 5000);
 
-  // Show immediate notifications with stagger
   immediate.forEach((item, idx) => {
     setTimeout(() => {
       showNotif(item.title, item.body, {
@@ -161,10 +171,9 @@ function processSchedule(items = []) {
         type:               item.type,
         requireInteraction: item.requireInteraction,
       });
-    }, idx * 1500);  // 1.5 sec stagger
+    }, idx * 1500);
   });
 
-  // Schedule future ones
   scheduled_items.forEach(item => {
     const fireAt = new Date(item.fireAt).getTime();
     const delay  = fireAt - now;
@@ -200,7 +209,6 @@ async function bgCheck() {
     for (const r of reminders) {
       const meta = TYPE_META[r.type] || TYPE_META['service'];
 
-      // Today due
       if (r.dueDate === todayStr && !r.notifiedToday) {
         await showNotif(
           buildBgTitle(r, 'today'),
@@ -210,7 +218,6 @@ async function bgCheck() {
         await markField(db, r.id, 'notifiedToday', true);
       }
 
-      // Tomorrow due
       if (r.dueDate === tmrwStr && !r.notifiedTomorrow) {
         await showNotif(
           buildBgTitle(r, 'tomorrow'),
@@ -220,7 +227,6 @@ async function bgCheck() {
         await markField(db, r.id, 'notifiedTomorrow', true);
       }
 
-      // Overdue (notify once per day)
       if (r.daysRemaining < 0 && !r.notifiedOverdue) {
         await showNotif(
           buildBgTitle(r, 'overdue'),
