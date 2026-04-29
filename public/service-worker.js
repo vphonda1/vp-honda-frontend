@@ -1,5 +1,5 @@
-// service-worker.js v2.7.0 – clone error fixed + push handler
-const VERSION = 'v2.7.0';
+// service-worker.js v2.8.0 – working clone + push
+const VERSION = 'v2.8.0';
 const STATIC_CACHE = `vp-honda-static-${VERSION}`;
 const API_CACHE = `vp-honda-api-${VERSION}`;
 const PRECACHE = ['/', '/index.html', '/manifest.json', '/icons/icon-192x192.png', '/icons/icon-512x512.png'];
@@ -10,41 +10,62 @@ self.addEventListener('install', e => {
 });
 
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== STATIC_CACHE && k !== API_CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(
+    caches.keys().then(keys => Promise.all(keys.filter(k => k !== STATIC_CACHE && k !== API_CACHE).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
+  );
 });
 
 self.addEventListener('fetch', e => {
   const { request } = e;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
+
   if (url.pathname.startsWith('/api/') || url.hostname.includes('onrender.com')) {
-    e.respondWith(fetch(request).then(res => {
-      if (!res.bodyUsed && res.type !== 'opaque') {
-        try { const clone = res.clone(); caches.open(API_CACHE).then(c => c.put(request, clone)).catch(() => {}); } catch(e) {}
-      }
-      return res;
-    }).catch(() => caches.match(request).then(c => c || new Response(JSON.stringify({ error:'Offline' }), { status:503 }))));
+    e.respondWith(
+      fetch(request).then(res => {
+        if (!res.bodyUsed && res.type !== 'opaque') {
+          try {
+            const clone = res.clone();
+            caches.open(API_CACHE).then(c => c.put(request, clone)).catch(() => {});
+          } catch (err) {}
+        }
+        return res;
+      }).catch(() => caches.match(request).then(c => c || new Response(JSON.stringify({ error: 'Offline' }), { status: 503 })))
+    );
     return;
   }
-  e.respondWith(caches.match(request).then(cached => cached || fetch(request).then(res => {
-    if (res.status === 200 && !res.bodyUsed && res.type !== 'opaque') {
-      try { const clone = res.clone(); caches.open(STATIC_CACHE).then(c => c.put(request, clone)).catch(() => {}); } catch(e) {}
-    }
-    return res;
-  }).catch(() => request.mode === 'navigate' ? caches.match('/index.html') : null)));
+
+  e.respondWith(
+    caches.match(request).then(cached => cached || fetch(request).then(res => {
+      if (res.status === 200 && !res.bodyUsed && res.type !== 'opaque') {
+        try {
+          const clone = res.clone();
+          caches.open(STATIC_CACHE).then(c => c.put(request, clone)).catch(() => {});
+        } catch (err) {}
+      }
+      return res;
+    }).catch(() => request.mode === 'navigate' ? caches.match('/index.html') : null))
+  );
 });
 
 self.addEventListener('push', event => {
-  let data = { title: 'VP Honda', body: 'New update', url: '/reminders' };
+  let data = { title: 'VP Honda', body: 'New message', url: '/reminders' };
   if (event.data) {
-    try { data = event.data.json(); } catch(e) { data.body = event.data.text(); }
+    try {
+      data = event.data.json();
+    } catch (e) {
+      data.body = event.data.text();
+    }
   }
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
-      icon: '/icons/icon-192x192.png',
-      badge: '/icons/icon-96x96.png',
+      icon: data.icon || '/icons/icon-192x192.png',
+      badge: data.badge || '/icons/icon-96x96.png',
+      vibrate: [200, 100, 200],
       tag: 'vp-honda-push',
+      renotify: true,
       requireInteraction: true,
       data: { url: data.url || '/reminders' }
     })
@@ -53,11 +74,13 @@ self.addEventListener('push', event => {
 
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-  const targetUrl = event.notification.data?.url || '/';
+  const urlToOpen = event.notification.data?.url || '/';
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientsList => {
-      for (const client of clientsList) if (client.url === targetUrl && 'focus' in client) return client.focus();
-      if (clients.openWindow) return clients.openWindow(targetUrl);
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
+      for (let client of windowClients) {
+        if (client.url === urlToOpen && 'focus' in client) return client.focus();
+      }
+      if (clients.openWindow) return clients.openWindow(urlToOpen);
     })
   );
 });
