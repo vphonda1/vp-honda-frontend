@@ -487,14 +487,49 @@ export default function RemindersPage() {
       setReminders(all);setDebugInfo(dbg);setLastRefresh(new Date());setLoading(false);
 
       // ⭐ Schedule notifications for today/tomorrow reminders
-      if (all.length > 0 && notifStatus === 'granted') {
-        const summary = getReminderSummary(custs);
-        setNotifSummary(summary);
-        scheduleReminderNotifications(custs).catch(() => {});
-      }
-    }catch(e){console.error(e);setLoading(false);}
-  };
+      // ⭐ Schedule notifications and send immediate push for overdue/today
+    if (all.length > 0 && notifStatus === 'granted') {
+      // Summary from all reminders (not customers)
+      const summary = {
+        total: all.length,
+        overdue: all.filter(r => r.daysRemaining < 0).length,
+        today: all.filter(r => r.daysRemaining === 0).length,
+        byType: {
+          service: all.filter(r => r.type === 'service').length,
+          payment: all.filter(r => r.type === 'payment').length,
+          rto: all.filter(r => r.type === 'insurance').length,
+          insuranceRenewal: all.filter(r => r.type === 'insurance-renewal').length,
+        }
+      };
+      setNotifSummary(summary);
 
+      // 🚀 Immediate push for overdue/today reminders
+      const urgent = all.filter(r => r.daysRemaining <= 0);
+      if (urgent.length > 0) {
+        const payloadReminders = urgent.map(r => ({
+          title: r.title,
+          body: `${r.customerName} — ${r.description}`,
+          url: '/reminders',
+          tag: `reminder-${r.id}`
+        }));
+        try {
+          const pushRes = await fetch('/api/send-immediate-reminders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reminders: payloadReminders })
+          });
+          if (pushRes.ok) console.log(`📱 Sent ${urgent.length} immediate pushes`);
+          else console.error('Push send failed');
+        } catch (err) {
+          console.error('Push error:', err);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('buildReminders error:', e);
+    setLoading(false);
+  }
+};
   const submitFollowUp = async () => {
     if(!activeR) return;
     const entry={date:new Date().toISOString(),status:fuForm.status,note:fuForm.note||'—',nextCallDate:fuForm.nextCallDate||null,by:'Admin'};
