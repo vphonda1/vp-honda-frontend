@@ -230,37 +230,143 @@ export default function RemindersPage() {
   };
 
   const buildReminders = async () => {
+  try {
+    let custs = [];
     try {
-      let custs=[];
-      try{const r=await fetch(api('/api/customers'));if(r.ok)custs=await r.json();}catch{}
-      setCustomers(custs);
-      const sd=getLS('customerServiceData',{});
-      // ---------- INSTANT PUSH FOR OVERDUE / TODAY REMINDERS ----------
-try {
-  // Only send if user has granted permission
-  if (notifStatus === 'granted') {
-    const now = new Date();
-    now.setHours(0,0,0,0);
-    const urgent = all.filter(r => r.daysRemaining <= 0); // Overdue or due today
-    if (urgent.length > 0) {
-      const payloadReminders = urgent.map(r => ({
-        title: `🔔 ${r.title}`,
-        body: `${r.customerName} — ${r.description}`,
-        url: '/reminders',
-        tag: `reminder-${r.id}`,
-      }));
-      const pushRes = await fetch('/api/send-immediate-reminders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reminders: payloadReminders })
-      });
-      if (pushRes.ok) console.log(`📱 Sent ${urgent.length} immediate pushes`);
-      else console.error('Push send failed');
+      const r = await fetch(api('/api/customers'));
+      if (r.ok) custs = await r.json();
+    } catch (e) {}
+    
+    const sd = getLS('customerServiceData', {});
+    const fu = getLS('followUpLog', {});
+    const all = [];
+    let dbg = { totalCustomers: custs.length, payment: 0, insurance: 0, service: 0, insuranceRenewal: 0 };
+    const getC = (reg) => custs.find(c => (c.registrationNo || c.regNo || '').toUpperCase() === reg.toUpperCase());
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+
+    Object.entries(sd).forEach(([regNo, data]) => {
+      if (!regNo || regNo === 'no_reg_') return;
+      const cust = getC(regNo);
+      const nm = data.customerName || cust?.customerName || cust?.name || 'Unknown';
+      const ph = data.phone || cust?.phone || '';
+      const vh = data.vehicle || cust?.vehicleModel || '';
+      const custId = cust?._id || regNo;
+      // Payment
+      const pend = parseFloat(data.pendingAmount || 0);
+      if (pend > 0 && !data.paymentReceivedDate) {
+        let dr = 999, dd = new Date();
+        if (data.paymentDueDate) { dd = new Date(data.paymentDueDate); dd.setHours(0,0,0,0); dr = Math.floor((dd - today) / 86400000); }
+        dbg.payment++;
+        all.push({ id: `pay-${regNo}`, type: 'payment', serviceType: null, customerId: custId, customerName: nm, customerPhone: ph, vehicle: vh, regNo,
+          title: '💳 Payment Due', description: `बकाया: ₹${pend.toLocaleString('en-IN')}`,
+          daysRemaining: dr, status: dr <= 3 ? 'critical' : 'warning', dueDate: dd, amount: pend,
+          lastCallStatus: fu[`pay-${regNo}`]?.slice(-1)[0]?.status || null, callCount: fu[`pay-${regNo}`]?.length || 0 });
+      }
+      // RTO insurance (7 days after insurance date)
+      if (data.insuranceDate && !data.rtoDoneDate) {
+        const ins = new Date(data.insuranceDate); ins.setHours(0,0,0,0);
+        const rto = new Date(ins.getTime() + 7 * 864e5); const dr = Math.floor((rto - today) / 864e5);
+        if (dr >= 0 && dr <= 7) {
+          dbg.insurance++;
+          all.push({ id: `ins-${regNo}`, type: 'insurance', serviceType: null, customerId: custId, customerName: nm, customerPhone: ph, vehicle: vh, regNo,
+            title: '🚗 RTO Pending', description: `Insurance: ${fmtDate(data.insuranceDate)} | Deadline: ${fmtDate(rto)}`,
+            daysRemaining: dr, status: dr <= 1 ? 'critical' : 'warning', dueDate: rto,
+            lastCallStatus: fu[`ins-${regNo}`]?.slice(-1)[0]?.status || null, callCount: 0 });
+        }
+      }
+      // First party insurance renewal
+      const lsInsKey = `vp_ins_${regNo || custId}`;
+      const lsRenewed = localStorage.getItem(`vp_ins_renewed_${regNo || custId}`);
+      const lsInsDate = localStorage.getItem(lsInsKey);
+      const insStartRaw = lsInsDate || data.insuranceStartDate || data.insuranceDate ||
+        (data.purchaseDate ? new Date(new Date(data.purchaseDate).getTime() + 3 * 864e5).toISOString().split('T')[0] : null);
+      if (insStartRaw && !data.insuranceRenewed && !lsRenewed) {
+        const insStart = new Date(insStartRaw); insStart.setHours(0,0,0,0);
+        const renewalDue = new Date(insStart.getTime() + 335 * 864e5);
+        const dr = Math.floor((renewalDue - today) / 864e5);
+        if (dr >= -30 && dr <= 60) {
+          dbg.insuranceRenewal = (dbg.insuranceRenewal || 0) + 1;
+          const insExpiry = new Date(insStart.getTime() + 365 * 864e5);
+          all.push({ id: `insr-${regNo}`, type: 'insurance-renewal', serviceType: null, customerId: custId, customerName: nm, customerPhone: ph, vehicle: vh, regNo,
+            title: dr <= 0 ? '🛡️ Insurance Expired!' : '🛡️ Insurance Renewal Due',
+            description: `Insurance Start: ${fmtDate(insStart)} | Expiry: ${fmtDate(insExpiry)} | Renewal Due: ${fmtDate(renewalDue)}`,
+            daysRemaining: dr, status: dr <= 0 ? 'critical' : dr <= 15 ? 'critical' : 'warning', dueDate: renewalDue,
+            insuranceStartDate: insStartRaw, insuranceExpiryDate: insExpiry.toISOString().split('T')[0], isEstimated: !lsInsDate && !data.insuranceStartDate,
+            lastCallStatus: fu[`insr-${regNo}`]?.slice(-1)[0]?.status || null, callCount: fu[`insr-${regNo}`]?.length || 0 });
+        }
+      }
+      // 1st service from purchase date
+      if (data.purchaseDate && !data.firstServiceDate) {
+        const pd = new Date(data.purchaseDate); pd.setHours(0,0,0,0);
+        const due = new Date(pd.getTime() + 30 * 864e5); const dr = Math.floor((due - today) / 864e5);
+        if (dr >= -30) {
+          dbg.service++;
+          all.push({ id: `svc-1st-${regNo}`, type: 'service', serviceType: '1st', customerId: custId, customerName: nm, customerPhone: ph, vehicle: vh, regNo,
+            title: '🔧 1st Service Due', description: `खरीद: ${fmtDate(data.purchaseDate)} | Due: ${fmtDate(due)}`,
+            daysRemaining: dr, status: dr <= 0 ? 'critical' : 'warning', dueDate: due,
+            lastCallStatus: fu[`svc-1st-${regNo}`]?.slice(-1)[0]?.status || null, callCount: fu[`svc-1st-${regNo}`]?.length || 0 });
+        }
+      }
+      // Higher services
+      for (const svc of SERVICE_MAP) {
+        const doneDate = data[svc.done];
+        const nextKey = (SERVICE_KEY_MAP[svc.next] || '') + 'Date';
+        if (doneDate && !data[nextKey]) {
+          const prev = new Date(doneDate); prev.setHours(0,0,0,0);
+          const due = new Date(prev.getTime() + svc.days * 864e5); const dr = Math.floor((due - today) / 864e5);
+          if (dr >= -30) {
+            dbg.service++;
+            all.push({ id: `svc-${svc.next}-${regNo}`, type: 'service', serviceType: svc.next, customerId: custId, customerName: nm, customerPhone: ph, vehicle: vh, regNo,
+              title: `🔧 ${svc.label} Due`, description: `पिछली: ${fmtDate(doneDate)} | Due: ${fmtDate(due)}`,
+              daysRemaining: dr, status: dr <= 0 ? 'critical' : 'warning', dueDate: due,
+              lastCallStatus: fu[`svc-${svc.next}-${regNo}`]?.slice(-1)[0]?.status || null, callCount: fu[`svc-${svc.next}-${regNo}`]?.length || 0 });
+          }
+          break;
+        }
+      }
+    });
+
+    all.sort((a,b) => {
+      if (a.status !== b.status) return a.status === 'critical' ? -1 : 1;
+      return a.daysRemaining - b.daysRemaining;
+    });
+    setReminders(all);
+    setDebugInfo(dbg);
+    setLastRefresh(new Date());
+    setLoading(false);
+
+    // ---------- 🚀 IMMEDIATE PUSH FOR OVERDUE / TODAY ----------
+    try {
+      if (notifStatus === 'granted') {
+        const urgent = all.filter(r => r.daysRemaining <= 0); // due today or overdue
+        if (urgent.length > 0) {
+          const payloadReminders = urgent.map(r => ({
+            title: `🔔 ${r.title}`,
+            body: `${r.customerName} — ${r.description}`,
+            url: '/reminders',
+            tag: `reminder-${r.id}`
+          }));
+          const pushRes = await fetch('/api/send-immediate-reminders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reminders: payloadReminders })
+          });
+          if (pushRes.ok) console.log(`📱 Sent ${urgent.length} immediate pushes`);
+          else console.error('Push send failed:', await pushRes.text());
+        } else {
+          console.log('No urgent reminders to push');
+        }
+      }
+    } catch (pushErr) {
+      console.error('Push error:', pushErr);
     }
+    // ---------- END PUSH ----------
+
+  } catch (err) {
+    console.error('buildReminders error:', err);
+    setLoading(false);
   }
-} catch (err) {
-  console.error('Push error:', err);
-}
+};
 // ---------- END PUSH ----------
       // Use latest merged follow-up data (from MongoDB + localStorage)
       const fu=getLS('followUpLog',{});
