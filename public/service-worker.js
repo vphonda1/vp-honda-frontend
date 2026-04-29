@@ -1,4 +1,4 @@
-// service-worker.js v2.7.0 (clone safe + push handler)
+// service-worker.js v2.7.0 – clone error fixed + push handler
 const VERSION = 'v2.7.0';
 const STATIC_CACHE = `vp-honda-static-${VERSION}`;
 const API_CACHE = `vp-honda-api-${VERSION}`;
@@ -10,45 +10,28 @@ self.addEventListener('install', e => {
 });
 
 self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys().then(keys => Promise.all(keys.filter(k => k !== STATIC_CACHE && k !== API_CACHE).map(k => caches.delete(k))))
-      .then(() => self.clients.claim())
-  );
+  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== STATIC_CACHE && k !== API_CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 
 self.addEventListener('fetch', e => {
   const { request } = e;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
-
   if (url.pathname.startsWith('/api/') || url.hostname.includes('onrender.com')) {
-    e.respondWith(
-      fetch(request)
-        .then(res => {
-          if (!res.bodyUsed && res.type !== 'opaque') {
-            try {
-              const clone = res.clone();
-              caches.open(API_CACHE).then(c => c.put(request, clone)).catch(() => {});
-            } catch (err) {}
-          }
-          return res;
-        })
-        .catch(() => caches.match(request).then(c => c || new Response(JSON.stringify({ error: 'Offline' }), { status: 503 })))
-    );
-    return;
-  }
-
-  e.respondWith(
-    caches.match(request).then(cached => cached || fetch(request).then(res => {
-      if (res.status === 200 && !res.bodyUsed && res.type !== 'opaque') {
-        try {
-          const clone = res.clone();
-          caches.open(STATIC_CACHE).then(c => c.put(request, clone)).catch(() => {});
-        } catch (err) {}
+    e.respondWith(fetch(request).then(res => {
+      if (!res.bodyUsed && res.type !== 'opaque') {
+        try { const clone = res.clone(); caches.open(API_CACHE).then(c => c.put(request, clone)).catch(() => {}); } catch(e) {}
       }
       return res;
-    }).catch(() => request.mode === 'navigate' ? caches.match('/index.html') : null))
-  );
+    }).catch(() => caches.match(request).then(c => c || new Response(JSON.stringify({ error:'Offline' }), { status:503 }))));
+    return;
+  }
+  e.respondWith(caches.match(request).then(cached => cached || fetch(request).then(res => {
+    if (res.status === 200 && !res.bodyUsed && res.type !== 'opaque') {
+      try { const clone = res.clone(); caches.open(STATIC_CACHE).then(c => c.put(request, clone)).catch(() => {}); } catch(e) {}
+    }
+    return res;
+  }).catch(() => request.mode === 'navigate' ? caches.match('/index.html') : null)));
 });
 
 self.addEventListener('push', event => {
@@ -78,5 +61,3 @@ self.addEventListener('notificationclick', event => {
     })
   );
 });
-
-// Rest of reminder functions (if any) can be kept as is, but this minimal version works for push.
