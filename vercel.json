@@ -1,5 +1,5 @@
 {
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "https://vp-honda-backend.onrender.com/api/$1" }
+    { "source": "/(.*)", "destination": "/" }
   ]
 }
