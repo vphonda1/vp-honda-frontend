@@ -39,22 +39,14 @@ const CALL_STATUS = [
 const getWAMessage = (r) => {
   const name = (r.customerName||'').replace(/^\d+\s*/,'').split(' ')[0] || 'महोदय/महोदया';
   const due  = r.dueDate instanceof Date ? fmtDate(r.dueDate) : (r.dueDate||'');
-
-  // ⭐ Special message for First Party Insurance Renewal
   if (r.type === 'insurance-renewal') {
     const expiry = r.insuranceExpiryDate ? fmtDate(new Date(r.insuranceExpiryDate)) : 'जल्दी';
-    return encodeURIComponent(
-      `नमस्ते ${name} जी! 🙏\n\n*वी.पी. होंडा* की तरफ से महत्वपूर्ण सूचना:\n\n🛡️ आपकी *${r.vehicle||'गाड़ी'}* (${r.regNo||''}) का *First Party Insurance* जल्दी Expire होने वाला है।\n\n📅 Insurance Expiry: *${expiry}*\n📋 Renewal करने की Last Date: *${due}*\n\nसमय पर Renewal न करने पर:\n❌ आपकी गाड़ी Uninsured हो जाएगी\n❌ दुर्घटना में Coverage नहीं मिलेगी\n\n✅ अभी Renewal करवाएं!\n\n🏍️ वी.पी. होंडा, भोपाल\n📞 9713394738`
-    );
+    return encodeURIComponent(`नमस्ते ${name} जी! 🙏\n\n*वी.पी. होंडा* की तरफ से महत्वपूर्ण सूचना:\n\n🛡️ आपकी *${r.vehicle||'गाड़ी'}* (${r.regNo||''}) का *First Party Insurance* जल्दी Expire होने वाला है।\n\n📅 Insurance Expiry: *${expiry}*\n📋 Renewal करने की Last Date: *${due}*\n\nसमय पर Renewal न करने पर:\n❌ आपकी गाड़ी Uninsured हो जाएगी\n❌ दुर्घटना में Coverage नहीं मिलेगी\n\n✅ अभी Renewal करवाएं!\n\n🏍️ वी.पी. होंडा, भोपाल\n📞 9713394738`);
   }
-
   const svcLabel = r.serviceType ? `${r.serviceType} सर्विस` : 'सर्विस';
-  return encodeURIComponent(
-    `नमस्ते ${name} जी! 🙏\n\nवी.पी. होंडा की तरफ से आपको याद दिलाना चाहते हैं कि आपकी *${r.vehicle||'गाड़ी'}* (${r.regNo}) की *${svcLabel}* की तारीख आ चुकी है।\n\n📅 सर्विस की तारीख: ${due}\n\nकृपया अपनी गाड़ी की सर्विस कराने के लिए हमारे शोरूम पर पधारें।\n\n🏍️ वी.पी. होंडा\nपरवलिया सड़क, भोपाल\n📞 9713394738`
-  );
+  return encodeURIComponent(`नमस्ते ${name} जी! 🙏\n\nवी.पी. होंडा की तरफ से आपको याद दिलाना चाहते हैं कि आपकी *${r.vehicle||'गाड़ी'}* (${r.regNo}) की *${svcLabel}* की तारीख आ चुकी है।\n\n📅 सर्विस की तारीख: ${due}\n\nकृपया अपनी गाड़ी की सर्विस कराने के लिए हमारे शोरूम पर पधारें।\n\n🏍️ वी.पी. होंडा\nपरवलिया सड़क, भोपाल\n📞 9713394738`);
 };
 
-// ⭐ Detect service number from invoice description/items text
 const detectServiceNumber = (inv) => {
   if (inv.serviceNumber && inv.serviceNumber >= 1 && inv.serviceNumber <= 7) return inv.serviceNumber;
   const txt = JSON.stringify({
@@ -85,7 +77,6 @@ const isVehiclePurchase = (inv) => {
 const buildServiceData = (invoices) => {
   const sd = getLS('customerServiceData',{});
   const deletedKeys = new Set(getLS('deletedServiceKeys', []));
-
   invoices.forEach(inv => {
     const regNo = (inv.regNo||'').trim().toUpperCase();
     if (!regNo||regNo==='—'||regNo==='-') return;
@@ -98,11 +89,9 @@ const buildServiceData = (invoices) => {
     e.regNo=regNo;
     const d=inv.invoiceDate||'';
     if (!d) return;
-
     if (isVehiclePurchase(inv)) {
       if (!e.purchaseDate || new Date(d) < new Date(e.purchaseDate)) e.purchaseDate = d;
     }
-
     const sn = detectServiceNumber(inv);
     if (sn) {
       const km={1:'firstServiceDate',2:'secondServiceDate',3:'thirdServiceDate',4:'fourthServiceDate',5:'fifthServiceDate',6:'sixthServiceDate',7:'seventhServiceDate'};
@@ -120,7 +109,6 @@ const buildServiceData = (invoices) => {
 export default function RemindersPage() {
   const navigate = useNavigate();
   const [reminders,    setReminders]   = useState([]);
-  const [customers,    setCustomers]   = useState([]);
   const [filterType,   setFilterType]  = useState('all');
   const [searchTerm,   setSearchTerm]  = useState('');
   const [loading,      setLoading]     = useState(true);
@@ -134,9 +122,7 @@ export default function RemindersPage() {
   const [tickerPause,  setTickerPause] = useState(false);
   const [syncMsg,      setSyncMsg]     = useState('');
   const [showFU,       setShowFU]      = useState(false);
-  const [notifStatus,  setNotifStatus] = useState(
-    typeof Notification !== 'undefined' ? Notification.permission : 'default'
-  );
+  const [notifStatus,  setNotifStatus] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'default');
   const [notifSummary, setNotifSummary] = useState(null);
   const [showDone,     setShowDone]    = useState(false);
   const [activeR,      setActiveR]     = useState(null);
@@ -147,13 +133,12 @@ export default function RemindersPage() {
   useEffect(()=>{
     loadAll();
     window.addEventListener('storage',loadAll);
-    intervalRef.current=setInterval(loadAll,10000); // 10 seconds — cross-device sync
+    intervalRef.current=setInterval(loadAll,10000);
     return()=>{window.removeEventListener('storage',loadAll);clearInterval(intervalRef.current);};
   },[]);
 
   const loadAll = async () => {
     try {
-      // 1. Invoices from MongoDB + localStorage
       let dbInv=[];
       try{const r=await fetch(api('/api/invoices'));if(r.ok)dbInv=await r.json();}catch{}
       const lsInv=getLS('invoices',[]);
@@ -163,24 +148,20 @@ export default function RemindersPage() {
         if(seen.has(k))return false;seen.add(k);return true;
       }).sort((a,b)=>new Date(b.invoiceDate||0)-new Date(a.invoiceDate||0));
       setInvoices(all);
-
-      // 2. SERVICE DATA sync — fetch from MongoDB first, merge with localStorage, then rebuild from invoices
       try {
         const sdRes = await fetch(api('/api/service-data'));
         if (sdRes.ok) {
-          const dbSD = await sdRes.json(); // array of service records
+          const dbSD = await sdRes.json();
           const merged = { ...getLS('customerServiceData', {}) };
-          // Merge MongoDB records INTO localStorage (MongoDB is source of truth for service dates)
           dbSD.forEach(rec => {
             const reg = rec.regNo;
             if (!reg) return;
             if (!merged[reg]) merged[reg] = {};
-            // Merge: MongoDB fields take priority for service dates
             const fields = ['purchaseDate','firstServiceDate','firstServiceKm','secondServiceDate','secondServiceKm',
               'thirdServiceDate','thirdServiceKm','fourthServiceDate','fourthServiceKm',
               'fifthServiceDate','fifthServiceKm','sixthServiceDate','sixthServiceKm',
               'seventhServiceDate','seventhServiceKm','pendingAmount','paymentDueDate','insuranceDate',
-              'insuranceStartDate','insuranceRenewalDate','insuranceRenewed'];   // ⭐ New insurance fields
+              'insuranceStartDate','insuranceRenewalDate','insuranceRenewed'];
             fields.forEach(f => { if (rec[f]) merged[reg][f] = rec[f]; });
             if (rec.customerName) merged[reg].customerName = rec.customerName;
             if (rec.phone)        merged[reg].phone        = rec.phone;
@@ -190,11 +171,7 @@ export default function RemindersPage() {
           setLS('customerServiceData', merged);
         }
       } catch(e) { console.log('service-data fetch failed:', e.message); }
-
-      // 3. Build service data from invoices (fills in any gaps)
       buildServiceData(all);
-
-      // 4. Sync updated service data back to MongoDB (so other devices get it)
       try {
         const sdToSync = getLS('customerServiceData', {});
         if (Object.keys(sdToSync).length > 0) {
@@ -202,11 +179,9 @@ export default function RemindersPage() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(sdToSync),
-          }).catch(() => {});  // fire and forget
+          }).catch(() => {});
         }
       } catch {}
-
-      // 5. Follow-up logs from MongoDB
       try {
         const fuRes = await fetch(api('/api/follow-ups'));
         if (fuRes.ok) {
@@ -224,167 +199,27 @@ export default function RemindersPage() {
           setLS('followUpLog', merged);
         }
       } catch {}
-
       await buildReminders();
     }catch(e){console.error(e);setLoading(false);}
   };
 
   const buildReminders = async () => {
-  try {
-    let custs = [];
     try {
-      const r = await fetch(api('/api/customers'));
-      if (r.ok) custs = await r.json();
-    } catch (e) {}
-    
-    const sd = getLS('customerServiceData', {});
-    const fu = getLS('followUpLog', {});
-    const all = [];
-    let dbg = { totalCustomers: custs.length, payment: 0, insurance: 0, service: 0, insuranceRenewal: 0 };
-    const getC = (reg) => custs.find(c => (c.registrationNo || c.regNo || '').toUpperCase() === reg.toUpperCase());
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-
-    Object.entries(sd).forEach(([regNo, data]) => {
-      if (!regNo || regNo === 'no_reg_') return;
-      const cust = getC(regNo);
-      const nm = data.customerName || cust?.customerName || cust?.name || 'Unknown';
-      const ph = data.phone || cust?.phone || '';
-      const vh = data.vehicle || cust?.vehicleModel || '';
-      const custId = cust?._id || regNo;
-      // Payment
-      const pend = parseFloat(data.pendingAmount || 0);
-      if (pend > 0 && !data.paymentReceivedDate) {
-        let dr = 999, dd = new Date();
-        if (data.paymentDueDate) { dd = new Date(data.paymentDueDate); dd.setHours(0,0,0,0); dr = Math.floor((dd - today) / 86400000); }
-        dbg.payment++;
-        all.push({ id: `pay-${regNo}`, type: 'payment', serviceType: null, customerId: custId, customerName: nm, customerPhone: ph, vehicle: vh, regNo,
-          title: '💳 Payment Due', description: `बकाया: ₹${pend.toLocaleString('en-IN')}`,
-          daysRemaining: dr, status: dr <= 3 ? 'critical' : 'warning', dueDate: dd, amount: pend,
-          lastCallStatus: fu[`pay-${regNo}`]?.slice(-1)[0]?.status || null, callCount: fu[`pay-${regNo}`]?.length || 0 });
-      }
-      // RTO insurance (7 days after insurance date)
-      if (data.insuranceDate && !data.rtoDoneDate) {
-        const ins = new Date(data.insuranceDate); ins.setHours(0,0,0,0);
-        const rto = new Date(ins.getTime() + 7 * 864e5); const dr = Math.floor((rto - today) / 864e5);
-        if (dr >= 0 && dr <= 7) {
-          dbg.insurance++;
-          all.push({ id: `ins-${regNo}`, type: 'insurance', serviceType: null, customerId: custId, customerName: nm, customerPhone: ph, vehicle: vh, regNo,
-            title: '🚗 RTO Pending', description: `Insurance: ${fmtDate(data.insuranceDate)} | Deadline: ${fmtDate(rto)}`,
-            daysRemaining: dr, status: dr <= 1 ? 'critical' : 'warning', dueDate: rto,
-            lastCallStatus: fu[`ins-${regNo}`]?.slice(-1)[0]?.status || null, callCount: 0 });
-        }
-      }
-      // First party insurance renewal
-      const lsInsKey = `vp_ins_${regNo || custId}`;
-      const lsRenewed = localStorage.getItem(`vp_ins_renewed_${regNo || custId}`);
-      const lsInsDate = localStorage.getItem(lsInsKey);
-      const insStartRaw = lsInsDate || data.insuranceStartDate || data.insuranceDate ||
-        (data.purchaseDate ? new Date(new Date(data.purchaseDate).getTime() + 3 * 864e5).toISOString().split('T')[0] : null);
-      if (insStartRaw && !data.insuranceRenewed && !lsRenewed) {
-        const insStart = new Date(insStartRaw); insStart.setHours(0,0,0,0);
-        const renewalDue = new Date(insStart.getTime() + 335 * 864e5);
-        const dr = Math.floor((renewalDue - today) / 864e5);
-        if (dr >= -30 && dr <= 60) {
-          dbg.insuranceRenewal = (dbg.insuranceRenewal || 0) + 1;
-          const insExpiry = new Date(insStart.getTime() + 365 * 864e5);
-          all.push({ id: `insr-${regNo}`, type: 'insurance-renewal', serviceType: null, customerId: custId, customerName: nm, customerPhone: ph, vehicle: vh, regNo,
-            title: dr <= 0 ? '🛡️ Insurance Expired!' : '🛡️ Insurance Renewal Due',
-            description: `Insurance Start: ${fmtDate(insStart)} | Expiry: ${fmtDate(insExpiry)} | Renewal Due: ${fmtDate(renewalDue)}`,
-            daysRemaining: dr, status: dr <= 0 ? 'critical' : dr <= 15 ? 'critical' : 'warning', dueDate: renewalDue,
-            insuranceStartDate: insStartRaw, insuranceExpiryDate: insExpiry.toISOString().split('T')[0], isEstimated: !lsInsDate && !data.insuranceStartDate,
-            lastCallStatus: fu[`insr-${regNo}`]?.slice(-1)[0]?.status || null, callCount: fu[`insr-${regNo}`]?.length || 0 });
-        }
-      }
-      // 1st service from purchase date
-      if (data.purchaseDate && !data.firstServiceDate) {
-        const pd = new Date(data.purchaseDate); pd.setHours(0,0,0,0);
-        const due = new Date(pd.getTime() + 30 * 864e5); const dr = Math.floor((due - today) / 864e5);
-        if (dr >= -30) {
-          dbg.service++;
-          all.push({ id: `svc-1st-${regNo}`, type: 'service', serviceType: '1st', customerId: custId, customerName: nm, customerPhone: ph, vehicle: vh, regNo,
-            title: '🔧 1st Service Due', description: `खरीद: ${fmtDate(data.purchaseDate)} | Due: ${fmtDate(due)}`,
-            daysRemaining: dr, status: dr <= 0 ? 'critical' : 'warning', dueDate: due,
-            lastCallStatus: fu[`svc-1st-${regNo}`]?.slice(-1)[0]?.status || null, callCount: fu[`svc-1st-${regNo}`]?.length || 0 });
-        }
-      }
-      // Higher services
-      for (const svc of SERVICE_MAP) {
-        const doneDate = data[svc.done];
-        const nextKey = (SERVICE_KEY_MAP[svc.next] || '') + 'Date';
-        if (doneDate && !data[nextKey]) {
-          const prev = new Date(doneDate); prev.setHours(0,0,0,0);
-          const due = new Date(prev.getTime() + svc.days * 864e5); const dr = Math.floor((due - today) / 864e5);
-          if (dr >= -30) {
-            dbg.service++;
-            all.push({ id: `svc-${svc.next}-${regNo}`, type: 'service', serviceType: svc.next, customerId: custId, customerName: nm, customerPhone: ph, vehicle: vh, regNo,
-              title: `🔧 ${svc.label} Due`, description: `पिछली: ${fmtDate(doneDate)} | Due: ${fmtDate(due)}`,
-              daysRemaining: dr, status: dr <= 0 ? 'critical' : 'warning', dueDate: due,
-              lastCallStatus: fu[`svc-${svc.next}-${regNo}`]?.slice(-1)[0]?.status || null, callCount: fu[`svc-${svc.next}-${regNo}`]?.length || 0 });
-          }
-          break;
-        }
-      }
-    });
-
-    all.sort((a,b) => {
-      if (a.status !== b.status) return a.status === 'critical' ? -1 : 1;
-      return a.daysRemaining - b.daysRemaining;
-    });
-    setReminders(all);
-    setDebugInfo(dbg);
-    setLastRefresh(new Date());
-    setLoading(false);
-
-    // ---------- 🚀 IMMEDIATE PUSH FOR OVERDUE / TODAY ----------
-    try {
-      if (notifStatus === 'granted') {
-        const urgent = all.filter(r => r.daysRemaining <= 0); // due today or overdue
-        if (urgent.length > 0) {
-          const payloadReminders = urgent.map(r => ({
-            title: `🔔 ${r.title}`,
-            body: `${r.customerName} — ${r.description}`,
-            url: '/reminders',
-            tag: `reminder-${r.id}`
-          }));
-          const pushRes = await fetch('/api/send-immediate-reminders', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reminders: payloadReminders })
-          });
-          if (pushRes.ok) console.log(`📱 Sent ${urgent.length} immediate pushes`);
-          else console.error('Push send failed:', await pushRes.text());
-        } else {
-          console.log('No urgent reminders to push');
-        }
-      }
-    } catch (pushErr) {
-      console.error('Push error:', pushErr);
-    }
-    // ---------- END PUSH ----------
-
-  } catch (err) {
-    console.error('buildReminders error:', err);
-    setLoading(false);
-  }
-};
-// ---------- END PUSH ----------
-      // Use latest merged follow-up data (from MongoDB + localStorage)
+      let custs=[];
+      try{const r=await fetch(api('/api/customers'));if(r.ok)custs=await r.json();}catch{}
+      const sd=getLS('customerServiceData',{});
       const fu=getLS('followUpLog',{});
       const all=[];
-      let dbg={totalCustomers:custs.length,payment:0,insurance:0,service:0};
+      let dbg={totalCustomers:custs.length,payment:0,insurance:0,service:0,insuranceRenewal:0};
       const getC=(reg)=>custs.find(c=>(c.registrationNo||c.regNo||'').toUpperCase()===reg.toUpperCase());
       const today=new Date();today.setHours(0,0,0,0);
-
       Object.entries(sd).forEach(([regNo,data])=>{
         if(!regNo||regNo==='no_reg_') return;
         const cust=getC(regNo);
         const nm=data.customerName||cust?.customerName||cust?.name||'Unknown';
         const ph=data.phone||cust?.phone||'';
         const vh=data.vehicle||cust?.vehicleModel||'';
-        const lastCS=fu[`pay-${regNo}`]?.slice(-1)[0]?.status||null;
-        // ✅ Use actual MongoDB _id for View button navigation; fall back to regNo
         const custId = cust?._id || regNo;
-
         const pend=parseFloat(data.pendingAmount||0);
         if(pend>0&&!data.paymentReceivedDate){
           let dr=999,dd=new Date();
@@ -396,7 +231,6 @@ export default function RemindersPage() {
             lastCallStatus:fu[`pay-${regNo}`]?.slice(-1)[0]?.status||null,
             callCount:fu[`pay-${regNo}`]?.length||0});
         }
-
         if(data.insuranceDate&&!data.rtoDoneDate){
           const ins=new Date(data.insuranceDate);ins.setHours(0,0,0,0);
           const rto=new Date(ins.getTime()+7*864e5);const dr=Math.floor((rto-today)/864e5);
@@ -406,55 +240,26 @@ export default function RemindersPage() {
               daysRemaining:dr,status:dr<=1?'critical':'warning',dueDate:rto,
               lastCallStatus:fu[`ins-${regNo}`]?.slice(-1)[0]?.status||null,callCount:0});}
         }
-
-        // ⭐ FIRST PARTY INSURANCE RENEWAL (11 months = 335 days after insurance start)
-        // Priority: 1) localStorage custom date, 2) insuranceStartDate, 3) insuranceDate, 4) purchaseDate+3
         const lsInsKey   = `vp_ins_${regNo||custId}`;
         const lsRenewed  = localStorage.getItem(`vp_ins_renewed_${regNo||custId}`);
         const lsInsDate  = localStorage.getItem(lsInsKey);
         const insStartRaw = lsInsDate || data.insuranceStartDate || data.insuranceDate ||
           (data.purchaseDate ? new Date(new Date(data.purchaseDate).getTime() + 3*864e5).toISOString().split('T')[0] : null);
-
         if (insStartRaw && !data.insuranceRenewed && !lsRenewed) {
           const insStart = new Date(insStartRaw); insStart.setHours(0,0,0,0);
-          // Insurance expires at 12 months, remind at 11 months (335 days)
           const renewalDue = new Date(insStart.getTime() + 335*864e5);
           const dr = Math.floor((renewalDue - today) / 864e5);
-          const rid = `insr-${regNo}`;
-
-          // Show reminder if: within 60 days before due OR up to 30 days overdue
           if (dr >= -30 && dr <= 60) {
             dbg.insuranceRenewal = (dbg.insuranceRenewal || 0) + 1;
             const insExpiry = new Date(insStart.getTime() + 365*864e5);
-            const sourceLabel = data.insuranceStartDate
-              ? 'Insurance date set'
-              : data.insuranceDate
-              ? 'Insurance date (estimated from RTO date)'
-              : `Purchase date + 3 days (estimate)`;
-            all.push({
-              id: rid,
-              type: 'insurance-renewal',
-              serviceType: null,
-              customerId: custId,
-              customerName: nm,
-              customerPhone: ph,
-              vehicle: vh,
-              regNo,
+            all.push({ id: `insr-${regNo}`, type: 'insurance-renewal', serviceType: null, customerId: custId, customerName: nm, customerPhone: ph, vehicle: vh, regNo,
               title: dr <= 0 ? '🛡️ Insurance Expired!' : '🛡️ Insurance Renewal Due',
-              description: `Insurance Start: ${fmtDate(insStart)} | Expiry: ${fmtDate(insExpiry)} | Renewal Due: ${fmtDate(renewalDue)} | ${sourceLabel}`,
-              daysRemaining: dr,
-              daysToExpiry: Math.floor((insExpiry - today) / 864e5),
-              status: dr <= 0 ? 'critical' : dr <= 15 ? 'critical' : 'warning',
-              dueDate: renewalDue,
-              insuranceStartDate: insStartRaw,
-              insuranceExpiryDate: insExpiry.toISOString().split('T')[0],
-              isEstimated: !lsInsDate && !data.insuranceStartDate,
-              lastCallStatus: fu[rid]?.slice(-1)[0]?.status || null,
-              callCount: fu[rid]?.length || 0,
-            });
+              description: `Insurance Start: ${fmtDate(insStart)} | Expiry: ${fmtDate(insExpiry)} | Renewal Due: ${fmtDate(renewalDue)}`,
+              daysRemaining: dr, status: dr <= 0 ? 'critical' : dr <= 15 ? 'critical' : 'warning', dueDate: renewalDue,
+              insuranceStartDate: insStartRaw, insuranceExpiryDate: insExpiry.toISOString().split('T')[0], isEstimated: !lsInsDate && !data.insuranceStartDate,
+              lastCallStatus: fu[`insr-${regNo}`]?.slice(-1)[0]?.status || null, callCount: fu[`insr-${regNo}`]?.length || 0 });
           }
         }
-
         if(data.purchaseDate&&!data.firstServiceDate){
           const pd=new Date(data.purchaseDate);pd.setHours(0,0,0,0);
           const due=new Date(pd.getTime()+30*864e5);const dr=Math.floor((due-today)/864e5);
@@ -465,7 +270,6 @@ export default function RemindersPage() {
               daysRemaining:dr,status:dr<=0?'critical':'warning',dueDate:due,
               lastCallStatus:fu[rid]?.slice(-1)[0]?.status||null,callCount:fu[rid]?.length||0});}
         }
-
         for(const svc of SERVICE_MAP){
           const doneDate=data[svc.done];
           const nextKey=(SERVICE_KEY_MAP[svc.next]||'')+'Date';
@@ -482,14 +286,9 @@ export default function RemindersPage() {
           }
         }
       });
-
       all.sort((a,b)=>{if(a.status!==b.status)return a.status==='critical'?-1:1;return a.daysRemaining-b.daysRemaining;});
       setReminders(all);setDebugInfo(dbg);setLastRefresh(new Date());setLoading(false);
-
-      // ⭐ Schedule notifications for today/tomorrow reminders
-      // ⭐ Schedule notifications and send immediate push for overdue/today
-    if (all.length > 0 && notifStatus === 'granted') {
-      // Summary from all reminders (not customers)
+      // ✅ Summary for notification panel (from reminders array, not customers)
       const summary = {
         total: all.length,
         overdue: all.filter(r => r.daysRemaining < 0).length,
@@ -502,34 +301,35 @@ export default function RemindersPage() {
         }
       };
       setNotifSummary(summary);
-
-      // 🚀 Immediate push for overdue/today reminders
-      const urgent = all.filter(r => r.daysRemaining <= 0);
-      if (urgent.length > 0) {
-        const payloadReminders = urgent.map(r => ({
-          title: r.title,
-          body: `${r.customerName} — ${r.description}`,
-          url: '/reminders',
-          tag: `reminder-${r.id}`
-        }));
-        try {
-          const pushRes = await fetch('/api/send-immediate-reminders', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reminders: payloadReminders })
-          });
-          if (pushRes.ok) console.log(`📱 Sent ${urgent.length} immediate pushes`);
-          else console.error('Push send failed');
-        } catch (err) {
-          console.error('Push error:', err);
+      // 🚀 IMMEDIATE PUSH FOR OVERDUE / TODAY REMINDERS
+      if (notifStatus === 'granted') {
+        const urgent = all.filter(r => r.daysRemaining <= 0);
+        if (urgent.length > 0) {
+          const payloadReminders = urgent.map(r => ({
+            title: r.title,
+            body: `${r.customerName} — ${r.description}`,
+            url: '/reminders',
+            tag: `reminder-${r.id}`
+          }));
+          try {
+            const pushRes = await fetch('/api/send-immediate-reminders', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reminders: payloadReminders })
+            });
+            if (pushRes.ok) console.log(`📱 Sent ${urgent.length} immediate pushes`);
+            else console.error('Push send failed');
+          } catch (err) {
+            console.error('Push error:', err);
+          }
         }
       }
+    } catch(err) {
+      console.error('buildReminders error:', err);
+      setLoading(false);
     }
-  } catch (e) {
-    console.error('buildReminders error:', e);
-    setLoading(false);
-  }
-};
+  };
+
   const submitFollowUp = async () => {
     if(!activeR) return;
     const entry={date:new Date().toISOString(),status:fuForm.status,note:fuForm.note||'—',nextCallDate:fuForm.nextCallDate||null,by:'Admin'};
@@ -552,9 +352,7 @@ export default function RemindersPage() {
     u[activeR.id].push({date:new Date().toISOString(),status:'done',note:`Service Done. KM:${doneForm.km}. ${doneForm.remarks}`,by:'Admin'});
     setFollowUps(u);setLS('followUpLog',u);
     try{
-      // Save to service-data (for cross-device sync of service dates)
       await fetch(api(`/api/service-data/${activeR.regNo}`),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(sd[activeR.regNo])});
-      // Also save follow-up log
       await fetch(api('/api/follow-ups'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reminderId:activeR.id,customerName:activeR.customerName,phone:activeR.customerPhone,regNo:activeR.regNo,date:new Date().toISOString(),status:'done',note:`Service Done. KM:${doneForm.km}. ${doneForm.remarks}`,by:'Admin'})});
       setSyncMsg('✅ MongoDB sync हुआ — सभी devices पर दिखेगा');
     }catch{setSyncMsg('⚠️ Local save only');}
@@ -562,7 +360,6 @@ export default function RemindersPage() {
     setShowDone(false);setActiveR(null);setDoneForm({km:'',date:new Date().toISOString().split('T')[0],remarks:''});
     window.dispatchEvent(new Event('storage'));loadAll();
   };
-
 
   const cnt=(fn)=>reminders.filter(fn).length;
   const FILTERS=[
@@ -634,7 +431,6 @@ export default function RemindersPage() {
       )}
       <style>{`@keyframes tk{0%{transform:translateX(100%)}100%{transform:translateX(-100%)}} @keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}} .hov:hover{opacity:0.82} .sc:hover{transform:scale(1.04)} .rc:hover{transform:translateY(-1px);box-shadow:0 8px 28px rgba(0,0,0,0.35)!important}`}</style>
 
-      {/* HEADER */}
       <div style={S.hdr}>
         <div style={{display:'flex',alignItems:'center',gap:'12px'}}>
           <div style={{width:'40px',height:'40px',borderRadius:'12px',background:'linear-gradient(135deg,#3b82f6,#1d4ed8)',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 4px 18px rgba(59,130,246,0.35)'}}>
@@ -655,30 +451,23 @@ export default function RemindersPage() {
 
       <div style={{padding:'18px 22px',maxWidth:'1200px',margin:'0 auto'}}>
 
-        {/* 🔔 NOTIFICATION PANEL */}
         <div style={{
-          background: notifStatus === 'granted'
-            ? 'linear-gradient(135deg, #16a34a22, #16a34a08)'
-            : 'linear-gradient(135deg, #1e3a8a22, #1e3a8a08)',
+          background: notifStatus === 'granted' ? 'linear-gradient(135deg, #16a34a22, #16a34a08)' : 'linear-gradient(135deg, #1e3a8a22, #1e3a8a08)',
           border: `1px solid ${notifStatus === 'granted' ? '#16a34a55' : '#3b82f655'}`,
           borderRadius: 12, padding: '12px 16px', marginBottom: 16,
           display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
         }}>
-          <div style={{fontSize: 24}}>
-            {notifStatus === 'granted' ? '🔔' : notifStatus === 'denied' ? '🔕' : '🔔'}
-          </div>
+          <div style={{fontSize: 24}}>{notifStatus === 'granted' ? '🔔' : notifStatus === 'denied' ? '🔕' : '🔔'}</div>
           <div style={{flex: 1, minWidth: 200}}>
             {notifStatus === 'granted' ? (
               <>
-                <p style={{color:'#86efac', fontWeight:700, fontSize:13, margin:0}}>
-                  ✅ Phone Notifications चालू हैं
-                </p>
+                <p style={{color:'#86efac', fontWeight:700, fontSize:13, margin:0}}>✅ Phone Notifications चालू हैं</p>
                 {notifSummary ? (
                   <div style={{marginTop:6, display:'flex', gap:10, flexWrap:'wrap'}}>
                     {[
-                      { label:'🔧 Service',   val: notifSummary.byType?.service          || 0, color:'#ea580c' },
-                      { label:'💰 Payment',   val: notifSummary.byType?.payment          || 0, color:'#16a34a' },
-                      { label:'🚗 RTO',       val: notifSummary.byType?.rto              || 0, color:'#7c3aed' },
+                      { label:'🔧 Service',   val: notifSummary.byType?.service || 0, color:'#ea580c' },
+                      { label:'💰 Payment',   val: notifSummary.byType?.payment || 0, color:'#16a34a' },
+                      { label:'🚗 RTO',       val: notifSummary.byType?.rto || 0, color:'#7c3aed' },
                       { label:'🛡️ Insurance', val: notifSummary.byType?.insuranceRenewal || 0, color:'#DC0000' },
                     ].map((t,i) => (
                       <div key={i} style={{background:`${t.color}22`, border:`1px solid ${t.color}55`, borderRadius:6, padding:'3px 10px', display:'flex', gap:5, alignItems:'center'}}>
@@ -696,28 +485,18 @@ export default function RemindersPage() {
                     </div>
                   </div>
                 ) : (
-                  <p style={{color:'#64748b', fontSize:11, margin:'3px 0 0'}}>
-                    Service, Payment, RTO, Insurance — सब reminders automatically phone पर आएंगे
-                  </p>
+                  <p style={{color:'#64748b', fontSize:11, margin:'3px 0 0'}}>Service, Payment, RTO, Insurance — सब reminders automatically phone पर आएंगे</p>
                 )}
               </>
             ) : notifStatus === 'denied' ? (
               <>
-                <p style={{color: '#fca5a5', fontWeight: 700, fontSize: 13, margin: 0}}>
-                  🔕 Notifications blocked हैं
-                </p>
-                <p style={{color: '#64748b', fontSize: 11, margin: '3px 0 0'}}>
-                  Browser settings में VP Honda को allow करें: Settings → Site Settings → Notifications
-                </p>
+                <p style={{color: '#fca5a5', fontWeight: 700, fontSize: 13, margin: 0}}>🔕 Notifications blocked हैं</p>
+                <p style={{color: '#64748b', fontSize: 11, margin: '3px 0 0'}}>Browser settings में VP Honda को allow करें: Settings → Site Settings → Notifications</p>
               </>
             ) : (
               <>
-                <p style={{color: '#93c5fd', fontWeight: 700, fontSize: 13, margin: 0}}>
-                  📱 Phone पर Reminder Notifications चालू करें
-                </p>
-                <p style={{color: '#64748b', fontSize: 11, margin: '3px 0 0'}}>
-                  एक बार allow करें — service due होने पर automatic notification आएगी, app बंद हो तब भी
-                </p>
+                <p style={{color: '#93c5fd', fontWeight: 700, fontSize: 13, margin: 0}}>📱 Phone पर Reminder Notifications चालू करें</p>
+                <p style={{color: '#64748b', fontSize: 11, margin: '3px 0 0'}}>एक बार allow करें — service due होने पर automatic notification आएगी, app बंद हो तब भी</p>
               </>
             )}
           </div>
@@ -726,37 +505,26 @@ export default function RemindersPage() {
               <button onClick={async () => {
                 const granted = await requestNotificationPermission();
                 setNotifStatus(Notification.permission);
-                if (granted) {
-                  showInAppToast('🔔 Notifications enabled!', 'अब reminders automatic आएंगे', 'success');
-                }
-              }} style={{
-                background: '#3b82f6', color: '#fff', border: 'none',
-                padding: '8px 16px', borderRadius: 8, fontWeight: 700,
-                fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
-              }}>
+                if (granted) showInAppToast('🔔 Notifications enabled!', 'अब reminders automatic आएंगे', 'success');
+              }} style={{ background: '#3b82f6', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                 🔔 Allow Notifications
               </button>
             )}
             {notifStatus === 'granted' && (
               <>
                 <button onClick={async () => {
-                  await sendTestNotification();
-                  showInAppToast('📱 Test notification भेजी!', 'ऊपर notification bar देखें', 'success');
-                }} style={{
-                  background: '#1e293b', color: '#94a3b8', border: '1px solid #334155',
-                  padding: '8px 12px', borderRadius: 8, fontWeight: 700,
-                  fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap',
-                }}>
+                  try {
+                    const res = await fetch('/api/test-push-notification', { method: 'POST' });
+                    const data = await res.json();
+                    showInAppToast('📱 Test notification भेजी!', data.message || 'Check your phone', 'success');
+                  } catch(err) { showInAppToast('❌ Failed', err.message, 'error'); }
+                }} style={{ background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', padding: '8px 12px', borderRadius: 8, fontWeight: 700, fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                   🧪 Test करें
                 </button>
                 <button onClick={async () => {
-                  const result = await scheduleReminderNotifications([]);
+                  await scheduleReminderNotifications([]);
                   showInAppToast('🔄 Reminders scheduled', 'Next check on next refresh', 'info');
-                }} style={{
-                  background: '#16a34a', color: '#fff', border: 'none',
-                  padding: '8px 12px', borderRadius: 8, fontWeight: 700,
-                  fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap',
-                }}>
+                }} style={{ background: '#16a34a', color: '#fff', border: 'none', padding: '8px 12px', borderRadius: 8, fontWeight: 700, fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                   ↻ Re-schedule
                 </button>
               </>
@@ -764,7 +532,6 @@ export default function RemindersPage() {
           </div>
         </div>
 
-        {/* STATS */}
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:'10px',marginBottom:'18px'}}>
           {[
             {l:'Overdue',v:todayCrit.length,c:'#ef4444',i:'🚨',s:'तत्काल'},
@@ -785,7 +552,6 @@ export default function RemindersPage() {
           ))}
         </div>
 
-        {/* ── QUICK NAVIGATION BUTTONS ── */}
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:'10px',marginBottom:'14px'}}>
           {[
             {label:'📊 Data Manager',  path:'/customer-data-manager', grad:'linear-gradient(135deg,#7c3aed,#6d28d9)', shadow:'rgba(124,58,237,0.3)'},
@@ -800,7 +566,6 @@ export default function RemindersPage() {
           ))}
         </div>
 
-        {/* FILTERS */}
         <div style={{display:'flex',flexWrap:'wrap',gap:'7px',marginBottom:'14px'}}>
           {FILTERS.map(f=>(
             <button key={f.t} onClick={()=>{setFilterType(f.t);setCurrentPage(1);}}
@@ -811,7 +576,6 @@ export default function RemindersPage() {
           ))}
         </div>
 
-        {/* SEARCH */}
         <div style={{position:'relative',marginBottom:'14px'}}>
           <span style={{position:'absolute',left:'13px',top:'50%',transform:'translateY(-50%)',fontSize:'14px',pointerEvents:'none'}}>🔍</span>
           <input value={searchTerm} onChange={e=>{setSearchTerm(e.target.value);setCurrentPage(1);}} placeholder="Customer name, phone, vehicle, reg no खोजें..."
@@ -822,7 +586,6 @@ export default function RemindersPage() {
           {filtered.length>0&&<span style={{position:'absolute',right:'13px',top:'50%',transform:'translateY(-50%)',color:'#334155',fontSize:'11px',fontWeight:'600'}}>{filtered.length} results</span>}
         </div>
 
-        {/* LIST */}
         {filtered.length===0?(
           <div style={{textAlign:'center',padding:'72px 20px',animation:'fi 0.4s ease'}}>
             <div style={{width:'68px',height:'68px',borderRadius:'50%',background:'rgba(34,197,94,0.08)',border:'2px solid rgba(34,197,94,0.18)',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 14px'}}>
@@ -844,7 +607,6 @@ export default function RemindersPage() {
                 <div key={r.id} className="rc" style={S.card(isCrit)}>
                   <div style={{height:'3px',background:`linear-gradient(90deg,${bar.c},transparent)`,width:bar.w,transition:'width 0.5s'}}/>
                   <div style={{padding:'14px 16px'}}>
-                    {/* Badge row */}
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'10px',flexWrap:'wrap',gap:'7px'}}>
                       <div style={{display:'flex',alignItems:'center',gap:'7px',flexWrap:'wrap'}}>
                         <span style={{background:isCrit?'rgba(239,68,68,0.14)':'rgba(234,179,8,0.1)',border:`1px solid ${isCrit?'rgba(239,68,68,0.35)':'rgba(234,179,8,0.28)'}`,color:isCrit?'#fca5a5':'#fde047',fontSize:'9px',fontWeight:'800',padding:'2px 8px',borderRadius:'20px',letterSpacing:'0.5px'}}>
@@ -864,7 +626,6 @@ export default function RemindersPage() {
                       </div>
                     </div>
 
-                    {/* Content + actions */}
                     <div style={{display:'flex',gap:'14px',alignItems:'flex-start'}}>
                       <div style={{flex:'1',minWidth:'0'}}>
                         <h3 style={{color:'#f1f5f9',fontWeight:'800',fontSize:'14px',margin:'0 0 4px'}}>{r.title}</h3>
@@ -894,7 +655,6 @@ export default function RemindersPage() {
                           </button>
                         )}
                       </div>
-                      {/* Buttons */}
                       <div style={{display:'flex',flexDirection:'column',gap:'6px',flexShrink:'0'}}>
                         {r.customerPhone&&<a href={`tel:${r.customerPhone}`} className="hov" style={S.btn('linear-gradient(135deg,#16a34a,#15803d)','0 2px 10px rgba(22,163,74,0.25)')}><Phone size={10}/> Call</a>}
                         {r.customerPhone&&<a href={`https://wa.me/91${r.customerPhone}?text=${getWAMessage(r)}`} target="_blank" rel="noreferrer" className="hov" style={S.btn('linear-gradient(135deg,#059669,#047857)','0 2px 10px rgba(5,150,105,0.25)')}><MessageSquare size={10}/> WA</a>}
@@ -904,18 +664,17 @@ export default function RemindersPage() {
                           const newDate = prompt(`📅 Insurance Date enter करें (YYYY-MM-DD):\n\nCurrent: ${r.insuranceStartDate||'Not set'}\n\nखरीद के 2-3 दिन बाद की date डालें`);
                           if(!newDate) return;
                           if(!/^\d{4}-\d{2}-\d{2}$/.test(newDate)){alert('Format: YYYY-MM-DD\nExample: 2024-04-15');return;}
-                          // Save to localStorage with regNo as key
                           const key=`vp_ins_${r.regNo||r.customerId}`;
                           localStorage.setItem(key,newDate);
-                          alert(`✅ Insurance date saved!\n${newDate}\n\nPage refresh करें — नया reminder calculate होगा।`);
-                          loadReminders();
+                          alert(`✅ Insurance date saved!\n\nPage refresh करें — नया reminder calculate होगा।`);
+                          loadAll();
                         }} className="hov" style={S.btn('linear-gradient(135deg,#0369a1,#0284c7)','0 2px 10px rgba(3,105,161,0.25)')}>✏️ Edit Date</button>}
                         {r.type==='insurance-renewal'&&<button onClick={()=>{
                           if(!window.confirm(`${r.customerName} का Insurance Renewed mark करना है?`)) return;
                           const key=`vp_ins_renewed_${r.regNo||r.customerId}`;
                           localStorage.setItem(key,'true');
                           alert('✅ Marked as Renewed! अगले साल का reminder automatic set होगा।');
-                          loadReminders();
+                          loadAll();
                         }} className="hov" style={S.btn('linear-gradient(135deg,#16a34a,#15803d)','0 2px 10px rgba(22,163,74,0.25)')}>🛡️ Renewed</button>}
                         <button onClick={()=>navigate(`/customer-profile/${r.customerId}`)} className="hov" style={S.btn('linear-gradient(135deg,#1e293b,#0f172a)','none')}>👁 View</button>
                       </div>
@@ -963,7 +722,6 @@ export default function RemindersPage() {
           </div>
         )}
 
-        {/* INVOICES */}
         <div style={{marginTop:'18px',background:'rgba(255,255,255,0.02)',borderRadius:'18px',border:'1px solid rgba(255,255,255,0.05)',overflow:'hidden'}}>
           <div style={{background:'linear-gradient(135deg,#ea580c,#c2410c)',padding:'12px 18px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
             <span style={{color:'#fff',fontWeight:'800',fontSize:'13px'}}>📄 Recent Invoices ({invoices.length})</span>
@@ -973,7 +731,7 @@ export default function RemindersPage() {
             <table style={{width:'100%',borderCollapse:'collapse',fontSize:'11px'}}>
               <thead><tr style={{borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
                 {['#','Invoice','Customer','Vehicle','Amount','Date',''].map(h=>(<th key={h} style={{textAlign:'left',color:'#334155',padding:'9px 13px',fontWeight:'700',fontSize:'10px',textTransform:'uppercase',letterSpacing:'0.5px'}}>{h}</th>))}
-              </tr></thead>
+              \)</thead>
               <tbody>
                 {invoices.slice(0,6).map((inv,i)=>(
                   <tr key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.03)',cursor:'pointer',transition:'background 0.12s'}}
@@ -993,11 +751,9 @@ export default function RemindersPage() {
             </table>
           </div>
         </div>
-
         <p style={{textAlign:'center',color:'#1e293b',fontSize:'9px',marginTop:'10px'}}>VP Honda · Parwaliya Sadak, Bhopal · {reminders.length} reminders · {invoices.length} invoices</p>
       </div>
 
-      {/* FOLLOW-UP MODAL */}
       {showFU&&activeR&&(
         <div style={S.modal} onClick={()=>setShowFU(false)}>
           <div style={S.mbox} onClick={e=>e.stopPropagation()}>
@@ -1035,7 +791,6 @@ export default function RemindersPage() {
         </div>
       )}
 
-      {/* SERVICE DONE MODAL */}
       {showDone&&activeR&&(
         <div style={S.modal} onClick={()=>setShowDone(false)}>
           <div style={S.mbox} onClick={e=>e.stopPropagation()}>
