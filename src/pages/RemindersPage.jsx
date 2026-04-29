@@ -235,6 +235,33 @@ export default function RemindersPage() {
       try{const r=await fetch(api('/api/customers'));if(r.ok)custs=await r.json();}catch{}
       setCustomers(custs);
       const sd=getLS('customerServiceData',{});
+      // ---------- INSTANT PUSH FOR OVERDUE / TODAY REMINDERS ----------
+try {
+  // Only send if user has granted permission
+  if (notifStatus === 'granted') {
+    const now = new Date();
+    now.setHours(0,0,0,0);
+    const urgent = all.filter(r => r.daysRemaining <= 0); // Overdue or due today
+    if (urgent.length > 0) {
+      const payloadReminders = urgent.map(r => ({
+        title: `🔔 ${r.title}`,
+        body: `${r.customerName} — ${r.description}`,
+        url: '/reminders',
+        tag: `reminder-${r.id}`,
+      }));
+      const pushRes = await fetch('/api/send-immediate-reminders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reminders: payloadReminders })
+      });
+      if (pushRes.ok) console.log(`📱 Sent ${urgent.length} immediate pushes`);
+      else console.error('Push send failed');
+    }
+  }
+} catch (err) {
+  console.error('Push error:', err);
+}
+// ---------- END PUSH ----------
       // Use latest merged follow-up data (from MongoDB + localStorage)
       const fu=getLS('followUpLog',{});
       const all=[];
