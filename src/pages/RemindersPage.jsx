@@ -22,7 +22,6 @@ const SERVICE_MAP = [
   { done:'fifthServiceDate',  next:'6th', label:'6th Service', days:120 },
   { done:'sixthServiceDate',  next:'7th', label:'7th Service', days:120 },
 ];
-
 const SERVICE_KEY_MAP = {
   '1st':'firstService','2nd':'secondService','3rd':'thirdService',
   '4th':'fourthService','5th':'fifthService','6th':'sixthService','7th':'seventhService',
@@ -41,19 +40,21 @@ const getWAMessage = (r) => {
   const name = (r.customerName||'').replace(/^\d+\s*/,'').split(' ')[0] || 'महोदय/महोदया';
   const due  = r.dueDate instanceof Date ? fmtDate(r.dueDate) : (r.dueDate||'');
 
+  // ⭐ Special message for First Party Insurance Renewal
   if (r.type === 'insurance-renewal') {
     const expiry = r.insuranceExpiryDate ? fmtDate(new Date(r.insuranceExpiryDate)) : 'जल्दी';
     return encodeURIComponent(
-      `नमस्ते \( {name} जी! 🙏\n\n*वी.पी. होंडा* की तरफ से महत्वपूर्ण सूचना:\n\n🛡️ आपकी * \){r.vehicle||'गाड़ी'}* (\( {r.regNo||''}) का *First Party Insurance* जल्दी Expire होने वाला है।\n\n📅 Insurance Expiry: * \){expiry}*\n📋 Renewal करने की Last Date: *${due}*\n\nसमय पर Renewal न करने पर:\n❌ आपकी गाड़ी Uninsured हो जाएगी\n❌ दुर्घटना में Coverage नहीं मिलेगी\n\n✅ अभी Renewal करवाएं!\n\n🏍️ वी.पी. होंडा, भोपाल\n📞 9713394738`
+      `नमस्ते ${name} जी! 🙏\n\n*वी.पी. होंडा* की तरफ से महत्वपूर्ण सूचना:\n\n🛡️ आपकी *${r.vehicle||'गाड़ी'}* (${r.regNo||''}) का *First Party Insurance* जल्दी Expire होने वाला है।\n\n📅 Insurance Expiry: *${expiry}*\n📋 Renewal करने की Last Date: *${due}*\n\nसमय पर Renewal न करने पर:\n❌ आपकी गाड़ी Uninsured हो जाएगी\n❌ दुर्घटना में Coverage नहीं मिलेगी\n\n✅ अभी Renewal करवाएं!\n\n🏍️ वी.पी. होंडा, भोपाल\n📞 9713394738`
     );
   }
 
   const svcLabel = r.serviceType ? `${r.serviceType} सर्विस` : 'सर्विस';
   return encodeURIComponent(
-    `नमस्ते \( {name} जी! 🙏\n\nवी.पी. होंडा की तरफ से आपको याद दिलाना चाहते हैं कि आपकी * \){r.vehicle||'गाड़ी'}* (\( {r.regNo}) की * \){svcLabel}* की तारीख आ चुकी है।\n\n📅 सर्विस की तारीख: ${due}\n\nकृपया अपनी गाड़ी की सर्विस कराने के लिए हमारे शोरूम पर पधारें।\n\n🏍️ वी.पी. होंडा\nपरवलिया सड़क, भोपाल\n📞 9713394738`
+    `नमस्ते ${name} जी! 🙏\n\nवी.पी. होंडा की तरफ से आपको याद दिलाना चाहते हैं कि आपकी *${r.vehicle||'गाड़ी'}* (${r.regNo}) की *${svcLabel}* की तारीख आ चुकी है।\n\n📅 सर्विस की तारीख: ${due}\n\nकृपया अपनी गाड़ी की सर्विस कराने के लिए हमारे शोरूम पर पधारें।\n\n🏍️ वी.पी. होंडा\nपरवलिया सड़क, भोपाल\n📞 9713394738`
   );
 };
 
+// ⭐ Detect service number from invoice description/items text
 const detectServiceNumber = (inv) => {
   if (inv.serviceNumber && inv.serviceNumber >= 1 && inv.serviceNumber <= 7) return inv.serviceNumber;
   const txt = JSON.stringify({
@@ -146,12 +147,13 @@ export default function RemindersPage() {
   useEffect(()=>{
     loadAll();
     window.addEventListener('storage',loadAll);
-    intervalRef.current=setInterval(loadAll,10000);
+    intervalRef.current=setInterval(loadAll,10000); // 10 seconds — cross-device sync
     return()=>{window.removeEventListener('storage',loadAll);clearInterval(intervalRef.current);};
   },[]);
 
   const loadAll = async () => {
     try {
+      // 1. Invoices from MongoDB + localStorage
       let dbInv=[];
       try{const r=await fetch(api('/api/invoices'));if(r.ok)dbInv=await r.json();}catch{}
       const lsInv=getLS('invoices',[]);
@@ -162,20 +164,23 @@ export default function RemindersPage() {
       }).sort((a,b)=>new Date(b.invoiceDate||0)-new Date(a.invoiceDate||0));
       setInvoices(all);
 
+      // 2. SERVICE DATA sync — fetch from MongoDB first, merge with localStorage, then rebuild from invoices
       try {
         const sdRes = await fetch(api('/api/service-data'));
         if (sdRes.ok) {
-          const dbSD = await sdRes.json();
+          const dbSD = await sdRes.json(); // array of service records
           const merged = { ...getLS('customerServiceData', {}) };
+          // Merge MongoDB records INTO localStorage (MongoDB is source of truth for service dates)
           dbSD.forEach(rec => {
             const reg = rec.regNo;
             if (!reg) return;
             if (!merged[reg]) merged[reg] = {};
+            // Merge: MongoDB fields take priority for service dates
             const fields = ['purchaseDate','firstServiceDate','firstServiceKm','secondServiceDate','secondServiceKm',
               'thirdServiceDate','thirdServiceKm','fourthServiceDate','fourthServiceKm',
               'fifthServiceDate','fifthServiceKm','sixthServiceDate','sixthServiceKm',
               'seventhServiceDate','seventhServiceKm','pendingAmount','paymentDueDate','insuranceDate',
-              'insuranceStartDate','insuranceRenewalDate','insuranceRenewed'];
+              'insuranceStartDate','insuranceRenewalDate','insuranceRenewed'];   // ⭐ New insurance fields
             fields.forEach(f => { if (rec[f]) merged[reg][f] = rec[f]; });
             if (rec.customerName) merged[reg].customerName = rec.customerName;
             if (rec.phone)        merged[reg].phone        = rec.phone;
@@ -186,8 +191,10 @@ export default function RemindersPage() {
         }
       } catch(e) { console.log('service-data fetch failed:', e.message); }
 
+      // 3. Build service data from invoices (fills in any gaps)
       buildServiceData(all);
 
+      // 4. Sync updated service data back to MongoDB (so other devices get it)
       try {
         const sdToSync = getLS('customerServiceData', {});
         if (Object.keys(sdToSync).length > 0) {
@@ -195,10 +202,11 @@ export default function RemindersPage() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(sdToSync),
-          }).catch(() => {});
+          }).catch(() => {});  // fire and forget
         }
       } catch {}
 
+      // 5. Follow-up logs from MongoDB
       try {
         const fuRes = await fetch(api('/api/follow-ups'));
         if (fuRes.ok) {
@@ -227,6 +235,7 @@ export default function RemindersPage() {
       try{const r=await fetch(api('/api/customers'));if(r.ok)custs=await r.json();}catch{}
       setCustomers(custs);
       const sd=getLS('customerServiceData',{});
+      // Use latest merged follow-up data (from MongoDB + localStorage)
       const fu=getLS('followUpLog',{});
       const all=[];
       let dbg={totalCustomers:custs.length,payment:0,insurance:0,service:0};
@@ -239,6 +248,8 @@ export default function RemindersPage() {
         const nm=data.customerName||cust?.customerName||cust?.name||'Unknown';
         const ph=data.phone||cust?.phone||'';
         const vh=data.vehicle||cust?.vehicleModel||'';
+        const lastCS=fu[`pay-${regNo}`]?.slice(-1)[0]?.status||null;
+        // ✅ Use actual MongoDB _id for View button navigation; fall back to regNo
         const custId = cust?._id || regNo;
 
         const pend=parseFloat(data.pendingAmount||0);
@@ -263,6 +274,8 @@ export default function RemindersPage() {
               lastCallStatus:fu[`ins-${regNo}`]?.slice(-1)[0]?.status||null,callCount:0});}
         }
 
+        // ⭐ FIRST PARTY INSURANCE RENEWAL (11 months = 335 days after insurance start)
+        // Priority: 1) localStorage custom date, 2) insuranceStartDate, 3) insuranceDate, 4) purchaseDate+3
         const lsInsKey   = `vp_ins_${regNo||custId}`;
         const lsRenewed  = localStorage.getItem(`vp_ins_renewed_${regNo||custId}`);
         const lsInsDate  = localStorage.getItem(lsInsKey);
@@ -271,13 +284,20 @@ export default function RemindersPage() {
 
         if (insStartRaw && !data.insuranceRenewed && !lsRenewed) {
           const insStart = new Date(insStartRaw); insStart.setHours(0,0,0,0);
+          // Insurance expires at 12 months, remind at 11 months (335 days)
           const renewalDue = new Date(insStart.getTime() + 335*864e5);
           const dr = Math.floor((renewalDue - today) / 864e5);
           const rid = `insr-${regNo}`;
 
+          // Show reminder if: within 60 days before due OR up to 30 days overdue
           if (dr >= -30 && dr <= 60) {
             dbg.insuranceRenewal = (dbg.insuranceRenewal || 0) + 1;
             const insExpiry = new Date(insStart.getTime() + 365*864e5);
+            const sourceLabel = data.insuranceStartDate
+              ? 'Insurance date set'
+              : data.insuranceDate
+              ? 'Insurance date (estimated from RTO date)'
+              : `Purchase date + 3 days (estimate)`;
             all.push({
               id: rid,
               type: 'insurance-renewal',
@@ -288,7 +308,7 @@ export default function RemindersPage() {
               vehicle: vh,
               regNo,
               title: dr <= 0 ? '🛡️ Insurance Expired!' : '🛡️ Insurance Renewal Due',
-              description: `Insurance Start: ${fmtDate(insStart)} | Expiry: ${fmtDate(insExpiry)} | Renewal Due: ${fmtDate(renewalDue)}`,
+              description: `Insurance Start: ${fmtDate(insStart)} | Expiry: ${fmtDate(insExpiry)} | Renewal Due: ${fmtDate(renewalDue)} | ${sourceLabel}`,
               daysRemaining: dr,
               daysToExpiry: Math.floor((insExpiry - today) / 864e5),
               status: dr <= 0 ? 'critical' : dr <= 15 ? 'critical' : 'warning',
@@ -319,7 +339,7 @@ export default function RemindersPage() {
           if(doneDate&&!data[nextKey]){
             const prev=new Date(doneDate);prev.setHours(0,0,0,0);
             const due=new Date(prev.getTime()+svc.days*864e5);const dr=Math.floor((due-today)/864e5);
-            const rid=`svc-\( {svc.next}- \){regNo}`;
+            const rid=`svc-${svc.next}-${regNo}`;
             if(dr>=-30){dbg.service++;
               all.push({id:rid,type:'service',serviceType:svc.next,customerId:custId,customerName:nm,customerPhone:ph,vehicle:vh,regNo,
                 title:`🔧 ${svc.label} Due`,description:`पिछली: ${fmtDate(doneDate)} | Due: ${fmtDate(due)}`,
@@ -333,6 +353,7 @@ export default function RemindersPage() {
       all.sort((a,b)=>{if(a.status!==b.status)return a.status==='critical'?-1:1;return a.daysRemaining-b.daysRemaining;});
       setReminders(all);setDebugInfo(dbg);setLastRefresh(new Date());setLoading(false);
 
+      // ⭐ Always calculate summary so counts show (fix: was hidden behind notifStatus check)
       if (all.length > 0) {
         const summary = getReminderSummary(custs);
         setNotifSummary(summary);
@@ -342,11 +363,6 @@ export default function RemindersPage() {
       }
     }catch(e){console.error(e);setLoading(false);}
   };
-
-  // बाकी सारा कोड (submitFollowUp, submitDone, FILTERS, filtered logic, return JSX) वैसा ही है जैसा आपने भेजा था
-  // मैंने सिर्फ ऊपर वाला हिस्सा ठीक किया है। पूरा कोड बहुत लंबा है इसलिए यहाँ पूरा पेस्ट नहीं कर रहा हूँ।
-
-  // अगर आप चाहें तो मैं पूरा फाइल एक बार में दे सकता हूँ, लेकिन सबसे आसान तरीका यह है कि आप अपने पुराने फाइल में सिर्फ ऊपर वाला हिस्सा (import से लेकर buildServiceData तक) इस नए वाले से replace कर दें।
 
   const submitFollowUp = async () => {
     if(!activeR) return;

@@ -24,12 +24,46 @@ export const sendWhatsApp = (phone, message) => {
     alert('❌ Phone number नहीं है');
     return false;
   }
-  // Clean phone: remove spaces, dashes, + sign
-  const cleaned = String(phone).replace(/[\s\-+]/g, '');
-  // Add 91 prefix if missing
-  const final = cleaned.length === 10 ? `91${cleaned}` : cleaned;
+  // ✅ FIX: Extract FIRST number only when multiple numbers stored
+  // Handles: "9876543210, 8765432109" or "9876543210/8765432109" or "98765432108765432109"
+  const raw = String(phone).trim();
+
+  // Split by common separators: comma, semicolon, slash, space, pipe
+  const parts = raw.split(/[,;\/|\s]+/).map(p => p.replace(/[\s\-+]/g, '')).filter(Boolean);
+
+  // Find the first valid 10-digit Indian mobile number
+  let firstNumber = null;
+  for (const part of parts) {
+    // Remove country code if present (91XXXXXXXXXX → XXXXXXXXXX)
+    const stripped = part.startsWith('91') && part.length === 12 ? part.slice(2) : part;
+    if (/^[6-9]\d{9}$/.test(stripped)) {
+      firstNumber = stripped;
+      break;
+    }
+    // Try part directly if 10 digits starting with 6-9
+    if (/^[6-9]\d{9}$/.test(part)) {
+      firstNumber = part;
+      break;
+    }
+  }
+
+  // Fallback: take first 10 digits from raw (for concatenated numbers)
+  if (!firstNumber) {
+    const digits = raw.replace(/\D/g, '');
+    if (digits.length >= 10) {
+      const candidate = digits.startsWith('91') && digits.length >= 12 ? digits.slice(2, 12) : digits.slice(0, 10);
+      if (/^[6-9]\d{9}$/.test(candidate)) firstNumber = candidate;
+    }
+  }
+
+  if (!firstNumber) {
+    alert('❌ Valid phone number नहीं मिला: ' + raw.slice(0, 30));
+    return false;
+  }
+
+  const final   = `91${firstNumber}`;
   const encoded = encodeURIComponent(message);
-  const url = `https://wa.me/${final}?text=${encoded}`;
+  const url     = `https://wa.me/${final}?text=${encoded}`;
   window.open(url, '_blank');
   return true;
 };
@@ -573,67 +607,4 @@ export const getPickupDropStats = () => {
 };
 
 /**
- * Update pickup-drop status (in-transit -> completed)
- */
-export const updatePickupDrop = (id, updates) => {
-  const list = JSON.parse(localStorage.getItem('vp_pickup_drops') || '[]');
-  const idx = list.findIndex(p => p.id === id);
-  if (idx === -1) return false;
-  list[idx] = { ...list[idx], ...updates, updatedAt: new Date().toISOString() };
-  localStorage.setItem('vp_pickup_drops', JSON.stringify(list));
-  return list[idx];
-};
-
-// ──────────────────────────────────────────────────────────────────────────
-// 📍 GEOLOCATION HELPER
-// ──────────────────────────────────────────────────────────────────────────
-
-export const getCurrentLocation = () => {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) return reject('Location not supported');
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-        accuracy: pos.coords.accuracy,
-      }),
-      (err) => reject(err.message),
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  });
-};
-
-// ──────────────────────────────────────────────────────────────────────────
-// 🎯 EXPORT ALL
-// ──────────────────────────────────────────────────────────────────────────
-
-export default {
-  // WhatsApp
-  sendWhatsApp,
-  buildInvoiceWAMessage,
-  buildServiceReminderWA,
-  buildBirthdayWA,
-  buildCustomWA,
-  // Camera
-  captureFromCamera,
-  compressImage,
-  getBase64Size,
-  // Notifications
-  requestNotificationPermission,
-  showNotification,
-  showInAppToast,
-  // Search
-  universalSearch,
-  // Reminders
-  getServiceSchedule,
-  checkExpiry,
-  // Visitors
-  recordVisitor,
-  getVisitorStats,
-  // Pickup-Drop
-  recordPickupDrop,
-  getPickupDropStats,
-  updatePickupDrop,
-  // Location
-  getCurrentLocation,
-};
+ * Update pickup-drop status (in-transit -
