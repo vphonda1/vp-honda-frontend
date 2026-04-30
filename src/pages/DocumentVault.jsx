@@ -1,4 +1,5 @@
 // DocumentVault.jsx — VP Honda Document Vault (Complete)
+// Enhanced: Customer search dropdown + multi-document batch upload
 // Features:
 // • Camera + Gallery photo upload
 // • Customer-wise folders (date-wise)
@@ -6,9 +7,11 @@
 // • Insurance button → WhatsApp group (Aadhar, PAN, Chassis trace, Hypothecation, Nominee)
 // • RTO button → WhatsApp to Pal (Aadhar, PAN, Chassis trace, Tax Invoice, Chassis photo)
 // • Expiry alerts
+// • NEW: Searchable customer dropdown (type ≥2 chars → select from list)
+// • NEW: Stay‑open modal to add multiple docs for same customer
 
-import { useState, useEffect } from 'react';
-import { FolderOpen, Camera, X, AlertTriangle, Search, Image, Shield, FileText, Folder, ChevronRight, ChevronDown } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { FolderOpen, Camera, X, AlertTriangle, Search, Image, ChevronRight } from 'lucide-react';
 import { captureFromCamera, checkExpiry, showInAppToast, sendWhatsApp } from '../utils/smartUtils';
 import { api } from '../utils/apiConfig';
 
@@ -28,9 +31,8 @@ const DOC_TYPES = [
   { key:'other',        label:'Other Document',        icon:'📁', hasExpiry:false },
 ];
 
-// ── Insurance docs needed ─────────────────────────────────────────────────────
+// ── Insurance & RTO required doc keys ─────────────────────────────────────────
 const INS_DOCS   = ['aadhar','pan','chassis_trace','hypothecation','nominee'];
-// ── RTO docs needed ───────────────────────────────────────────────────────────
 const RTO_DOCS   = ['aadhar','pan','chassis_trace','tax_invoice','chassis_photo'];
 
 const loadDocs = () => {
@@ -52,14 +54,60 @@ export default function DocumentVault() {
   const [photo,       setPhoto]       = useState(null);
   const [capturing,   setCapturing]   = useState(false);
   const [viewDoc,     setViewDoc]     = useState(null);
-  const [activeFolder,setActiveFolder]= useState(null); // selected customer folder
+  const [activeFolder,setActiveFolder]= useState(null);
   const [view,        setView]        = useState('folders'); // 'folders' | 'all'
   const [customers,   setCustomers]   = useState([]);
+
+  // Customer search dropdown state
+  const [custSearch, setCustSearch] = useState('');
+  const [showDropdown, setShowDropdown] = useState(false);
+  const dropdownRef = useRef(null);
 
   // Load customers for autofill
   useEffect(() => {
     fetch(api('/api/customers')).then(r => r.ok ? r.json() : []).then(setCustomers).catch(() => {});
   }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Filter customers based on search text (name, phone, aadhar)
+  const filteredCustomers = custSearch.trim().length >= 2
+    ? customers.filter(c =>
+        (c.customerName || c.name || '').toLowerCase().includes(custSearch.toLowerCase()) ||
+        (c.mobileNo || c.phone || '').includes(custSearch) ||
+        (c.aadhar || '').includes(custSearch)
+      ).slice(0, 8)
+    : [];
+
+  // Select a customer from dropdown
+  const selectCustomer = (cust) => {
+    setForm({
+      ...form,
+      customerName: cust.customerName || cust.name || '',
+      customerPhone: cust.mobileNo || cust.phone || '',
+      aadharNo: cust.aadhar || '',
+      vehicleModel: cust.vehicleModel || '',
+      chassisNo: cust.chassisNo || '',
+    });
+    setCustSearch(cust.customerName || cust.name || '');
+    setShowDropdown(false);
+  };
+
+  // Handle manual typing in customer name field
+  const handleCustNameChange = (value) => {
+    setCustSearch(value);
+    setForm({ ...form, customerName: value });
+    setShowDropdown(value.trim().length >= 2);
+  };
 
   // ── Photo: Camera ────────────────────────────────────────────────────────────
   const capturePhoto = async () => {
@@ -90,9 +138,12 @@ export default function DocumentVault() {
     input.click();
   };
 
-  // ── Save document ─────────────────────────────────────────────────────────────
-  const saveDoc = () => {
-    if (!form.customerName || !photo) { alert('Customer name और photo जरूरी है'); return; }
+  // ── Save document (with option to stay open for batch upload) ────────────────
+  const saveDoc = (stayOpen = false) => {
+    if (!form.customerName || !photo) {
+      alert('Customer name और photo जरूरी है');
+      return;
+    }
     const docType = DOC_TYPES.find(d => d.key === form.docType) || DOC_TYPES[0];
     const now     = new Date().toISOString();
     const d = {
@@ -113,10 +164,29 @@ export default function DocumentVault() {
       savedAt:      now,
     };
     const updated = [d, ...docs];
-    saveDocs(updated); setDocs(updated);
-    setShowForm(false); setPhoto(null);
-    setForm({ customerName:'', customerPhone:'', aadharNo:'', vehicleModel:'', chassisNo:'', docType:'aadhar', expiryDate:'', notes:'' });
+    saveDocs(updated);
+    setDocs(updated);
     showInAppToast('📂 Document saved', d.docTypeLabel, 'success');
+
+    if (!stayOpen) {
+      // Close modal and reset everything
+      setShowForm(false);
+      setPhoto(null);
+      setForm({ customerName:'', customerPhone:'', aadharNo:'', vehicleModel:'', chassisNo:'', docType:'aadhar', expiryDate:'', notes:'' });
+      setCustSearch('');
+    } else {
+      // Stay open: clear photo, doc type, expiry, notes — keep customer data
+      setPhoto(null);
+      setForm({
+        ...form,
+        docType: 'aadhar',
+        expiryDate: '',
+        notes: '',
+      });
+      // Keep customer name, phone, aadhar, vehicle, chassis unchanged
+      // Also keep custSearch in sync
+      setCustSearch(form.customerName);
+    }
   };
 
   const deleteDoc = (id) => {
@@ -136,12 +206,11 @@ export default function DocumentVault() {
 
   // ── Insurance WhatsApp ────────────────────────────────────────────────────────
   const sendInsurance = (folderDocs, customerName, customerPhone) => {
-    // Check which docs are available
     const available = INS_DOCS.filter(t => folderDocs.some(d => d.docType === t));
     const missing   = INS_DOCS.filter(t => !folderDocs.some(d => d.docType === t));
 
     if (available.length === 0) {
-      alert(`❌ Insurance के लिए कोई document नहीं है।\n\nजरूरी documents:\n${INS_DOCS.map(t => DOC_TYPES.find(d=>d.key===t)?.label || t).join('\n')}`);
+      alert(`❌ Insurance के लिए कोई document नहीं है.\n\nजरूरी documents:\n${INS_DOCS.map(t => DOC_TYPES.find(d=>d.key===t)?.label || t).join('\n')}`);
       return;
     }
 
@@ -154,7 +223,6 @@ export default function DocumentVault() {
 
     sendWhatsApp(phone, msg);
 
-    // Open each document photo for manual sharing
     const ins_docs_found = folderDocs.filter(d => INS_DOCS.includes(d.docType));
     if (ins_docs_found.length > 0) {
       setTimeout(() => {
@@ -201,21 +269,6 @@ export default function DocumentVault() {
           });
         }
       }, 1000);
-    }
-  };
-
-  // ── Customer autofill ─────────────────────────────────────────────────────────
-  const autofill = (name) => {
-    const c = customers.find(c => (c.customerName||c.name||'').toLowerCase().includes(name.toLowerCase()));
-    if (c) {
-      setForm(f => ({
-        ...f,
-        customerName:  c.customerName || c.name || f.customerName,
-        customerPhone: c.mobileNo || c.phone || f.customerPhone,
-        vehicleModel:  c.vehicleModel || f.vehicleModel,
-        chassisNo:     c.chassisNo || f.chassisNo,
-        aadharNo:      c.aadhar || f.aadharNo,
-      }));
     }
   };
 
@@ -295,17 +348,14 @@ export default function DocumentVault() {
             return (
               <div key={key} style={{ background:'#0f172a', border:'1px solid #1e293b', borderRadius:12, padding:14 }}>
                 <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
-                  {/* Folder icon */}
                   <div style={{ width:44, height:44, borderRadius:10, background:'#1e40af', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22, flexShrink:0 }}>
                     📁
                   </div>
-                  {/* Info */}
                   <div style={{ flex:1, minWidth:150, cursor:'pointer' }} onClick={() => { setActiveFolder(key); setView('folder_detail'); }}>
                     <p style={{ fontWeight:800, fontSize:14, margin:0 }}>{folder.name}</p>
                     <p style={{ color:'#94a3b8', fontSize:11, margin:'3px 0 0' }}>
                       📞 {folder.phone || '-'} · {folder.docs.length} docs · 📅 {new Date(folder.date).toLocaleDateString('en-IN')}
                     </p>
-                    {/* Doc type chips */}
                     <div style={{ display:'flex', gap:4, marginTop:6, flexWrap:'wrap' }}>
                       {folder.docs.map((d,i) => (
                         <span key={i} style={{ background:'#1e293b', color:'#cbd5e1', padding:'2px 6px', borderRadius:4, fontSize:9, fontWeight:600 }}>
@@ -314,9 +364,7 @@ export default function DocumentVault() {
                       ))}
                     </div>
                   </div>
-                  {/* Action buttons */}
                   <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-                    {/* Insurance button */}
                     <button
                       onClick={() => sendInsurance(folder.docs, folder.name, folder.phone)}
                       style={{
@@ -327,7 +375,6 @@ export default function DocumentVault() {
                       }}>
                       🛡️ Insurance ({insCount}/{INS_DOCS.length})
                     </button>
-                    {/* RTO button */}
                     <button
                       onClick={() => sendRTO(folder.docs, folder.name, folder.phone)}
                       style={{
@@ -355,7 +402,6 @@ export default function DocumentVault() {
         const rtoCount = RTO_DOCS.filter(t => folder.docs.some(d => d.docType === t)).length;
         return (
           <div>
-            {/* Folder header */}
             <div style={{ background:'#0f172a', border:'1px solid #334155', borderRadius:12, padding:14, marginBottom:14 }}>
               <button onClick={() => { setActiveFolder(null); setView('folders'); }}
                 style={{ background:'#1e293b', border:'none', color:'#94a3b8', borderRadius:6, padding:'4px 10px', cursor:'pointer', fontSize:11, marginBottom:10 }}>
@@ -364,7 +410,6 @@ export default function DocumentVault() {
               <h2 style={{ fontSize:16, fontWeight:800, margin:'0 0 4px' }}>📁 {folder.name}</h2>
               <p style={{ color:'#94a3b8', fontSize:12, margin:0 }}>📞 {folder.phone || '-'} · {folder.docs.length} documents</p>
 
-              {/* Insurance + RTO big buttons */}
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginTop:12 }}>
                 <button onClick={() => sendInsurance(folder.docs, folder.name, folder.phone)}
                   style={{ background:'linear-gradient(135deg,#16a34a,#15803d)', color:'#fff', border:'none', padding:'12px', borderRadius:10, fontWeight:800, fontSize:13, cursor:'pointer', textAlign:'left' }}>
@@ -391,13 +436,15 @@ export default function DocumentVault() {
               </div>
             </div>
 
-            {/* Documents grid */}
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:10 }}>
               {folder.docs.map(d => (
                 <DocCard key={d.id} doc={d} onView={() => setViewDoc(d)} onDelete={() => deleteDoc(d.id)}/>
               ))}
-              {/* Add more button */}
-              <div onClick={() => { setForm(f => ({...f, customerName: folder.name, customerPhone: folder.phone || ''})); setShowForm(true); }}
+              <div onClick={() => { 
+                setForm(f => ({...f, customerName: folder.name, customerPhone: folder.phone || ''}));
+                setCustSearch(folder.name);
+                setShowForm(true);
+              }}
                 style={{ background:'#0f172a', border:'2px dashed #334155', borderRadius:12, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:20, cursor:'pointer', gap:6, minHeight:140 }}>
                 <span style={{ fontSize:28 }}>➕</span>
                 <span style={{ color:'#64748b', fontSize:11, fontWeight:700 }}>Add Document</span>
@@ -443,7 +490,7 @@ export default function DocumentVault() {
         </div>
       )}
 
-      {/* Add Document Modal */}
+      {/* Add Document Modal with search dropdown and multi-doc support */}
       {showForm && (
         <div onClick={() => { setShowForm(false); setPhoto(null); }} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)', display:'flex', alignItems:'center', justifyContent:'center', padding:16, zIndex:50 }}>
           <div onClick={e => e.stopPropagation()} style={{ background:'#0f172a', border:'1px solid #334155', borderRadius:14, width:'100%', maxWidth:500, padding:20, maxHeight:'94vh', overflowY:'auto' }}>
@@ -453,12 +500,33 @@ export default function DocumentVault() {
             </div>
 
             <div style={{ display:'grid', gap:10 }}>
-              {/* Customer Name */}
-              <div>
+              {/* Customer Name with dropdown */}
+              <div style={{ position:'relative' }} ref={dropdownRef}>
                 <label style={lbl}>Customer Name *</label>
-                <input value={form.customerName} onChange={e => { setForm({...form, customerName: e.target.value}); if (e.target.value.length >= 3) autofill(e.target.value); }}
-                  placeholder="नाम डालें — auto-fill होगा"
-                  style={inp}/>
+                <input
+                  value={custSearch}
+                  onChange={e => handleCustNameChange(e.target.value)}
+                  onFocus={() => custSearch.trim().length >= 2 && setShowDropdown(true)}
+                  placeholder="नाम डालें — मिलते ही सुझाव दिखेंगे"
+                  style={inp}
+                  autoComplete="off"
+                />
+                {showDropdown && filteredCustomers.length > 0 && (
+                  <div style={{
+                    position:'absolute', top:'100%', left:0, right:0, background:'#1e293b',
+                    border:'1px solid #475569', borderRadius:8, marginTop:4, maxHeight:200, overflowY:'auto', zIndex:60
+                  }}>
+                    {filteredCustomers.map((c, idx) => (
+                      <div key={idx}
+                        onClick={() => selectCustomer(c)}
+                        style={{ padding:'8px 12px', cursor:'pointer', borderBottom:'1px solid #334155', color:'#e2e8f0', fontSize:13 }}
+                      >
+                        <strong>{c.customerName || c.name}</strong><br/>
+                        <span style={{ fontSize:11, color:'#94a3b8' }}>📞 {c.mobileNo || c.phone} · 🪪 {c.aadhar || '—'}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Phone */}
@@ -537,16 +605,18 @@ export default function DocumentVault() {
               </div>
             </div>
 
+            {/* Two save buttons: Save & Add Another / Save & Close */}
             <div style={{ display:'flex', gap:8, marginTop:14 }}>
-              <button onClick={saveDoc} disabled={!photo}
-                style={{ flex:1, background:photo?'#DC0000':'#475569', color:'#fff', border:'none', padding:12, borderRadius:10, fontWeight:800, cursor:photo?'pointer':'not-allowed' }}>
-                💾 Save Document
+              <button onClick={() => saveDoc(true)} disabled={!photo}
+                style={{ flex:1, background:photo?'#2563eb':'#475569', color:'#fff', border:'none', padding:12, borderRadius:10, fontWeight:800, cursor:photo?'pointer':'not-allowed' }}>
+                ➕ Save & Add Another
               </button>
-              <button onClick={() => { setShowForm(false); setPhoto(null); }}
-                style={{ background:'#475569', color:'#fff', border:'none', padding:'12px 16px', borderRadius:10, fontWeight:700, cursor:'pointer' }}>
-                Cancel
+              <button onClick={() => saveDoc(false)} disabled={!photo}
+                style={{ flex:1, background:photo?'#DC0000':'#475569', color:'#fff', border:'none', padding:12, borderRadius:10, fontWeight:800, cursor:photo?'pointer':'not-allowed' }}>
+                💾 Save & Close
               </button>
             </div>
+            {!photo && <p style={{ color:'#ef4444', fontSize:10, marginTop:6 }}>* Photo is required</p>}
           </div>
         </div>
       )}
