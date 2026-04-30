@@ -89,11 +89,11 @@ export function buildAllReminders(customers) {
     const name    = c.customerName || c.name || 'Customer';
     const phone   = c.mobileNo || c.phone || '';
     const model   = c.vehicleModel || c.linkedVehicle?.model || '';
-    const regNo   = c.regNo || c.linkedVehicle?.regNo || c.registrationNumber || '';
+    const regNo   = c.registrationNo || c.regNo || c.linkedVehicle?.regNo || c.registrationNumber || '';
     const id      = c._id || c.id || name;
 
     // ── 1. Honda Free Services (from purchaseDate) ────────────────────────
-    const purchaseDate = c.purchaseDate || c.linkedVehicle?.purchaseDate;
+    const purchaseDate = c.purchaseDate || c.invoiceDate || c.linkedVehicle?.purchaseDate;
     if (purchaseDate) {
       FREE_SERVICES.forEach(s => {
         const due  = addMonths(new Date(purchaseDate), s.months);
@@ -151,7 +151,7 @@ export function buildAllReminders(customers) {
     }
 
     // ── 4. RTO Pending (within 7 days of insurance date) ─────────────────
-    const insDate = c.insuranceDate;
+    const insDate = c.insuranceDate || c.insuranceStartDate;
     if (insDate && !c.rtoDoneDate) {
       const rto  = addDays(new Date(insDate), 7);
       const days = diffDays(rto);
@@ -173,7 +173,7 @@ export function buildAllReminders(customers) {
     const lsKey     = `vp_ins_${regNo || id}`;
     const lsRenewed = typeof localStorage !== 'undefined' ? localStorage.getItem(`vp_ins_renewed_${regNo || id}`) : null;
     const lsDate    = typeof localStorage !== 'undefined' ? localStorage.getItem(lsKey) : null;
-    const insStart  = lsDate || c.insuranceStartDate || insDate
+    const insStart  = lsDate || c.insuranceStartDate || c.insuranceDate
       || (purchaseDate ? dateStr(addDays(new Date(purchaseDate), 3)) : null);
 
     if (insStart && !lsRenewed && !c.insuranceRenewed) {

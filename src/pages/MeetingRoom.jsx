@@ -17,7 +17,7 @@ const QUICK_ROOMS = [
 // ── Send push notification via backend ────────────────────────────────────────
 async function sendMeetingPush(apiBase, title, body, url) {
   try {
-    await fetch(`${apiBase}/api/messages/send-push`, {
+    await fetch(`${apiBase}/api/push/send-push`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ title, body, url }),

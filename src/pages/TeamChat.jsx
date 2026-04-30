@@ -75,7 +75,7 @@ export default function TeamChat({ user }) {
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
       });
-      const res = await fetch(api('/api/save-subscription'), {
+      const res = await fetch(api('/api/push/save-push-subscription'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(subscription)
