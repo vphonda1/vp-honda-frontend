@@ -1,28 +1,26 @@
-// DocumentVault.jsx — VP Honda Document Vault (Only API, No Offline)
-// Fixed: gallery import, image compression with fallback, PDF/Video support
-
+// DocumentVault.jsx — VP Honda Document Vault (Fixed compression, no "iu is not a constructor")
 import { useState, useEffect, useRef } from 'react';
 import { FolderOpen, Camera, X, AlertTriangle, Search, Image, ChevronRight, FileText, Video } from 'lucide-react';
 import { captureFromCamera, checkExpiry, showInAppToast, sendWhatsApp } from '../utils/smartUtils';
 import { api, apiFetch } from '../utils/apiConfig';
 
-// Document types (including Delivery, Old RC, Old NOC)
+// Document types (all required ones)
 const DOC_TYPES = [
-  { key: 'aadhar',        label: 'Aadhar Card',          icon: '🪪', hasExpiry: false },
-  { key: 'pan',           label: 'PAN Card',              icon: '💳', hasExpiry: false },
-  { key: 'chassis_trace', label: 'Chassis Trace Page',   icon: '📋', hasExpiry: false },
-  { key: 'tax_invoice',   label: 'Tax Invoice',           icon: '🧾', hasExpiry: false },
-  { key: 'challan',       label: 'Challan',               icon: '📜', hasExpiry: false },
-  { key: 'chassis_photo', label: 'Chassis Photo',         icon: '🔢', hasExpiry: false },
-  { key: 'chassis_video', label: 'Chassis Video',         icon: '🎥', hasExpiry: false },
-  { key: 'delivery_photo',label: 'Delivery Photo',        icon: '📸', hasExpiry: false },
-  { key: 'old_rc',        label: 'Old RC Card',           icon: '🪪', hasExpiry: false },
-  { key: 'old_noc',       label: 'Old Bike NOC',          icon: '📑', hasExpiry: false },
-  { key: 'rto_form',      label: 'RTO Form',              icon: '🚗', hasExpiry: false },
-  { key: 'rc',            label: 'RC Book',               icon: '📄', hasExpiry: false },
-  { key: 'insurance',     label: 'Insurance Policy',      icon: '🛡️', hasExpiry: true  },
-  { key: 'puc',           label: 'PUC Certificate',       icon: '🔬', hasExpiry: true  },
-  { key: 'other',         label: 'Other Document',        icon: '📁', hasExpiry: false },
+  { key: 'aadhar', label: 'Aadhar Card', icon: '🪪', hasExpiry: false },
+  { key: 'pan', label: 'PAN Card', icon: '💳', hasExpiry: false },
+  { key: 'chassis_trace', label: 'Chassis Trace Page', icon: '📋', hasExpiry: false },
+  { key: 'tax_invoice', label: 'Tax Invoice', icon: '🧾', hasExpiry: false },
+  { key: 'challan', label: 'Challan', icon: '📜', hasExpiry: false },
+  { key: 'chassis_photo', label: 'Chassis Photo', icon: '🔢', hasExpiry: false },
+  { key: 'chassis_video', label: 'Chassis Video', icon: '🎥', hasExpiry: false },
+  { key: 'delivery_photo', label: 'Delivery Photo', icon: '📸', hasExpiry: false },
+  { key: 'old_rc', label: 'Old RC Card', icon: '🪪', hasExpiry: false },
+  { key: 'old_noc', label: 'Old Bike NOC', icon: '📑', hasExpiry: false },
+  { key: 'rto_form', label: 'RTO Form', icon: '🚗', hasExpiry: false },
+  { key: 'rc', label: 'RC Book', icon: '📄', hasExpiry: false },
+  { key: 'insurance', label: 'Insurance Policy', icon: '🛡️', hasExpiry: true },
+  { key: 'puc', label: 'PUC Certificate', icon: '🔬', hasExpiry: true },
+  { key: 'other', label: 'Other Document', icon: '📁', hasExpiry: false },
 ];
 
 const INS_DOCS = ['aadhar', 'pan', 'chassis_trace', 'tax_invoice', 'challan'];
@@ -31,43 +29,41 @@ const DEFAULT_INSURANCE_NUMBER = '918770259361';
 const DEFAULT_RTO_NUMBER = '919752538014';
 
 const folderKey = (name, date) => {
-  const d = date ? new Date(date).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'2-digit' }) : new Date().toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'2-digit' });
+  const d = date ? new Date(date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' });
   return `${(name || 'Unknown').replace(/\s+/g, '_')}_${d}`;
 };
 
-// Safe image compression with fallback
-async function compressImageSafe(dataUrl, maxWidth = 1200, quality = 0.8) {
-  return new Promise((resolve) => {
-    try {
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const canvas = document.createElement('canvas');
-          let width = img.width, height = img.height;
-          if (width > maxWidth) {
-            height = (height * maxWidth) / width;
-            width = maxWidth;
-          }
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', quality));
-        } catch (err) {
-          console.warn('Compression failed, using original', err);
-          resolve(dataUrl);
-        }
-      };
-      img.onerror = () => resolve(dataUrl);
-      img.src = dataUrl;
-    } catch (err) {
-      console.warn('Compression error, using original', err);
-      resolve(dataUrl);
+// ========== RELIABLE IMAGE COMPRESSION (No "Image" constructor bug) ==========
+async function compressImageRobust(dataUrl, maxWidth = 1200, quality = 0.8) {
+  try {
+    // Use createImageBitmap – modern, fast, avoids "new Image()" issues
+    const response = await fetch(dataUrl);
+    const blob = await response.blob();
+    const bitmap = await createImageBitmap(blob);
+    
+    let width = bitmap.width;
+    let height = bitmap.height;
+    if (width > maxWidth) {
+      height = (height * maxWidth) / width;
+      width = maxWidth;
     }
-  });
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    
+    // Convert to JPEG with given quality
+    const compressed = canvas.toDataURL('image/jpeg', quality);
+    bitmap.close(); // free memory
+    return compressed;
+  } catch (err) {
+    console.warn('Compression failed, using original image', err);
+    return dataUrl; // fallback
+  }
 }
 
-// Process file (image/pdf/video) – compress only images
 async function processFile(file, type) {
   return new Promise((resolve, reject) => {
     if (file.size > 30 * 1024 * 1024) {
@@ -79,7 +75,7 @@ async function processFile(file, type) {
     reader.onload = async (e) => {
       let dataUrl = e.target.result;
       if (type === 'image') {
-        dataUrl = await compressImageSafe(dataUrl);
+        dataUrl = await compressImageRobust(dataUrl);
       }
       resolve({ dataUrl, fileType: type, fileName: file.name });
     };
@@ -88,6 +84,7 @@ async function processFile(file, type) {
   });
 }
 
+// ========== Main Component ==========
 export default function DocumentVault() {
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -108,7 +105,7 @@ export default function DocumentVault() {
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef(null);
 
-  // Load documents from backend
+  // Load from backend
   const loadDocuments = async () => {
     setLoading(true);
     setError(null);
@@ -116,7 +113,6 @@ export default function DocumentVault() {
       const data = await apiFetch('/api/documents');
       setDocs(data);
     } catch (err) {
-      console.error(err);
       setError('❌ सर्वर से कनेक्ट नहीं हो पाया। कृपया बैकएंड API चेक करें (GET /api/documents)');
       showInAppToast('API Error', 'बैकएंड कनेक्ट नहीं हो रहा', 'error');
     } finally {
@@ -185,12 +181,12 @@ export default function DocumentVault() {
     }
   };
 
-  // File pickers
+  // File pickers (with robust compression)
   const capturePhoto = async () => {
     setCapturing(true);
     try {
       const raw = await captureFromCamera('environment');
-      const compressed = await compressImageSafe(raw);
+      const compressed = await compressImageRobust(raw);
       setFileData({ dataUrl: compressed, fileType: 'image', fileName: 'camera_photo.jpg' });
       showInAppToast('📷 फोटो कैप्चर + कंप्रेस', '', 'success');
     } catch (e) {
@@ -312,7 +308,7 @@ export default function DocumentVault() {
   }, {});
   const folderList = Object.entries(folders).sort((a, b) => new Date(b[1].date) - new Date(a[1].date));
 
-  // WhatsApp functions (Insurance & RTO)
+  // WhatsApp functions (unchanged, but safe)
   const sendInsurance = (folderDocs, folder) => {
     const available = INS_DOCS.filter(t => folderDocs.some(d => d.docType === t));
     const missing = INS_DOCS.filter(t => !folderDocs.some(d => d.docType === t));
@@ -381,97 +377,56 @@ export default function DocumentVault() {
     </div>
   );
 
-  // JSX return (same as before, but with corrected file pickers)
   return (
     <div style={{ padding: 14, background: '#020617', minHeight: '100vh', color: '#fff' }}>
-      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
         <div>
-          <h1 style={{ fontSize: 20, fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <FolderOpen size={20} /> Document Vault
-          </h1>
-          <p style={{ color: '#94a3b8', fontSize: 12, margin: '4px 0 0' }}>
-            {docs.length} documents · {folderList.length} folders · ☁️ Cloud Sync
-          </p>
+          <h1 style={{ fontSize: 20, fontWeight: 800, margin: 0 }}><FolderOpen size={20} /> Document Vault</h1>
+          <p style={{ color: '#94a3b8', fontSize: 12 }}>{docs.length} documents · {folderList.length} folders · ☁️ Sync</p>
         </div>
-        <button onClick={() => setShowForm(true)} style={{ background: 'linear-gradient(135deg,#DC0000,#B91C1C)', color: '#fff', border: 'none', padding: '10px 16px', borderRadius: 10, fontWeight: 700, cursor: 'pointer' }}>
-          + Add Document
-        </button>
+        <button onClick={() => setShowForm(true)} style={{ background: '#DC0000', padding: '10px 16px', borderRadius: 10, fontWeight: 700, cursor: 'pointer' }}>+ Add Document</button>
       </div>
 
-      {/* Expiry Alerts */}
       {expiringSoon.length > 0 && (
         <div style={{ background: '#7c2d1222', border: '1px solid #ea580c', borderRadius: 10, padding: '10px 14px', marginBottom: 12 }}>
-          <p style={{ color: '#fdba74', fontWeight: 700, fontSize: 13, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <AlertTriangle size={14} /> {expiringSoon.length} डॉक्यूमेंट जल्दी एक्सपायर होंगे!
-          </p>
-          {expiringSoon.map((d, i) => {
-            const check = checkExpiry(d.expiryDate, d.docTypeLabel);
-            return <p key={i} style={{ color: '#fed7aa', fontSize: 12, margin: '4px 0 0' }}>{d.docIcon} {d.customerName} · {d.docTypeLabel} · {check?.msg}</p>;
-          })}
+          <p style={{ color: '#fdba74', fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}><AlertTriangle size={14} /> {expiringSoon.length} डॉक्यूमेंट जल्दी एक्सपायर होंगे!</p>
+          {expiringSoon.map((d, i) => <p key={i} style={{ fontSize: 12, margin: '4px 0 0' }}>{d.docIcon} {d.customerName} · {d.docTypeLabel} · {checkExpiry(d.expiryDate, d.docTypeLabel)?.msg}</p>)}
         </div>
       )}
 
-      {/* Search + View Toggle */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-        <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
-          <Search size={14} style={{ position: 'absolute', left: 12, top: 11, color: '#64748b' }} />
-          <input
-            value={search} onChange={e => { setSearch(e.target.value); setView('all'); if (!e.target.value) setView('folders'); }}
-            placeholder="कस्टमर नाम, आधार, मोबाइल से खोजें..."
-            style={{ background: '#1e293b', color: '#fff', border: '1px solid #475569', borderRadius: 8, padding: '10px 12px 10px 34px', fontSize: 13, width: '100%', outline: 'none' }}
-          />
-        </div>
-        <button onClick={() => { setView('folders'); setSearch(''); setActiveFolder(null); }}
-          style={{ background: view === 'folders' ? '#DC0000' : '#1e293b', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-          📁 Folders
-        </button>
-        <button onClick={() => setView('all')}
-          style={{ background: view === 'all' ? '#DC0000' : '#1e293b', color: '#fff', border: 'none', padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
-          📋 All Docs
-        </button>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <div style={{ position: 'relative', flex: 1 }}><Search size={14} style={{ position: 'absolute', left: 12, top: 11, color: '#64748b' }} /><input value={search} onChange={e => { setSearch(e.target.value); setView('all'); if (!e.target.value) setView('folders'); }} placeholder="खोजें..." style={{ background: '#1e293b', color: '#fff', border: '1px solid #475569', borderRadius: 8, padding: '10px 12px 10px 34px', width: '100%' }} /></div>
+        <button onClick={() => { setView('folders'); setSearch(''); setActiveFolder(null); }} style={{ background: view === 'folders' ? '#DC0000' : '#1e293b', padding: '8px 14px', borderRadius: 8, fontSize: 12, cursor: 'pointer' }}>📁 Folders</button>
+        <button onClick={() => setView('all')} style={{ background: view === 'all' ? '#DC0000' : '#1e293b', padding: '8px 14px', borderRadius: 8, fontSize: 12, cursor: 'pointer' }}>📋 All Docs</button>
       </div>
 
-      {/* Folder View */}
       {view === 'folders' && !activeFolder && (
         <div style={{ display: 'grid', gap: 8 }}>
-          {folderList.length === 0 ? (
-            <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, padding: 40, textAlign: 'center', color: '#64748b' }}>
-              कोई डॉक्यूमेंट नहीं। "+ Add Document" दबाएं।
-            </div>
-          ) : (
+          {folderList.length === 0 ? <div style={{ background: '#0f172a', padding: 40, textAlign: 'center' }}>कोई डॉक्यूमेंट नहीं</div> :
             folderList.map(([key, folder]) => {
               const insCount = INS_DOCS.filter(t => folder.docs.some(d => d.docType === t)).length;
               const rtoCount = RTO_DOCS.filter(t => folder.docs.some(d => d.docType === t)).length;
               return (
-                <div key={key} style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: 12, padding: 14 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                    <div style={{ width: 44, height: 44, borderRadius: 10, background: '#1e40af', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>📁</div>
+                <div key={key} style={{ background: '#0f172a', borderRadius: 12, padding: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ width: 44, height: 44, background: '#1e40af', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>📁</div>
                     <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => { setActiveFolder(key); setView('folder_detail'); }}>
-                      <p style={{ fontWeight: 800, fontSize: 14, margin: 0 }}>{folder.name}</p>
-                      <p style={{ color: '#94a3b8', fontSize: 11, margin: '3px 0 0' }}>📞 {folder.phone || '-'} · {folder.docs.length} docs</p>
-                      {folder.nomineeName && <p style={{ color: '#c084fc', fontSize: 10, margin: '2px 0 0' }}>👥 Nominee: {folder.nomineeName}</p>}
-                      <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
-                        {folder.docs.slice(0, 5).map((d, i) => (
-                          <span key={i} style={{ background: '#1e293b', padding: '2px 6px', borderRadius: 4, fontSize: 9 }}>{d.docIcon} {d.docTypeLabel}</span>
-                        ))}
-                        {folder.docs.length > 5 && <span>...</span>}
-                      </div>
+                      <p style={{ fontWeight: 800, margin: 0 }}>{folder.name}</p>
+                      <p style={{ color: '#94a3b8', fontSize: 11 }}>📞 {folder.phone} · {folder.docs.length} docs</p>
+                      {folder.nomineeName && <p style={{ color: '#c084fc', fontSize: 10 }}>Nominee: {folder.nomineeName}</p>}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <button onClick={() => sendInsurance(folder.docs, folder)} style={{ background: insCount >= 3 ? '#16a34a' : '#334155', padding: '7px 12px', borderRadius: 8, fontSize: 11, fontWeight: 700 }}>🛡️ Insurance ({insCount}/{INS_DOCS.length})</button>
-                      <button onClick={() => sendRTO(folder.docs, folder)} style={{ background: rtoCount >= 3 ? '#7c3aed' : '#334155', padding: '7px 12px', borderRadius: 8, fontSize: 11, fontWeight: 700 }}>🚗 RTO ({rtoCount}/{RTO_DOCS.length})</button>
+                      <button onClick={() => sendInsurance(folder.docs, folder)} style={{ background: insCount >= 3 ? '#16a34a' : '#334155', padding: '7px 12px', borderRadius: 8, fontSize: 11 }}>🛡️ Insurance ({insCount}/{INS_DOCS.length})</button>
+                      <button onClick={() => sendRTO(folder.docs, folder)} style={{ background: rtoCount >= 3 ? '#7c3aed' : '#334155', padding: '7px 12px', borderRadius: 8, fontSize: 11 }}>🚗 RTO ({rtoCount}/{RTO_DOCS.length})</button>
                     </div>
                     <ChevronRight size={16} color="#64748b" style={{ cursor: 'pointer' }} onClick={() => { setActiveFolder(key); setView('folder_detail'); }} />
                   </div>
                 </div>
               );
-            })
-          )}
+            })}
         </div>
       )}
 
-      {/* Folder Detail View */}
       {view === 'folder_detail' && activeFolder && (() => {
         const folder = folders[activeFolder];
         if (!folder) return null;
@@ -479,11 +434,11 @@ export default function DocumentVault() {
         const rtoCount = RTO_DOCS.filter(t => folder.docs.some(d => d.docType === t)).length;
         return (
           <div>
-            <button onClick={() => { setActiveFolder(null); setView('folders'); }} style={{ background: '#1e293b', border: 'none', padding: '4px 10px', borderRadius: 6, marginBottom: 10, cursor: 'pointer' }}>← सभी फोल्डर</button>
+            <button onClick={() => { setActiveFolder(null); setView('folders'); }} style={{ background: '#1e293b', border: 'none', padding: '4px 10px', borderRadius: 6, marginBottom: 10 }}>← सभी फोल्डर</button>
             <div style={{ background: '#0f172a', borderRadius: 12, padding: 14, marginBottom: 14 }}>
               <h2 style={{ margin: 0 }}>{folder.name}</h2>
               <p style={{ color: '#94a3b8' }}>📞 {folder.phone} · {folder.docs.length} docs</p>
-              {folder.nomineeName && <p style={{ color: '#c084fc' }}>👥 Nominee: {folder.nomineeName}</p>}
+              {folder.nomineeName && <p style={{ color: '#c084fc' }}>Nominee: {folder.nomineeName}</p>}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 }}>
                 <button onClick={() => sendInsurance(folder.docs, folder)} style={{ background: '#16a34a', padding: 12, borderRadius: 10, textAlign: 'left' }}>🛡️ Insurance ({insCount}/{INS_DOCS.length})</button>
                 <button onClick={() => sendRTO(folder.docs, folder)} style={{ background: '#7c3aed', padding: 12, borderRadius: 10, textAlign: 'left' }}>🚗 RTO ({rtoCount}/{RTO_DOCS.length})</button>
@@ -497,24 +452,18 @@ export default function DocumentVault() {
         );
       })()}
 
-      {/* All Docs View */}
       {view === 'all' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(160px,1fr))', gap: 10 }}>
           {filtered.map(d => <DocCard key={d.id} doc={d} onView={() => setViewDoc(d)} onDelete={() => deleteDoc(d.id)} />)}
         </div>
       )}
 
-      {/* Full View Modal */}
       {viewDoc && <FullViewModal doc={viewDoc} onClose={() => setViewDoc(null)} />}
 
-      {/* Add Document Modal */}
       {showForm && (
         <div onClick={() => { setShowForm(false); setFileData(null); }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: '#0f172a', borderRadius: 14, width: '100%', maxWidth: 500, padding: 20, maxHeight: '94vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
-              <h2 style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>📄 नया डॉक्यूमेंट</h2>
-              <button onClick={() => { setShowForm(false); setFileData(null); }}><X size={18} /></button>
-            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}><h2 style={{ margin: 0 }}>📄 नया डॉक्यूमेंट</h2><button onClick={() => { setShowForm(false); setFileData(null); }}><X size={18} /></button></div>
             <div style={{ display: 'grid', gap: 10 }}>
               <div ref={dropdownRef} style={{ position: 'relative' }}>
                 <label style={lbl}>Customer Name *</label>
@@ -523,8 +472,7 @@ export default function DocumentVault() {
                   <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#1e293b', border: '1px solid #475569', borderRadius: 8, maxHeight: 200, overflowY: 'auto', zIndex: 60 }}>
                     {filteredCustomers.map((c, i) => (
                       <div key={i} onClick={() => selectCustomer(c)} style={{ padding: '8px 12px', cursor: 'pointer' }}>
-                        <strong>{c.customerName || c.name}</strong><br />
-                        <span style={{ fontSize: 11 }}>📞 {c.mobileNo || c.phone} · 🪪 {c.aadhar || '—'}</span>
+                        <strong>{c.customerName || c.name}</strong><br /><span style={{ fontSize: 11 }}>📞 {c.mobileNo || c.phone} · 🪪 {c.aadhar || '—'}</span>
                       </div>
                     ))}
                   </div>
@@ -543,14 +491,14 @@ export default function DocumentVault() {
                 {fileData ? (
                   <div style={{ position: 'relative', background: '#1e293b', borderRadius: 8, padding: 8 }}>
                     <p style={{ fontSize: 12, margin: 0 }}>✅ {fileData.fileName} ({fileData.fileType})</p>
-                    <button onClick={() => setFileData(null)} style={{ position: 'absolute', top: 4, right: 4, background: '#dc2626', border: 'none', borderRadius: '50%', width: 24, height: 24, cursor: 'pointer' }}>×</button>
+                    <button onClick={() => setFileData(null)} style={{ position: 'absolute', top: 4, right: 4, background: '#dc2626', border: 'none', borderRadius: '50%', width: 24, height: 24 }}>×</button>
                   </div>
                 ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                    <button onClick={capturePhoto} disabled={capturing} style={{ background: '#1e3a8a', padding: 12, borderRadius: 8, fontWeight: 700 }}><Camera size={18} /> कैमरा</button>
-                    <button onClick={pickFromGallery} style={{ background: '#1a1a2e', padding: 12, borderRadius: 8, fontWeight: 700 }}><Image size={18} /> गैलरी</button>
-                    <button onClick={pickPDF} style={{ background: '#854d0e', padding: 12, borderRadius: 8, fontWeight: 700 }}><FileText size={18} /> PDF</button>
-                    <button onClick={pickVideo} style={{ background: '#4c1d95', padding: 12, borderRadius: 8, fontWeight: 700 }}><Video size={18} /> वीडियो</button>
+                    <button onClick={capturePhoto} disabled={capturing} style={{ background: '#1e3a8a', padding: 12, borderRadius: 8 }}><Camera size={18} /> कैमरा</button>
+                    <button onClick={pickFromGallery} style={{ background: '#1a1a2e', padding: 12, borderRadius: 8 }}><Image size={18} /> गैलरी</button>
+                    <button onClick={pickPDF} style={{ background: '#854d0e', padding: 12, borderRadius: 8 }}><FileText size={18} /> PDF</button>
+                    <button onClick={pickVideo} style={{ background: '#4c1d95', padding: 12, borderRadius: 8 }}><Video size={18} /> वीडियो</button>
                   </div>
                 )}
               </div>
@@ -566,7 +514,7 @@ export default function DocumentVault() {
   );
 }
 
-// Helper Components
+// Helper components (unchanged)
 function DocCard({ doc, onView, onDelete }) {
   let icon = <Image size={24} />;
   if (doc.fileType === 'pdf') icon = <FileText size={24} />;
