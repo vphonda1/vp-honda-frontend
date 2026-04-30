@@ -607,4 +607,67 @@ export const getPickupDropStats = () => {
 };
 
 /**
- * Update pickup-drop status (in-transit -
+ * Update pickup-drop status (in-transit -> completed)
+ */
+export const updatePickupDrop = (id, updates) => {
+  const list = JSON.parse(localStorage.getItem('vp_pickup_drops') || '[]');
+  const idx = list.findIndex(p => p.id === id);
+  if (idx === -1) return false;
+  list[idx] = { ...list[idx], ...updates, updatedAt: new Date().toISOString() };
+  localStorage.setItem('vp_pickup_drops', JSON.stringify(list));
+  return list[idx];
+};
+
+// ──────────────────────────────────────────────────────────────────────────
+// 📍 GEOLOCATION HELPER
+// ──────────────────────────────────────────────────────────────────────────
+
+export const getCurrentLocation = () => {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject('Location not supported');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy: pos.coords.accuracy,
+      }),
+      (err) => reject(err.message),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  });
+};
+
+// ──────────────────────────────────────────────────────────────────────────
+// 🎯 EXPORT ALL
+// ──────────────────────────────────────────────────────────────────────────
+
+export default {
+  // WhatsApp
+  sendWhatsApp,
+  buildInvoiceWAMessage,
+  buildServiceReminderWA,
+  buildBirthdayWA,
+  buildCustomWA,
+  // Camera
+  captureFromCamera,
+  compressImage,
+  getBase64Size,
+  // Notifications
+  requestNotificationPermission,
+  showNotification,
+  showInAppToast,
+  // Search
+  universalSearch,
+  // Reminders
+  getServiceSchedule,
+  checkExpiry,
+  // Visitors
+  recordVisitor,
+  getVisitorStats,
+  // Pickup-Drop
+  recordPickupDrop,
+  getPickupDropStats,
+  updatePickupDrop,
+  // Location
+  getCurrentLocation,
+};
