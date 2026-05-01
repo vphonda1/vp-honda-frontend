@@ -64,6 +64,21 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // ⭐ Handle notification tap → navigate to correct page
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const handleMsg = (event) => {
+      if (event.data?.type === 'NAVIGATE') {
+        const url = event.data.url;
+        if (url && window.location.pathname !== url) {
+          window.location.href = url;
+        }
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', handleMsg);
+    return () => navigator.serviceWorker.removeEventListener('message', handleMsg);
+  }, []);
+
   useEffect(() => {
     // LoginPage का vpSession check करें (नया system)
     try {

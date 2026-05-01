@@ -561,7 +561,17 @@ export default function RemindersPage() {
                 const granted = await requestNotificationPermission();
                 setNotifStatus(Notification.permission);
                 if (granted) {
-                  showInAppToast('🔔 Notifications enabled!', 'अब reminders automatic आएंगे', 'success');
+                  showInAppToast('🔔 Notifications ON!', 'Device registered — reminders automatic आएंगे', 'success');
+                  // Immediately schedule current reminders
+                  const cached = localStorage.getItem('vpCustomers');
+                  if (cached) {
+                    try {
+                      const custs = JSON.parse(cached);
+                      if (custs.length > 0) scheduleReminderNotifications(custs).catch(() => {});
+                    } catch {}
+                  }
+                } else if (Notification.permission === 'denied') {
+                  showInAppToast('🔕 Blocked', 'Browser Settings → Site Settings → Notifications → Allow', 'error');
                 }
               }} style={{
                 background: '#3b82f6', color: '#fff', border: 'none',

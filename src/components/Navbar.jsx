@@ -68,17 +68,35 @@ export default function Navbar({ user, onLogout }) {
         </button>
 
         {isOpen && (
-          <div className="absolute left-0 top-full mt-1 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-xl min-w-[200px] py-1">
+          <div style={{
+            position: 'fixed',
+            top: 48,
+            zIndex: 9999,
+            background: '#0f172a',
+            border: '1px solid #334155',
+            borderRadius: 10,
+            minWidth: 210,
+            boxShadow: '0 20px 60px rgba(0,0,0,0.6)',
+            padding: '4px 0',
+          }}>
             {items.map(item => (
               <Link
                 key={item.path}
                 to={item.path}
                 onClick={() => setActiveDropdown(null)}
-                className={`flex items-center gap-3 px-4 py-2 text-sm font-bold transition ${
-                  isActive(item.path) ? 'bg-red-600 text-white' : 'text-slate-200 hover:bg-slate-800'
-                }`}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '10px 16px',
+                  color: isActive(item.path) ? '#fff' : '#cbd5e1',
+                  background: isActive(item.path) ? '#DC0000' : 'transparent',
+                  fontWeight: 700, fontSize: 13,
+                  textDecoration: 'none',
+                  transition: 'background 0.15s',
+                }}
+                onMouseEnter={e => { if (!isActive(item.path)) e.currentTarget.style.background = '#1e293b'; }}
+                onMouseLeave={e => { if (!isActive(item.path)) e.currentTarget.style.background = 'transparent'; }}
               >
-                <span className="text-base">{item.icon}</span>
+                <span style={{ fontSize: 16 }}>{item.icon}</span>
                 <span>{item.label}</span>
               </Link>
             ))}
@@ -116,7 +134,7 @@ export default function Navbar({ user, onLogout }) {
           </Link>
 
           {/* Desktop nav */}
-          <div className="hidden lg:flex items-center gap-0.5 flex-1 mx-3">
+          <div className="hidden lg:flex items-center gap-0.5 flex-1 mx-3" style={{ overflow: "visible" }}>
             {mainItems.map(item => <NavLink key={item.path} item={item} />)}
             {smartItems.length > 0 && <Dropdown label="Smart" icon="⚡" items={smartItems} id="smart" />}
             {manageItems.length > 0 && <Dropdown label="Manage" icon="⚙️" items={manageItems} id="manage" />}

@@ -24,46 +24,12 @@ export const sendWhatsApp = (phone, message) => {
     alert('❌ Phone number नहीं है');
     return false;
   }
-  // ✅ FIX: Extract FIRST number only when multiple numbers stored
-  // Handles: "9876543210, 8765432109" or "9876543210/8765432109" or "98765432108765432109"
-  const raw = String(phone).trim();
-
-  // Split by common separators: comma, semicolon, slash, space, pipe
-  const parts = raw.split(/[,;\/|\s]+/).map(p => p.replace(/[\s\-+]/g, '')).filter(Boolean);
-
-  // Find the first valid 10-digit Indian mobile number
-  let firstNumber = null;
-  for (const part of parts) {
-    // Remove country code if present (91XXXXXXXXXX → XXXXXXXXXX)
-    const stripped = part.startsWith('91') && part.length === 12 ? part.slice(2) : part;
-    if (/^[6-9]\d{9}$/.test(stripped)) {
-      firstNumber = stripped;
-      break;
-    }
-    // Try part directly if 10 digits starting with 6-9
-    if (/^[6-9]\d{9}$/.test(part)) {
-      firstNumber = part;
-      break;
-    }
-  }
-
-  // Fallback: take first 10 digits from raw (for concatenated numbers)
-  if (!firstNumber) {
-    const digits = raw.replace(/\D/g, '');
-    if (digits.length >= 10) {
-      const candidate = digits.startsWith('91') && digits.length >= 12 ? digits.slice(2, 12) : digits.slice(0, 10);
-      if (/^[6-9]\d{9}$/.test(candidate)) firstNumber = candidate;
-    }
-  }
-
-  if (!firstNumber) {
-    alert('❌ Valid phone number नहीं मिला: ' + raw.slice(0, 30));
-    return false;
-  }
-
-  const final   = `91${firstNumber}`;
+  // Clean phone: remove spaces, dashes, + sign
+  const cleaned = String(phone).replace(/[\s\-+]/g, '');
+  // Add 91 prefix if missing
+  const final = cleaned.length === 10 ? `91${cleaned}` : cleaned;
   const encoded = encodeURIComponent(message);
-  const url     = `https://wa.me/${final}?text=${encoded}`;
+  const url = `https://wa.me/${final}?text=${encoded}`;
   window.open(url, '_blank');
   return true;
 };
@@ -211,17 +177,65 @@ export const getBase64Size = (base64) => {
 /**
  * Request notification permission (call once on app load)
  */
+// ── VAPID key (same as backend) ──────────────────────────────────────────────
+const VAPID_PUBLIC_KEY = 'BKwecIw_aOdebFYVONRm-ZF3au68bNWU1uHPSXkwr1LvV7dIS-b-v614SMT6UgjHbcqigskmSAhFBWHxV9a__TM';
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64  = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const output  = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) output[i] = rawData.charCodeAt(i);
+  return output;
+}
+
 export const requestNotificationPermission = async () => {
   if (!('Notification' in window)) {
     console.log('Notifications not supported');
     return false;
   }
-  if (Notification.permission === 'granted') return true;
   if (Notification.permission === 'denied') return false;
 
   try {
+    // 1. Request browser permission
     const permission = await Notification.requestPermission();
-    return permission === 'granted';
+    if (permission !== 'granted') return false;
+
+    // 2. Register push subscription with backend
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+
+        // Unsubscribe any old subscription first (clean state)
+        const existing = await reg.pushManager.getSubscription();
+        if (existing) await existing.unsubscribe().catch(() => {});
+
+        // Subscribe with VAPID key
+        const subscription = await reg.pushManager.subscribe({
+          userVisibleOnly:      true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        });
+
+        // Save to backend — /api/push/save-push-subscription
+        const apiBase = localStorage.getItem('vpApiBase') || 'https://vp-honda-backend.onrender.com';
+        const res = await fetch(`${apiBase}/api/push/save-push-subscription`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(subscription.toJSON()),
+        });
+
+        if (res.ok) {
+          console.log('[Push] ✅ Subscription saved to backend!');
+        } else {
+          console.warn('[Push] Backend save failed:', res.status);
+        }
+      } catch (pushErr) {
+        console.warn('[Push] Subscribe failed:', pushErr);
+        // Still return true — local notifications will work
+      }
+    }
+
+    return true;
   } catch {
     return false;
   }
@@ -640,6 +654,17 @@ export const getCurrentLocation = () => {
 // ──────────────────────────────────────────────────────────────────────────
 // 🎯 EXPORT ALL
 // ──────────────────────────────────────────────────────────────────────────
+
+
+// ── THEME HELPERS (used by app.jsx + SmartFAB) ───────────────────────────────
+export const getTheme = () => localStorage.getItem('vp_theme') || 'dark';
+export const setTheme = (theme) => {
+  localStorage.setItem('vp_theme', theme);
+  const dark = theme === 'dark';
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  document.body.style.background = dark ? '#020617' : '#f1f5f9';
+  document.body.style.removeProperty('color');
+};
 
 export default {
   // WhatsApp
