@@ -1,16 +1,16 @@
-// DocumentVault.jsx — VP Honda (Fixed delete, visible doc names, individual WhatsApp share)
+// DocumentVault.jsx — VP Honda (Fixed delete, two tax invoices: VP & SU)
 import { useState, useEffect, useRef } from 'react';
 import { FolderOpen, Camera, X, AlertTriangle, Search, Image, ChevronRight, FileText, Video, Share2, Trash2, Eye } from 'lucide-react';
 import { captureFromCamera, checkExpiry, showInAppToast, sendWhatsApp } from '../utils/smartUtils';
 import { api, apiFetch } from '../utils/apiConfig';
 
-// Document types (same as before)
+// ─── Updated Document Types: Tax Invoice replaced with VP Tax Invoice and SU Tax Invoice ───
 const DOC_TYPES = [
   { key: 'aadhar', label: 'Aadhar Card', icon: '🪪', hasExpiry: false },
   { key: 'pan', label: 'PAN Card', icon: '💳', hasExpiry: false },
   { key: 'chassis_trace', label: 'Chassis Trace Page', icon: '📋', hasExpiry: false },
-  { key: 'tax_invoice', label: ' VP Tax Invoice', icon: '🧾', hasExpiry: false },
-  { key: 'tax_invoice', label: 'SU Tax Invoice', icon: '🧾', hasExpiry: false },
+  { key: 'vp_tax_invoice', label: 'VP Tax Invoice', icon: '🧾', hasExpiry: false },
+  { key: 'su_tax_invoice', label: 'SU Tax Invoice', icon: '🧾', hasExpiry: false },
   { key: 'challan', label: 'Challan', icon: '📜', hasExpiry: false },
   { key: 'chassis_photo', label: 'Chassis Photo', icon: '🔢', hasExpiry: false },
   { key: 'chassis_video', label: 'Chassis Video', icon: '🎥', hasExpiry: false },
@@ -24,8 +24,11 @@ const DOC_TYPES = [
   { key: 'other', label: 'Other Document', icon: '📁', hasExpiry: false },
 ];
 
-const INS_DOCS = ['aadhar', 'pan', 'chassis_trace', 'tax_invoice', 'challan'];
-const RTO_DOCS = ['aadhar', 'pan', 'tax_invoice', 'chassis_photo', 'insurance'];
+// Insurance requires Aadhar, PAN, Chassis Trace, any Tax Invoice (VP or SU), Challan
+const INS_DOCS = ['aadhar', 'pan', 'chassis_trace', 'vp_tax_invoice', 'su_tax_invoice', 'challan'];
+// RTO requires Aadhar, PAN, any Tax Invoice, Chassis Photo, Insurance
+const RTO_DOCS = ['aadhar', 'pan', 'vp_tax_invoice', 'su_tax_invoice', 'chassis_photo', 'insurance'];
+
 const DEFAULT_INSURANCE_NUMBER = '918770259361';
 const DEFAULT_RTO_NUMBER = '919752538014';
 
@@ -34,7 +37,7 @@ const folderKey = (name, date) => {
   return `${(name || 'Unknown').replace(/\s+/g, '_')}_${d}`;
 };
 
-// Robust image compression
+// Robust image compression (same as before)
 async function compressImageRobust(dataUrl, maxWidth = 1200, quality = 0.8) {
   try {
     const response = await fetch(dataUrl);
@@ -81,7 +84,6 @@ async function processFile(file, type) {
 async function shareDocumentToWhatsApp(doc) {
   let phone = prompt('📱 WhatsApp नंबर देश कोड के साथ (जैसे 919876543210):', '');
   if (!phone) return;
-  // Remove any non-digits
   phone = phone.replace(/\D/g, '');
   if (!phone.startsWith('91')) phone = '91' + phone;
   
@@ -93,7 +95,6 @@ async function shareDocumentToWhatsApp(doc) {
   const msg = `📄 *VP Honda Document* – ${doc.customerName}\n📂 ${doc.docTypeLabel}\n📅 ${new Date(doc.savedAt).toLocaleDateString('en-IN')}\n\n(फोटो/PDF अलग से शेयर होगा)`;
   sendWhatsApp(phone, msg);
   
-  // Open file in new tab for manual share
   setTimeout(() => {
     const w = window.open('', '_blank');
     if (w) {
@@ -135,7 +136,7 @@ export default function DocumentVault() {
       const data = await apiFetch('/api/documents');
       setDocs(data);
     } catch (err) {
-      setError('❌ सर्वर से कनेक्ट नहीं हो पाया। कृपया बैकएंड API चेक करें');
+      setError('❌ सर्वर से कनेक्ट नहीं हो पाया। बैकएंड API चेक करें');
       showInAppToast('API Error', 'बैकएंड कनेक्ट नहीं हो रहा', 'error');
     } finally {
       setLoading(false);
@@ -189,11 +190,16 @@ export default function DocumentVault() {
     }
   };
 
+  // FIXED: delete function with correct id
   const deleteDoc = async (id) => {
+    if (!id) {
+      alert('डॉक्यूमेंट ID नहीं मिली');
+      return;
+    }
     if (!window.confirm('क्या यह डॉक्यूमेंट डिलीट करना है?')) return;
     try {
       await apiFetch(`/api/documents/${id}`, { method: 'DELETE' });
-      setDocs(prev => prev.filter(d => d.id !== id));
+      setDocs(prev => prev.filter(d => d.id !== id && d._id !== id));
       showInAppToast('🗑️ डिलीट हो गया', '', 'success');
     } catch (err) {
       alert('डिलीट नहीं हो पाया। कृपया बैकएंड DELETE रूट चेक करें।');
@@ -266,7 +272,7 @@ export default function DocumentVault() {
     input.click();
   };
 
-  // Customers & initial load
+  // Load customers and documents
   useEffect(() => {
     fetch(api('/api/customers'))
       .then(r => r.ok ? r.json() : [])
@@ -311,7 +317,7 @@ export default function DocumentVault() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Folder grouping
+  // Group folders
   const folders = docs.reduce((acc, d) => {
     const key = d.folder || folderKey(d.customerName, d.savedAt);
     if (!acc[key]) acc[key] = {
@@ -327,39 +333,88 @@ export default function DocumentVault() {
   }, {});
   const folderList = Object.entries(folders).sort((a, b) => new Date(b[1].date) - new Date(a[1].date));
 
-  // Insurance & RTO group send (same as before)
+  // Helper: check if a document type is one of the tax invoices
+  const isTaxInvoice = (type) => type === 'vp_tax_invoice' || type === 'su_tax_invoice';
+  // Insurance required docs: any tax invoice counts as one
+  const insuranceAvailable = (folderDocs) => {
+    const hasAadhar = folderDocs.some(d => d.docType === 'aadhar');
+    const hasPan = folderDocs.some(d => d.docType === 'pan');
+    const hasChassisTrace = folderDocs.some(d => d.docType === 'chassis_trace');
+    const hasAnyTax = folderDocs.some(d => isTaxInvoice(d.docType));
+    const hasChallan = folderDocs.some(d => d.docType === 'challan');
+    return { count: [hasAadhar, hasPan, hasChassisTrace, hasAnyTax, hasChallan].filter(Boolean).length, total: 5 };
+  };
+  const rtoAvailable = (folderDocs) => {
+    const hasAadhar = folderDocs.some(d => d.docType === 'aadhar');
+    const hasPan = folderDocs.some(d => d.docType === 'pan');
+    const hasAnyTax = folderDocs.some(d => isTaxInvoice(d.docType));
+    const hasChassisPhoto = folderDocs.some(d => d.docType === 'chassis_photo');
+    const hasInsurance = folderDocs.some(d => d.docType === 'insurance');
+    return { count: [hasAadhar, hasPan, hasAnyTax, hasChassisPhoto, hasInsurance].filter(Boolean).length, total: 5 };
+  };
+
   const sendInsurance = (folderDocs, folder) => {
-    const available = INS_DOCS.filter(t => folderDocs.some(d => d.docType === t));
-    const missing = INS_DOCS.filter(t => !folderDocs.some(d => d.docType === t));
+    const hasAadhar = folderDocs.some(d => d.docType === 'aadhar');
+    const hasPan = folderDocs.some(d => d.docType === 'pan');
+    const hasChassisTrace = folderDocs.some(d => d.docType === 'chassis_trace');
+    const hasAnyTax = folderDocs.some(d => isTaxInvoice(d.docType));
+    const hasChallan = folderDocs.some(d => d.docType === 'challan');
+    const missing = [];
+    if (!hasAadhar) missing.push('Aadhar Card');
+    if (!hasPan) missing.push('PAN Card');
+    if (!hasChassisTrace) missing.push('Chassis Trace Page');
+    if (!hasAnyTax) missing.push('Tax Invoice (VP or SU)');
+    if (!hasChallan) missing.push('Challan');
     const nomineeName = folder.nomineeName || '—';
     let phone = prompt(`🛡️ Insurance WhatsApp नंबर (NBV Honda):`, DEFAULT_INSURANCE_NUMBER);
     if (!phone) return;
-    const msg = `🛡️ *VP Honda — Insurance*\n👤 ${folder.name}\n📞 ${folder.phone}\n👥 Nominee: ${nomineeName}\n✅ ${available.map(t => DOC_TYPES.find(d => d.key === t)?.label).join('\n✅ ')}\n❌ ${missing.map(t => DOC_TYPES.find(d => d.key === t)?.label).join(', ')}`;
+    const msg = `🛡️ *VP Honda — Insurance*\n👤 ${folder.name}\n📞 ${folder.phone}\n👥 Nominee: ${nomineeName}\n✅ ${hasAadhar ? 'Aadhar' : '❌ Aadhar'}\n✅ ${hasPan ? 'PAN' : '❌ PAN'}\n✅ ${hasChassisTrace ? 'Chassis Trace' : '❌ Chassis Trace'}\n✅ ${hasAnyTax ? 'Tax Invoice' : '❌ Tax Invoice'}\n✅ ${hasChallan ? 'Challan' : '❌ Challan'}`;
     sendWhatsApp(phone, msg);
-    const files = folderDocs.filter(d => INS_DOCS.includes(d.docType));
-    if (files.length) setTimeout(() => {
-      if (window.confirm(`${files.length} फाइलें शेयर करें?`))
-        files.forEach((f, i) => setTimeout(() => {
+    const filesToSend = folderDocs.filter(d => ['aadhar','pan','chassis_trace','vp_tax_invoice','su_tax_invoice','challan'].includes(d.docType));
+    if (filesToSend.length) setTimeout(() => {
+      if (window.confirm(`${filesToSend.length} फाइलें शेयर करें?`))
+        filesToSend.forEach((f, i) => setTimeout(() => {
           const w = window.open('', '_blank');
-          if (w) w.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh;">${f.fileType==='video'?`<video controls src="${f.fileData}" style="max-width:100%;max-height:100vh;"></video>`:f.fileType==='pdf'?`<iframe src="${f.fileData}" style="width:100%;height:100vh;"></iframe>`:`<img src="${f.fileData}" style="max-width:100%;max-height:100vh;" />`}</body></html>`);
+          if (w) w.document.write(`
+            <html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh;">
+              ${f.fileType === 'video' ? `<video controls src="${f.fileData}" style="max-width:100%;max-height:100vh;"></video>` :
+                f.fileType === 'pdf' ? `<iframe src="${f.fileData}" style="width:100%;height:100vh;"></iframe>` :
+                `<img src="${f.fileData}" style="max-width:100%;max-height:100vh;" />`}
+            </body></html>
+          `);
         }, i * 800));
     }, 1000);
   };
 
   const sendRTO = (folderDocs, folder) => {
-    const available = RTO_DOCS.filter(t => folderDocs.some(d => d.docType === t));
-    const missing = RTO_DOCS.filter(t => !folderDocs.some(d => d.docType === t));
+    const hasAadhar = folderDocs.some(d => d.docType === 'aadhar');
+    const hasPan = folderDocs.some(d => d.docType === 'pan');
+    const hasAnyTax = folderDocs.some(d => isTaxInvoice(d.docType));
+    const hasChassisPhoto = folderDocs.some(d => d.docType === 'chassis_photo');
+    const hasInsurance = folderDocs.some(d => d.docType === 'insurance');
+    const missing = [];
+    if (!hasAadhar) missing.push('Aadhar Card');
+    if (!hasPan) missing.push('PAN Card');
+    if (!hasAnyTax) missing.push('Tax Invoice (VP or SU)');
+    if (!hasChassisPhoto) missing.push('Chassis Photo');
+    if (!hasInsurance) missing.push('Insurance Policy');
     let phone = prompt(`🚗 RTO WhatsApp नंबर (Pal):`, DEFAULT_RTO_NUMBER);
     if (!phone) return;
     const first = folderDocs[0];
-    const msg = `🚗 *VP Honda — RTO*\n👤 ${folder.name}\n📞 ${folder.phone}\n🏍️ ${first?.vehicleModel}\n🔢 ${first?.chassisNo}\n✅ ${available.map(t => DOC_TYPES.find(d => d.key === t)?.label).join('\n✅ ')}\n❌ ${missing.map(t => DOC_TYPES.find(d => d.key === t)?.label).join(', ')}`;
+    const msg = `🚗 *VP Honda — RTO*\n👤 ${folder.name}\n📞 ${folder.phone}\n🏍️ ${first?.vehicleModel}\n🔢 ${first?.chassisNo}\n✅ ${hasAadhar ? 'Aadhar' : '❌ Aadhar'}\n✅ ${hasPan ? 'PAN' : '❌ PAN'}\n✅ ${hasAnyTax ? 'Tax Invoice' : '❌ Tax Invoice'}\n✅ ${hasChassisPhoto ? 'Chassis Photo' : '❌ Chassis Photo'}\n✅ ${hasInsurance ? 'Insurance' : '❌ Insurance'}`;
     sendWhatsApp(phone, msg);
-    const files = folderDocs.filter(d => RTO_DOCS.includes(d.docType));
-    if (files.length) setTimeout(() => {
-      if (window.confirm(`${files.length} फाइलें शेयर करें?`))
-        files.forEach((f, i) => setTimeout(() => {
+    const filesToSend = folderDocs.filter(d => ['aadhar','pan','vp_tax_invoice','su_tax_invoice','chassis_photo','insurance'].includes(d.docType));
+    if (filesToSend.length) setTimeout(() => {
+      if (window.confirm(`${filesToSend.length} फाइलें शेयर करें?`))
+        filesToSend.forEach((f, i) => setTimeout(() => {
           const w = window.open('', '_blank');
-          if (w) w.document.write(`<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh;">${f.fileType==='video'?`<video controls src="${f.fileData}" style="max-width:100%;max-height:100vh;"></video>`:f.fileType==='pdf'?`<iframe src="${f.fileData}" style="width:100%;height:100vh;"></iframe>`:`<img src="${f.fileData}" style="max-width:100%;max-height:100vh;" />`}</body></html>`);
+          if (w) w.document.write(`
+            <html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh;">
+              ${f.fileType === 'video' ? `<video controls src="${f.fileData}" style="max-width:100%;max-height:100vh;"></video>` :
+                f.fileType === 'pdf' ? `<iframe src="${f.fileData}" style="width:100%;height:100vh;"></iframe>` :
+                `<img src="${f.fileData}" style="max-width:100%;max-height:100vh;" />`}
+            </body></html>
+          `);
         }, i * 800));
     }, 1000);
   };
@@ -375,13 +430,11 @@ export default function DocumentVault() {
 
   return (
     <div style={{ padding: 14, background: '#020617', minHeight: '100vh', color: '#fff' }}>
-      {/* Header same as before */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
         <div><h1 style={{ fontSize: 20, fontWeight: 800, margin: 0 }}><FolderOpen size={20} /> Document Vault</h1><p style={{ color: '#94a3b8', fontSize: 12 }}>{docs.length} docs · {folderList.length} folders · ☁️ Sync</p></div>
         <button onClick={() => setShowForm(true)} style={{ background: '#DC0000', padding: '10px 16px', borderRadius: 10, fontWeight: 700, cursor: 'pointer' }}>+ Add Document</button>
       </div>
 
-      {/* Expiry Alerts */}
       {expiringSoon.length > 0 && (
         <div style={{ background: '#7c2d1222', border: '1px solid #ea580c', borderRadius: 10, padding: '10px 14px', marginBottom: 12 }}>
           <p style={{ color: '#fdba74', fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}><AlertTriangle size={14} /> {expiringSoon.length} डॉक्यूमेंट जल्दी एक्सपायर होंगे!</p>
@@ -389,20 +442,18 @@ export default function DocumentVault() {
         </div>
       )}
 
-      {/* Search & View */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
         <div style={{ position: 'relative', flex: 1 }}><Search size={14} style={{ position: 'absolute', left: 12, top: 11, color: '#64748b' }} /><input value={search} onChange={e => { setSearch(e.target.value); setView('all'); if (!e.target.value) setView('folders'); }} placeholder="खोजें..." style={{ background: '#1e293b', color: '#fff', border: '1px solid #475569', borderRadius: 8, padding: '10px 12px 10px 34px', width: '100%' }} /></div>
         <button onClick={() => { setView('folders'); setSearch(''); setActiveFolder(null); }} style={{ background: view === 'folders' ? '#DC0000' : '#1e293b', padding: '8px 14px', borderRadius: 8, fontSize: 12, cursor: 'pointer' }}>📁 Folders</button>
         <button onClick={() => setView('all')} style={{ background: view === 'all' ? '#DC0000' : '#1e293b', padding: '8px 14px', borderRadius: 8, fontSize: 12, cursor: 'pointer' }}>📋 All Docs</button>
       </div>
 
-      {/* Folder View (लिस्ट में डॉक्यूमेंट के नाम दिखेंगे) */}
       {view === 'folders' && !activeFolder && (
         <div style={{ display: 'grid', gap: 8 }}>
           {folderList.length === 0 ? <div style={{ background: '#0f172a', padding: 40, textAlign: 'center' }}>कोई डॉक्यूमेंट नहीं</div> :
             folderList.map(([key, folder]) => {
-              const insCount = INS_DOCS.filter(t => folder.docs.some(d => d.docType === t)).length;
-              const rtoCount = RTO_DOCS.filter(t => folder.docs.some(d => d.docType === t)).length;
+              const ins = insuranceAvailable(folder.docs);
+              const rto = rtoAvailable(folder.docs);
               return (
                 <div key={key} style={{ background: '#0f172a', borderRadius: 12, padding: 14 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -411,19 +462,16 @@ export default function DocumentVault() {
                       <p style={{ fontWeight: 800, margin: 0 }}>{folder.name}</p>
                       <p style={{ color: '#94a3b8', fontSize: 11 }}>📞 {folder.phone} · {folder.docs.length} docs</p>
                       {folder.nomineeName && <p style={{ color: '#c084fc', fontSize: 10 }}>Nominee: {folder.nomineeName}</p>}
-                      {/* यहाँ डॉक्यूमेंट टाइप के नाम दिखेंगे */}
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
                         {folder.docs.slice(0, 5).map((d, idx) => (
-                          <span key={idx} style={{ background: '#1e293b', padding: '2px 6px', borderRadius: 4, fontSize: 9, color: '#cbd5e1' }}>
-                            {d.docIcon} {d.docTypeLabel}
-                          </span>
+                          <span key={idx} style={{ background: '#1e293b', padding: '2px 6px', borderRadius: 4, fontSize: 9, color: '#cbd5e1' }}>{d.docIcon} {d.docTypeLabel}</span>
                         ))}
                         {folder.docs.length > 5 && <span style={{ fontSize: 9, color: '#64748b' }}>+{folder.docs.length-5} more</span>}
                       </div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <button onClick={() => sendInsurance(folder.docs, folder)} style={{ background: insCount >= 3 ? '#16a34a' : '#334155', padding: '7px 12px', borderRadius: 8, fontSize: 11 }}>🛡️ Insurance ({insCount}/{INS_DOCS.length})</button>
-                      <button onClick={() => sendRTO(folder.docs, folder)} style={{ background: rtoCount >= 3 ? '#7c3aed' : '#334155', padding: '7px 12px', borderRadius: 8, fontSize: 11 }}>🚗 RTO ({rtoCount}/{RTO_DOCS.length})</button>
+                      <button onClick={() => sendInsurance(folder.docs, folder)} style={{ background: ins.count >= 3 ? '#16a34a' : '#334155', padding: '7px 12px', borderRadius: 8, fontSize: 11 }}>🛡️ Insurance ({ins.count}/{ins.total})</button>
+                      <button onClick={() => sendRTO(folder.docs, folder)} style={{ background: rto.count >= 3 ? '#7c3aed' : '#334155', padding: '7px 12px', borderRadius: 8, fontSize: 11 }}>🚗 RTO ({rto.count}/{rto.total})</button>
                     </div>
                     <ChevronRight size={16} color="#64748b" style={{ cursor: 'pointer' }} onClick={() => { setActiveFolder(key); setView('folder_detail'); }} />
                   </div>
@@ -433,12 +481,11 @@ export default function DocumentVault() {
         </div>
       )}
 
-      {/* Folder Detail View (with per-document WhatsApp share) */}
       {view === 'folder_detail' && activeFolder && (() => {
         const folder = folders[activeFolder];
         if (!folder) return null;
-        const insCount = INS_DOCS.filter(t => folder.docs.some(d => d.docType === t)).length;
-        const rtoCount = RTO_DOCS.filter(t => folder.docs.some(d => d.docType === t)).length;
+        const ins = insuranceAvailable(folder.docs);
+        const rto = rtoAvailable(folder.docs);
         return (
           <div>
             <button onClick={() => { setActiveFolder(null); setView('folders'); }} style={{ background: '#1e293b', border: 'none', padding: '4px 10px', borderRadius: 6, marginBottom: 10, cursor: 'pointer' }}>← सभी फोल्डर</button>
@@ -447,13 +494,13 @@ export default function DocumentVault() {
               <p style={{ color: '#94a3b8' }}>📞 {folder.phone} · {folder.docs.length} docs</p>
               {folder.nomineeName && <p style={{ color: '#c084fc' }}>Nominee: {folder.nomineeName}</p>}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 }}>
-                <button onClick={() => sendInsurance(folder.docs, folder)} style={{ background: '#16a34a', padding: 12, borderRadius: 10, textAlign: 'left' }}>🛡️ Insurance ({insCount}/{INS_DOCS.length})</button>
-                <button onClick={() => sendRTO(folder.docs, folder)} style={{ background: '#7c3aed', padding: 12, borderRadius: 10, textAlign: 'left' }}>🚗 RTO ({rtoCount}/{RTO_DOCS.length})</button>
+                <button onClick={() => sendInsurance(folder.docs, folder)} style={{ background: '#16a34a', padding: 12, borderRadius: 10, textAlign: 'left' }}>🛡️ Insurance ({ins.count}/{ins.total})</button>
+                <button onClick={() => sendRTO(folder.docs, folder)} style={{ background: '#7c3aed', padding: 12, borderRadius: 10, textAlign: 'left' }}>🚗 RTO ({rto.count}/{rto.total})</button>
               </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 10 }}>
               {folder.docs.map(d => (
-                <DocCard key={d.id} doc={d} onView={() => setViewDoc(d)} onDelete={() => deleteDoc(d.id)} onShare={() => shareDocumentToWhatsApp(d)} />
+                <DocCard key={d.id || d._id} doc={d} onView={() => setViewDoc(d)} onDelete={() => deleteDoc(d.id || d._id)} onShare={() => shareDocumentToWhatsApp(d)} />
               ))}
               <div onClick={() => { setForm({ ...form, customerName: folder.name, customerPhone: folder.phone || '', nomineeName: folder.nomineeName || '' }); setCustSearch(folder.name); setShowForm(true); }} style={{ background: '#0f172a', border: '2px dashed #334155', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, cursor: 'pointer' }}>➕ Add Document</div>
             </div>
@@ -461,17 +508,14 @@ export default function DocumentVault() {
         );
       })()}
 
-      {/* All Docs View (same with share button) */}
       {view === 'all' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 10 }}>
-          {filtered.map(d => <DocCard key={d.id} doc={d} onView={() => setViewDoc(d)} onDelete={() => deleteDoc(d.id)} onShare={() => shareDocumentToWhatsApp(d)} />)}
+          {filtered.map(d => <DocCard key={d.id || d._id} doc={d} onView={() => setViewDoc(d)} onDelete={() => deleteDoc(d.id || d._id)} onShare={() => shareDocumentToWhatsApp(d)} />)}
         </div>
       )}
 
-      {/* Full View Modal */}
       {viewDoc && <FullViewModal doc={viewDoc} onClose={() => setViewDoc(null)} />}
 
-      {/* Add Document Modal (unchanged) */}
       {showForm && (
         <div onClick={() => { setShowForm(false); setFileData(null); }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: '#0f172a', borderRadius: 14, width: '100%', maxWidth: 500, padding: 20, maxHeight: '94vh', overflowY: 'auto' }}>
@@ -495,7 +539,9 @@ export default function DocumentVault() {
               <div><label style={lbl}>Nominee Name</label><input value={form.nomineeName} onChange={e => setForm({ ...form, nomineeName: e.target.value })} placeholder="जैसे: Sita Devi" style={inp} /></div>
               <div><label style={lbl}>Vehicle Model</label><input value={form.vehicleModel} onChange={e => setForm({ ...form, vehicleModel: e.target.value })} placeholder="SP125" style={inp} /></div>
               <div><label style={lbl}>Chassis No</label><input value={form.chassisNo} onChange={e => setForm({ ...form, chassisNo: e.target.value.toUpperCase() })} placeholder="ME4JC94FDTG104998" style={inp} /></div>
-              <div><label style={lbl}>Document Type</label><select value={form.docType} onChange={e => setForm({ ...form, docType: e.target.value })} style={inp}>{DOC_TYPES.map(t => <option key={t.key} value={t.key}>{t.icon} {t.label}</option>)}</select></div>
+              <div><label style={lbl}>Document Type</label><select value={form.docType} onChange={e => setForm({ ...form, docType: e.target.value })} style={inp}>
+                {DOC_TYPES.map(t => <option key={t.key} value={t.key}>{t.icon} {t.label}</option>)}
+              </select></div>
               {DOC_TYPES.find(t => t.key === form.docType)?.hasExpiry && <div><label style={lbl}>Expiry Date</label><input type="date" value={form.expiryDate} onChange={e => setForm({ ...form, expiryDate: e.target.value })} style={inp} /></div>}
               <div><label style={lbl}>Notes</label><input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Optional" style={inp} /></div>
               <div>
@@ -523,7 +569,6 @@ export default function DocumentVault() {
   );
 }
 
-// Document Card with WhatsApp share button
 function DocCard({ doc, onView, onDelete, onShare }) {
   let icon = <Image size={24} />;
   if (doc.fileType === 'pdf') icon = <FileText size={24} />;
