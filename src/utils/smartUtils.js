@@ -177,77 +177,7 @@ export const getBase64Size = (base64) => {
 /**
  * Request notification permission (call once on app load)
  */
-// VAPID key for push subscription
-const VAPID_PUBLIC_KEY = 'BKwecIw_aOdebFYVONRm-ZF3au68bNWU1uHPSXkwr1LvV7dIS-b-v614SMT6UgjHbcqigskmSAhFBWHxV9a__TM';
 
-function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const rawData = window.atob(base64);
-  const output = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; ++i) output[i] = rawData.charCodeAt(i);
-  return output;
-}
-
-export const requestNotificationPermission = async () => {
-  if (!('Notification' in window)) {
-    console.log('Notifications not supported');
-    return false;
-  }
-  if (Notification.permission === 'denied') return false;
-
-  try {
-    // Step 1: Ask browser permission
-    const permission = await Notification.requestPermission();
-    if (permission !== 'granted') return false;
-
-    // Step 2: Register push subscription with backend (persistent MongoDB)
-    if ('serviceWorker' in navigator && 'PushManager' in window) {
-      try {
-        const reg = await navigator.serviceWorker.ready;
-
-        // Remove old subscription first
-        const existing = await reg.pushManager.getSubscription();
-        if (existing) await existing.unsubscribe().catch(() => {});
-
-        // Create new subscription
-        const subscription = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-        });
-
-        // Save to backend MongoDB (persists across server restarts)
-        const apiBase = import.meta.env.VITE_API_URL || 'https://vp-honda-backend.onrender.com';
-        const res = await fetch(`${apiBase}/api/push/save-push-subscription`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(subscription.toJSON()),
-        });
-
-        if (res.ok) {
-          console.log('[Push] ✅ Device registered for notifications!');
-        } else {
-          console.warn('[Push] Backend save failed:', res.status);
-        }
-      } catch (pushErr) {
-        console.warn('[Push] Push subscription failed:', pushErr.message);
-      }
-    }
-
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-export const getTheme = () => localStorage.getItem('vp_theme') || 'dark';
-export const setTheme = (theme) => {
-  localStorage.setItem('vp_theme', theme);
-  const dark = theme === 'dark';
-  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
-  document.body.style.background = dark ? '#020617' : '#f1f5f9';
-  document.body.style.removeProperty('color');
-};
 
 /**
  * Show a local notification
@@ -662,6 +592,48 @@ export const getCurrentLocation = () => {
 // ──────────────────────────────────────────────────────────────────────────
 // 🎯 EXPORT ALL
 // ──────────────────────────────────────────────────────────────────────────
+
+
+const _VAPID_KEY = 'BKwecIw_aOdebFYVONRm-ZF3au68bNWU1uHPSXkwr1LvV7dIS-b-v614SMT6UgjHbcqigskmSAhFBWHxV9a__TM';
+function _b64ToUint8(b) {
+  const p = '='.repeat((4 - b.length % 4) % 4);
+  const d = atob((b + p).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...d].map(c => c.charCodeAt(0)));
+}
+export const getTheme = () => localStorage.getItem('vp_theme') || 'dark';
+export const setTheme = (t) => {
+  localStorage.setItem('vp_theme', t);
+  document.documentElement.setAttribute('data-theme', t);
+  document.body.style.background = t === 'dark' ? '#020617' : '#f1f5f9';
+  document.body.style.removeProperty('color');
+};
+
+export const requestNotificationPermission = async () => {
+  if (!('Notification' in window)) return false;
+  if (Notification.permission === 'denied') return false;
+  const perm = await Notification.requestPermission().catch(() => 'denied');
+  if (perm !== 'granted') return false;
+  // Register push subscription with backend
+  if ('serviceWorker' in navigator && 'PushManager' in window) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const old = await reg.pushManager.getSubscription();
+      if (old) await old.unsubscribe().catch(() => {});
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: _b64ToUint8(_VAPID_KEY),
+      });
+      const base = import.meta.env.VITE_API_URL || 'https://vp-honda-backend.onrender.com';
+      await fetch(`${base}/api/push/save-push-subscription`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sub.toJSON()),
+      });
+      console.log('[Push] ✅ Device registered!');
+    } catch (e) { console.warn('[Push]', e.message); }
+  }
+  return true;
+};
 
 export default {
   // WhatsApp
