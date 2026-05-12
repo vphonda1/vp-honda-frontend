@@ -420,16 +420,16 @@ export default function JobCardPage() {
       return;
     }
 
-    const vehicle = selectedCustomer.linkedVehicle || {
-      name: 'NOT PROVIDED',
-      regNo: 'NOT PROVIDED',
-      chassisNo: 'NOT PROVIDED',
-      engineNo: 'NOT PROVIDED',
-      color: 'NOT PROVIDED',
-      model: 'NOT PROVIDED',
-      menuFactureDate: null,
-      sellingDate: null
-    };
+    const vehicle = selectedCustomer.linkedVehicle || {};
+    // ✅ Fallback chain for all vehicle fields
+    const vName    = vehicle.name     || vehicle.model  || selectedCustomer.vehicleModel  || '';
+    const vRegNo   = vehicle.regNo    || selectedCustomer.registrationNo || selectedCustomer.regNo || '';
+    const vChassis = vehicle.chassisNo || selectedCustomer.chassisNo || '';
+    const vEngine  = vehicle.engineNo  || selectedCustomer.engineNo  || '';
+    const vColor   = vehicle.color     || selectedCustomer.color     || '';
+    const vModel   = vehicle.model     || selectedCustomer.vehicleModel || '';
+    const vMfgDate = vehicle.menuFactureDate || null;
+    const vSellDate= vehicle.sellingDate || selectedCustomer.purchaseDate || selectedCustomer.invoiceDate || null;
 
     const totals = calculateTotals();
 
@@ -438,17 +438,17 @@ export default function JobCardPage() {
       invoiceNumber: formData.invoiceNo,
       invoiceDate: new Date(formData.invoiceDate),
       customerId: selectedCustomer._id,
-      customerName: selectedCustomer.name,
-      customerPhone: selectedCustomer.phone,
+      customerName: selectedCustomer.customerName || selectedCustomer.name || '',
+      customerPhone: selectedCustomer.mobileNo || selectedCustomer.phone || '',
       vehicleDetails: {
-        name: vehicle.name,
-        regNo: vehicle.regNo,
-        chassisNo: vehicle.chassisNo,
-        engineNo: vehicle.engineNo,
-        color: vehicle.color,
-        model: vehicle.model,
-        menuFactureDate: vehicle.menuFactureDate,
-        sellingDate: vehicle.sellingDate
+        name:            vName     || 'N/A',
+        regNo:           vRegNo    || 'N/A',
+        chassisNo:       vChassis  || 'N/A',
+        engineNo:        vEngine   || 'N/A',
+        color:           vColor    || 'N/A',
+        model:           vModel    || 'N/A',
+        menuFactureDate: vMfgDate,
+        sellingDate:     vSellDate,
       },
       serviceDetails: {
         service: formData.service,
@@ -514,8 +514,8 @@ export default function JobCardPage() {
                 invoiceId: savedInvoice._id,
                 invoiceNumber: invoiceData.invoiceNo || invoiceData.invoiceNumber || '',
                 customerId: selectedCustomer._id,
-                customerName: selectedCustomer.name,
-                regNo: vehicle.regNo || '',
+                customerName: selectedCustomer.customerName || selectedCustomer.name || '',
+                regNo: vRegNo || '',
                 consumedBy: (JSON.parse(localStorage.getItem('vpSession') || '{}'))?.name || 'Staff',
                 parts: selectedParts.map(p => ({
                   partId: p._id,
@@ -1173,7 +1173,9 @@ export default function JobCardPage() {
                 >
                   <option value="">-- Choose Customer --</option>
                   {(customerType === 'existing' ? customers : newCustomers).map(c => 
-                    <option key={c._id} value={c._id}>{c.name} - {c.phone}</option>
+                    <option key={c._id} value={c._id}>
+                      {c.customerName || c.name || 'Unknown'} — {c.mobileNo || c.phone || ''}
+                    </option>
                   )}
                 </select>
               </div>
@@ -1183,9 +1185,9 @@ export default function JobCardPage() {
                 <div className="border-2 border-green-500 p-4 rounded bg-green-50 space-y-3">
                   <h3 className="font-bold text-lg text-green-900">✅ Customer Details (Auto-filled)</h3>
                   <div className="grid grid-cols-2 gap-2 text-sm bg-white p-3 rounded">
-                    <div><b>Name:</b> {customer.name}</div>
+                    <div><b>Name:</b> {customer.customerName || customer.name}</div>
                     <div><b>Father Name:</b> {customer.fatherName}</div>
-                    <div><b>Phone:</b> {customer.phone}</div>
+                    <div><b>Phone:</b> {customer.mobileNo || customer.phone}</div>
                     <div><b>Aadhar:</b> {customer.aadhar}</div>
                     <div className="col-span-2"><b>Address:</b> {customer.address}</div>
                     <div><b>District:</b> {customer.district}</div>
@@ -1196,14 +1198,14 @@ export default function JobCardPage() {
                     <div className="border-2 border-red-500 p-4 rounded bg-red-50 mt-4">
                       <h4 className="font-bold text-lg text-red-900 mb-3">🚗 Vehicle Details (Auto-linked)</h4>
                       <div className="grid grid-cols-2 gap-3 text-sm bg-white p-3 rounded">
-                        <div><b>Vehicle:</b> <span style={{color: 'red'}}>{customer.linkedVehicle.name || 'NOT PROVIDED'}</span></div>
-                        <div><b>Reg No:</b> <span style={{color: 'red'}}>{customer.linkedVehicle.regNo || 'NOT PROVIDED'}</span></div>
-                        <div><b>Chassis:</b> <span style={{color: 'red'}}>{customer.linkedVehicle.chassisNo || 'NOT PROVIDED'}</span></div>
-                        <div><b>Engine:</b> <span style={{color: 'red'}}>{customer.linkedVehicle.engineNo || 'NOT PROVIDED'}</span></div>
-                        <div><b>Color:</b> <span style={{color: 'red'}}>{customer.linkedVehicle.color || 'NOT PROVIDED'}</span></div>
-                        <div><b>Model:</b> <span style={{color: 'red'}}>{customer.linkedVehicle.model || 'NOT PROVIDED'}</span></div>
-                        <div><b>Manufacture:</b> <span style={{color: 'red'}}>{formatDate(customer.linkedVehicle.menuFactureDate)}</span></div>
-                        <div><b>Selling Date:</b> <span style={{color: 'red'}}>{formatDate(customer.linkedVehicle.sellingDate)}</span></div>
+                        <div><b>Vehicle:</b> <span style={{color:'red'}}>{customer.linkedVehicle?.name || customer.linkedVehicle?.model || customer.vehicleModel || 'NOT PROVIDED'}</span></div>
+                        <div><b>Reg No:</b> <span style={{color:'red'}}>{customer.linkedVehicle?.regNo || customer.registrationNo || customer.regNo || 'NOT PROVIDED'}</span></div>
+                        <div><b>Chassis:</b> <span style={{color:'red'}}>{customer.linkedVehicle?.chassisNo || customer.chassisNo || 'NOT PROVIDED'}</span></div>
+                        <div><b>Engine:</b> <span style={{color:'red'}}>{customer.linkedVehicle?.engineNo || customer.engineNo || 'NOT PROVIDED'}</span></div>
+                        <div><b>Color:</b> <span style={{color:'red'}}>{customer.linkedVehicle?.color || customer.color || 'NOT PROVIDED'}</span></div>
+                        <div><b>Model:</b> <span style={{color:'red'}}>{customer.linkedVehicle?.model || customer.vehicleModel || 'NOT PROVIDED'}</span></div>
+                        <div><b>Manufacture:</b> <span style={{color:'red'}}>{formatDate(customer.linkedVehicle?.menuFactureDate)}</span></div>
+                        <div><b>Selling Date:</b> <span style={{color:'red'}}>{formatDate(customer.linkedVehicle?.sellingDate || customer.purchaseDate || customer.invoiceDate)}</span></div>
                       </div>
                     </div>
                   )}
