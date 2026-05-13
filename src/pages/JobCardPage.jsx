@@ -52,37 +52,48 @@ export default function JobCardPage() {
     return () => unsubscribe();
   }, []);
 
+  const normalizeCustomer = (customer) => ({
+    ...customer,
+    name:  customer.customerName || customer.name  || customer.mobileNo || customer.phone || '',
+    phone: customer.mobileNo     || customer.phone || '',
+    customerName: customer.customerName || customer.name  || '',
+    mobileNo:     customer.mobileNo     || customer.phone || '',
+    linkedVehicle: typeof customer.linkedVehicle === 'string'
+      ? { name: customer.vehicleModel || '', regNo: customer.registrationNo || customer.regNo || '', engineNo: customer.engineNo || '', chassisNo: customer.chassisNo || '', color: customer.color || '', model: customer.vehicleModel || '', menuFactureDate: null, sellingDate: customer.purchaseDate || customer.invoiceDate || null }
+      : customer.linkedVehicle
+        ? { ...customer.linkedVehicle,
+            name:     customer.linkedVehicle.name      || customer.linkedVehicle.model  || customer.vehicleModel || '',
+            regNo:    customer.linkedVehicle.regNo     || customer.registrationNo        || customer.regNo        || '',
+            engineNo: customer.linkedVehicle.engineNo  || customer.engineNo  || '',
+            chassisNo:customer.linkedVehicle.chassisNo || customer.chassisNo || '',
+            color:    customer.linkedVehicle.color     || customer.color     || '',
+            model:    customer.linkedVehicle.model     || customer.vehicleModel || '',
+          }
+        : { name: customer.vehicleModel || '', regNo: customer.registrationNo || customer.regNo || '', engineNo: customer.engineNo || '', chassisNo: customer.chassisNo || '', color: customer.color || '', model: customer.vehicleModel || '', menuFactureDate: null, sellingDate: customer.purchaseDate || customer.invoiceDate || null },
+  });
+
   const loadAllData = async () => {
+    // ✅ Load from localStorage cache first (instant on mobile)
+    try {
+      const cached = localStorage.getItem('vpCustomers');
+      if (cached) {
+        const cachedData = JSON.parse(cached).map(normalizeCustomer);
+        if (cachedData.length > 0) setCustomers(cachedData);
+      }
+    } catch {}
+
     console.log('📦 Starting to load all data...');
     
     try {
-      // Load existing customers
-      console.log('👥 Loading customers...');
+      // Load existing customers from API
       try {
         const custRes = await fetch(api('/api/customers'));
         if (custRes.ok) {
           let custData = await custRes.json();
-          custData = custData.map(customer => ({
-            ...customer,
-            // ✅ Normalize fields — works on ALL devices
-            name:  customer.customerName || customer.name || '',
-            phone: customer.mobileNo     || customer.phone || '',
-            linkedVehicle: typeof customer.linkedVehicle === 'string'
-              ? { _id: customer.linkedVehicle, name: customer.vehicleModel || '', regNo: customer.registrationNo || customer.regNo || '', engineNo: customer.engineNo || '', chassisNo: customer.chassisNo || '', color: customer.color || '', model: customer.vehicleModel || '', menuFactureDate: null, sellingDate: customer.purchaseDate || customer.invoiceDate || null }
-              : customer.linkedVehicle
-                ? {
-                    ...customer.linkedVehicle,
-                    name:    customer.linkedVehicle.name    || customer.linkedVehicle.model    || customer.vehicleModel  || '',
-                    regNo:   customer.linkedVehicle.regNo   || customer.registrationNo         || customer.regNo         || '',
-                    engineNo: customer.linkedVehicle.engineNo  || customer.engineNo  || '',
-                    chassisNo: customer.linkedVehicle.chassisNo || customer.chassisNo || '',
-                    color:   customer.linkedVehicle.color   || customer.color   || '',
-                    model:   customer.linkedVehicle.model   || customer.vehicleModel || '',
-                  }
-                : { name: customer.vehicleModel || '', regNo: customer.registrationNo || customer.regNo || '', engineNo: customer.engineNo || '', chassisNo: customer.chassisNo || '', color: customer.color || '', model: customer.vehicleModel || '', menuFactureDate: null, sellingDate: customer.purchaseDate || customer.invoiceDate || null },
-          }));
+          custData = custData.map(normalizeCustomer);
           setCustomers(custData || []);
-          console.log('✅ Customers loaded:', custData.length);
+          // ✅ Cache for mobile offline/slow connection
+          try { localStorage.setItem('vpCustomers', JSON.stringify(custData)); } catch {}
         }
       } catch (e) {
         console.warn('⚠️ Error loading customers:', e);
