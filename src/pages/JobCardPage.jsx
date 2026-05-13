@@ -1164,21 +1164,34 @@ export default function JobCardPage() {
               </div>
 
               {/* CUSTOMER SELECTION */}
-              <div className="border-3 border-blue-500 p-4 rounded bg-blue-50">
-                <label className="block text-lg font-bold mb-2 text-blue-900">⭐ SELECT CUSTOMER</label>
-                <select 
-                  value={formData.customerId} 
-                  onChange={(e) => setFormData({...formData, customerId: e.target.value})} 
-                  className="w-full border-2 p-2 font-bold text-base"
-                >
-                  <option value="">-- Choose Customer --</option>
-                  {(customerType === 'existing' ? customers : newCustomers).map(c => 
-                    <option key={c._id} value={c._id}>
-                      {c.customerName || c.name || 'Unknown'} — {c.mobileNo || c.phone || ''}
-                    </option>
-                  )}
-                </select>
-              </div>
+<div className="border-3 border-blue-500 p-4 rounded bg-blue-50">
+  <label className="block text-lg font-bold mb-2 text-blue-900">⭐ SELECT CUSTOMER</label>
+  
+  <select 
+    value={formData.customerId} 
+    onChange={(e) => setFormData({...formData, customerId: e.target.value})} 
+    className="w-full border-2 p-3 font-bold text-base rounded"
+  >
+    <option value="">-- Choose Customer --</option>
+    
+    {(customerType === 'existing' ? customers : newCustomers).map(c => {
+      const fullName = (c.customerName || c.name || '').trim();
+      const phone = (c.mobileNo || c.phone || '').trim();
+      
+      let displayText = phone ? `+91 ${phone}` : 'No Phone';
+      
+      if (fullName) {
+        displayText = `${fullName} — ${phone}`;
+      }
+
+      return (
+        <option key={c._id} value={c._id}>
+          {displayText}
+        </option>
+      );
+    })}
+  </select>
+</div>
 
               {/* CUSTOMER DETAILS AUTO-FILLED */}
               {customer && (
