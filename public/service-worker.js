@@ -44,8 +44,25 @@ self.addEventListener('fetch', e => {
   if (url.pathname.startsWith('/api/') || url.hostname.includes('onrender.com')) {
     e.respondWith(
       fetch(request)
-        .then(res => { caches.open(API_CACHE).then(c => c.put(request, res.clone())); return res; })
-        .catch(() => caches.match(request).then(c => c ||
+        .then(res => {
+          // Only cache successful responses
+          if (res.ok) {
+            // Clone via arrayBuffer to avoid "body already used" errors
+            return res.arrayBuffer().then(buffer => {
+              const clonedRes = new Response(buffer, {
+                status: res.status,
+                statusText: res.statusText,
+                headers: res.headers
+              });
+              // Store the cloned response in cache
+              caches.open(API_CACHE).then(cache => cache.put(request, clonedRes.clone()));
+              return clonedRes;
+            });
+          } else {
+            return res; // Don't cache error responses
+          }
+        })
+        .catch(() => caches.match(request).then(cached => cached ||
           new Response(JSON.stringify({ error:'Offline', message:'इंटरनेट नहीं है' }),
             { status:503, headers:{'Content-Type':'application/json'} })
         ))
@@ -58,7 +75,10 @@ self.addEventListener('fetch', e => {
     caches.match(request).then(cached => {
       if (cached) return cached;
       return fetch(request).then(res => {
-        if (res.status === 200) caches.open(STATIC_CACHE).then(c => c.put(request, res.clone()));
+        if (res.status === 200) {
+          const resClone = res.clone();
+          caches.open(STATIC_CACHE).then(c => c.put(request, resClone));
+        }
         return res;
       }).catch(() => request.mode === 'navigate' ? caches.match('/index.html') : null);
     })
