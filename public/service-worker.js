@@ -1,13 +1,15 @@
 // ════════════════════════════════════════════════════════════════════════════
-// VP Honda Service Worker v2.7.0 (clone error fixed + all existing features)
+// VP Honda Service Worker v2.1.0
+// All reminder types → phone notifications
 // ════════════════════════════════════════════════════════════════════════════
 
-const VERSION      = 'v2.7.0';
+const VERSION      = 'v2.1.0';
 const STATIC_CACHE = `vp-honda-static-${VERSION}`;
 const API_CACHE    = `vp-honda-api-${VERSION}`;
 const PRECACHE     = ['/', '/index.html', '/manifest.json',
   '/icons/icon-192x192.png', '/icons/icon-512x512.png'];
 
+// ── Notification icons per type ─────────────────────────────────────────────
 const TYPE_META = {
   'service':          { badge: '🔧', color: '#ea580c', tag: 'svc' },
   'payment':          { badge: '💰', color: '#16a34a', tag: 'pay' },
@@ -32,30 +34,17 @@ self.addEventListener('activate', e => {
   );
 });
 
-// ── FETCH (✅ SAFE CLONE – no more "already used" error) ─────────────────────
+// ── FETCH (Caching strategy) ─────────────────────────────────────────────────
 self.addEventListener('fetch', e => {
   const { request } = e;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
 
-  // API / cross-origin requests
+  // API → Network first, cache fallback
   if (url.pathname.startsWith('/api/') || url.hostname.includes('onrender.com')) {
     e.respondWith(
       fetch(request)
-        .then(res => {
-          // ✅ ONLY clone if body is NOT already used AND response is NOT opaque
-          if (!res.bodyUsed && res.type !== 'opaque') {
-            try {
-              const clone = res.clone();
-              caches.open(API_CACHE)
-                .then(c => c.put(request, clone))
-                .catch(err => console.warn('[SW] API cache put error:', err));
-            } catch (err) {
-              console.warn('[SW] clone failed for API:', url.href, err);
-            }
-          }
-          return res;
-        })
+        .then(res => { caches.open(API_CACHE).then(c => c.put(request, res.clone())); return res; })
         .catch(() => caches.match(request).then(c => c ||
           new Response(JSON.stringify({ error:'Offline', message:'इंटरनेट नहीं है' }),
             { status:503, headers:{'Content-Type':'application/json'} })
@@ -64,19 +53,12 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Static assets (same-origin)
+  // Static → Cache first, network fallback
   e.respondWith(
     caches.match(request).then(cached => {
       if (cached) return cached;
       return fetch(request).then(res => {
-        if (res.status === 200 && !res.bodyUsed && res.type !== 'opaque') {
-          try {
-            const clone = res.clone();
-            caches.open(STATIC_CACHE)
-              .then(c => c.put(request, clone))
-              .catch(err => console.warn('[SW] Static cache put error:', err));
-          } catch (err) {}
-        }
+        if (res.status === 200) caches.open(STATIC_CACHE).then(c => c.put(request, res.clone()));
         return res;
       }).catch(() => request.mode === 'navigate' ? caches.match('/index.html') : null);
     })
@@ -97,12 +79,11 @@ self.addEventListener('notificationclick', e => {
   e.notification.close();
   const { action } = e;
   const data = e.notification.data || {};
-  const url  = data.url || '/';
-
-  if (action === 'dismiss') return;
+  const url  = data.url || '/reminders';
 
   e.waitUntil(
     clients.matchAll({ type:'window', includeUncontrolled:true }).then(list => {
+      // Try to focus existing window
       const found = list.find(c => c.url.includes(self.location.origin));
       if (found) {
         found.focus();
@@ -114,33 +95,13 @@ self.addEventListener('notificationclick', e => {
   );
 });
 
-// ── PUSH (server-sent for chat / reminders) ───────────────────────────────────
+// ── PUSH (server-sent, future) ────────────────────────────────────────────────
 self.addEventListener('push', e => {
   if (!e.data) return;
-  try {
-    const d = e.data.json();
-    e.waitUntil(
-      self.registration.showNotification(d.title || 'VP Honda', {
-        body:               d.body || '',
-        icon:               d.icon  || '/icons/icon-192x192.png',
-        badge:              d.badge || '/icons/icon-96x96.png',
-        vibrate:            [200, 100, 200],
-        tag:                d.tag || 'vp-chat',
-        renotify:           true,
-        requireInteraction: false,
-        data:               { url: d.url || '/chat', type: d.type || 'chat' },
-        actions: [
-          { action: 'open',    title: '💬 खोलें'    },
-          { action: 'dismiss', title: '✕ बंद करें'  },
-        ],
-      })
-    );
-  } catch (err) {
-    console.error('[SW Push]', err);
-  }
+  try { const d = e.data.json(); e.waitUntil(showNotif(d.title, d.body, d)); } catch {}
 });
 
-// ── PERIODIC BACKGROUND SYNC (reminders) ──────────────────────────────────────
+// ── PERIODIC BACKGROUND SYNC ──────────────────────────────────────────────────
 self.addEventListener('periodicsync', e => {
   if (e.tag === 'vp-reminder-check') e.waitUntil(bgCheck());
 });
@@ -150,10 +111,11 @@ self.addEventListener('sync', e => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// NOTIFICATION DISPLAY (reminders)
+// NOTIFICATION DISPLAY
 // ════════════════════════════════════════════════════════════════════════════
 function showNotif(title, body, data = {}) {
   const meta = TYPE_META[data.type] || { badge:'🔔', tag:'vp' };
+
   return self.registration.showNotification(title, {
     body,
     icon:               '/icons/icon-192x192.png',
@@ -173,34 +135,33 @@ function showNotif(title, body, data = {}) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// SCHEDULE PROCESSING (reminders)
+// SCHEDULE PROCESSING (from app message)
 // ════════════════════════════════════════════════════════════════════════════
 const scheduledTimers = new Map();
 
 function processSchedule(items = []) {
   if (!Array.isArray(items)) return;
+
+  // Cancel old timers
   scheduledTimers.forEach(t => clearTimeout(t));
   scheduledTimers.clear();
 
   const now = Date.now();
-  const immediate = items.filter(i => new Date(i.fireAt).getTime() <= now + 5000);
-  const scheduled_items = items.filter(i => new Date(i.fireAt).getTime() > now + 5000);
 
-  immediate.forEach((item, idx) => {
-    setTimeout(() => {
+  items.forEach(item => {
+    const fireAt = new Date(item.fireAt).getTime();
+    const delay  = fireAt - now;
+
+    if (delay <= 500) {
+      // Fire immediately
       showNotif(item.title, item.body, {
         url:                item.url || '/reminders',
-        tag:                item.tag || `vp-${idx}`,
+        tag:                item.tag,
         type:               item.type,
         requireInteraction: item.requireInteraction,
       });
-    }, idx * 1500);
-  });
-
-  scheduled_items.forEach(item => {
-    const fireAt = new Date(item.fireAt).getTime();
-    const delay  = fireAt - now;
-    if (delay <= 48 * 3600 * 1000) {
+    } else if (delay <= 48 * 3600 * 1000) {
+      // Schedule within 48 hours
       const timer = setTimeout(() => {
         showNotif(item.title, item.body, {
           url:                item.url || '/reminders',
@@ -213,11 +174,11 @@ function processSchedule(items = []) {
     }
   });
 
-  console.log(`[SW] ${immediate.length} immediate + ${scheduled_items.length} scheduled reminders`);
+  console.log(`[SW] ${items.length} reminders processed`);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// BACKGROUND CHECK (IndexedDB for reminders)
+// BACKGROUND CHECK (from periodic sync / IDB)
 // ════════════════════════════════════════════════════════════════════════════
 async function bgCheck() {
   try {
@@ -230,16 +191,35 @@ async function bgCheck() {
     const tmrwStr  = new Date(now.getTime() + 86400000).toISOString().split('T')[0];
 
     for (const r of reminders) {
+      const meta = TYPE_META[r.type] || TYPE_META['service'];
+
+      // Today due
       if (r.dueDate === todayStr && !r.notifiedToday) {
-        await showNotif(buildBgTitle(r, 'today'), buildBgBody(r), { tag:`td-${r.id}`, url:'/reminders', type:r.type, requireInteraction:true });
+        await showNotif(
+          buildBgTitle(r, 'today'),
+          buildBgBody(r),
+          { tag:`td-${r.id}`, url:'/reminders', type:r.type, requireInteraction:true }
+        );
         await markField(db, r.id, 'notifiedToday', true);
       }
+
+      // Tomorrow due
       if (r.dueDate === tmrwStr && !r.notifiedTomorrow) {
-        await showNotif(buildBgTitle(r, 'tomorrow'), buildBgBody(r), { tag:`tm-${r.id}`, url:'/reminders', type:r.type });
+        await showNotif(
+          buildBgTitle(r, 'tomorrow'),
+          buildBgBody(r),
+          { tag:`tm-${r.id}`, url:'/reminders', type:r.type }
+        );
         await markField(db, r.id, 'notifiedTomorrow', true);
       }
+
+      // Overdue (notify once per day)
       if (r.daysRemaining < 0 && !r.notifiedOverdue) {
-        await showNotif(buildBgTitle(r, 'overdue'), buildBgBody(r), { tag:`ov-${r.id}`, url:'/reminders', type:r.type, requireInteraction:true });
+        await showNotif(
+          buildBgTitle(r, 'overdue'),
+          buildBgBody(r),
+          { tag:`ov-${r.id}`, url:'/reminders', type:r.type, requireInteraction:true }
+        );
         await markField(db, r.id, 'notifiedOverdue', true);
       }
     }
@@ -248,6 +228,7 @@ async function bgCheck() {
   }
 }
 
+// ── Background notification text builders ────────────────────────────────────
 function buildBgTitle(r, when) {
   const name = r.customerName || 'Customer';
   const map = {
@@ -285,7 +266,7 @@ function buildBgBody(r) {
   return parts.join('\n');
 }
 
-// IndexedDB helpers
+// ── IndexedDB helpers ─────────────────────────────────────────────────────────
 function openDB() {
   return new Promise((res, rej) => {
     const req = indexedDB.open('vp-reminders', 1);
