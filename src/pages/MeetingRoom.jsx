@@ -40,38 +40,62 @@ export default function MeetingRoom({ user }) {
   // Load Jitsi
   useEffect(() => {
     if (!inMeeting || !finalRoom || !jitsiRef.current) return;
-    const load = () => {
-      jitsiApi.current?.dispose?.();
-      jitsiApi.current = new window.JitsiMeetExternalAPI('meet.jit.si', {
-        roomName:   finalRoom,
-        width:      '100%',
-        height:     '100%',
-        parentNode: jitsiRef.current,
-        userInfo:   { displayName: myName },
-        configOverwrite: {
-          startWithAudioMuted: false,
-          startWithVideoMuted: false,
-          prejoinPageEnabled:  false,
-        },
-        interfaceConfigOverwrite: {
-          APP_NAME: 'VP Honda Meeting',
-          SHOW_JITSI_WATERMARK: false,
-        },
-      });
-      jitsiApi.current.addEventListeners({
-        readyToClose: endMeeting,
-        videoConferenceLeft: endMeeting,
-        participantJoined: (e) => showInAppToast('👋 Joined', e.displayName, 'success'),
-      });
+    let disposed = false;
+
+    const initJitsi = () => {
+      if (disposed || !jitsiRef.current) return;
+      try {
+        if (jitsiApi.current) { try { jitsiApi.current.dispose(); } catch {} }
+        jitsiApi.current = new window.JitsiMeetExternalAPI('meet.jit.si', {
+          roomName:   finalRoom,
+          width:      '100%',
+          height:     '100%',
+          parentNode: jitsiRef.current,
+          userInfo:   { displayName: myName },
+          configOverwrite: {
+            startWithAudioMuted: false,
+            startWithVideoMuted: false,
+            prejoinPageEnabled:  false,
+            enableNoisyMicDetection: false,
+          },
+          interfaceConfigOverwrite: {
+            APP_NAME: 'VP Honda Meeting',
+            SHOW_JITSI_WATERMARK: false,
+            TOOLBAR_BUTTONS: ['microphone','camera','closedcaptions','desktop','fullscreen','fodeviceselection','hangup','chat','recording','livestreaming','etherpad','sharedvideo','settings','raisehand','videoquality','filmstrip','feedback','stats','shortcuts','tileview','select-background','help','mute-everyone'],
+          },
+        });
+        jitsiApi.current.addEventListeners({
+          readyToClose:        endMeeting,
+          videoConferenceLeft: endMeeting,
+          participantJoined:   (e) => showInAppToast('👋 Joined', e.displayName || 'Someone', 'success'),
+        });
+      } catch (err) {
+        console.error('Jitsi init error:', err);
+        showInAppToast('❌ Meeting load failed', 'Internet check करें', 'error');
+      }
     };
-    if (window.JitsiMeetExternalAPI) { load(); }
-    else {
-      const s = document.createElement('script');
-      s.src = 'https://meet.jit.si/external_api.js';
-      s.onload = load;
-      document.head.appendChild(s);
+
+    if (window.JitsiMeetExternalAPI) {
+      initJitsi();
+    } else {
+      // Check if script already loading
+      const existing = document.querySelector('script[src*="meet.jit.si/external_api"]');
+      if (existing) {
+        existing.addEventListener('load', initJitsi);
+      } else {
+        const s = document.createElement('script');
+        s.src = 'https://meet.jit.si/external_api.js';
+        s.async = true;
+        s.onload  = initJitsi;
+        s.onerror = () => showInAppToast('❌ Jitsi load failed', 'Internet check करें', 'error');
+        document.head.appendChild(s);
+      }
     }
-    return () => { try { jitsiApi.current?.dispose?.(); } catch {} };
+
+    return () => {
+      disposed = true;
+      try { jitsiApi.current?.dispose?.(); } catch {}
+    };
   }, [inMeeting, finalRoom]);
 
   const startMeeting = (room) => {
