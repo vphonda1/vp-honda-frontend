@@ -40,7 +40,9 @@ export default function TeamChat({ user }) {
   const [notifEnabled, setNotifEnabled] = useState(false);
   const [showSettings, setShowSettings] = useState(null); // groupId being edited
   const [groupMembers, setGroupMembers] = useState(getGroupMembers());
-  const [unread,       setUnread]       = useState({});
+  const [unread,       setUnread]       = useState(() => {
+    try { return JSON.parse(localStorage.getItem(LS_UNREAD) || '{}'); } catch { return {}; }
+  });
   const bottomRef   = useRef(null);
   const inputRef    = useRef(null);
   const pollRef     = useRef(null);
@@ -98,8 +100,9 @@ export default function TeamChat({ user }) {
           const newMsgs  = data.filter(m => !existing.has(m._id));
           if (!newMsgs.length) return prev;
           lastIdRef.current = newMsgs[newMsgs.length - 1]._id;
-          // Sound for others' messages
-          if (newMsgs.some(m => m.sender !== myName)) {
+          // Sound + unread badge for others' messages
+          const fromOthers = newMsgs.filter(m => m.sender !== myName);
+          if (fromOthers.length > 0) {
             try {
               const ctx  = new (window.AudioContext || window.webkitAudioContext)();
               const osc  = ctx.createOscillator();
@@ -110,6 +113,12 @@ export default function TeamChat({ user }) {
               gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
               osc.start(); osc.stop(ctx.currentTime + 0.3);
             } catch {}
+            // Unread badge count
+            setUnread(prev => {
+              const u = { ...prev, [currentRoom]: (prev[currentRoom] || 0) + fromOthers.length };
+              try { localStorage.setItem(LS_UNREAD, JSON.stringify(u)); } catch {}
+              return u;
+            });
           }
           return [...prev, ...newMsgs];
         });
@@ -121,6 +130,12 @@ export default function TeamChat({ user }) {
     if (!currentRoom) return;
     setMessages([]); lastIdRef.current = null;
     loadMessages(true);
+    // ✅ Clear unread count when room opens
+    setUnread(prev => {
+      const u = { ...prev, [currentRoom]: 0 };
+      try { localStorage.setItem(LS_UNREAD, JSON.stringify(u)); } catch {}
+      return u;
+    });
     clearInterval(pollRef.current);
     pollRef.current = setInterval(() => loadMessages(false), 3000);
     return () => clearInterval(pollRef.current);
@@ -332,13 +347,22 @@ export default function TeamChat({ user }) {
         {/* List */}
         <div style={{ flex:1, overflowY:'auto' }}>
           {tab === 'groups' && DEFAULT_GROUPS.filter(g => !search || g.name.toLowerCase().includes(search.toLowerCase())).map(g => {
-            const active = tab==='groups' && activeRoom===g.id;
+            const active      = tab==='groups' && activeRoom===g.id;
             const memberCount = groupMembers[g.id]?.length || 0;
+            const unreadCount = unread[`group_${g.id}`] || 0;
             return (
               <div key={g.id} style={{ padding:'10px 12px', cursor:'pointer', background:active?'#DC000015':'transparent', borderLeft:active?`3px solid ${g.color}`:'3px solid transparent', display:'flex', alignItems:'center', gap:8 }}
                 onClick={() => { setActiveRoom(g.id); setSidebarOpen(false); }}>
                 <div style={{ flex:1, minWidth:0 }}>
-                  <p style={{ fontWeight:700, fontSize:12, margin:0 }}>{g.name}</p>
+                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                    <p style={{ fontWeight:700, fontSize:12, margin:0 }}>{g.name}</p>
+                    {/* ✅ Unread badge WhatsApp जैसा */}
+                    {unreadCount > 0 && !active && (
+                      <span style={{ background:'#16a34a', color:'#fff', borderRadius:'50%', minWidth:18, height:18, fontSize:9, fontWeight:800, display:'flex', alignItems:'center', justifyContent:'center', padding:'0 3px' }}>
+                        {unreadCount > 99 ? '99+' : unreadCount}
+                      </span>
+                    )}
+                  </div>
                   <p style={{ color:'#64748b', fontSize:10, margin:'2px 0 0' }}>
                     {memberCount > 0 ? `${memberCount} members` : 'All staff'} · {g.desc}
                   </p>

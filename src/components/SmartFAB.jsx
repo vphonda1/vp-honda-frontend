@@ -1,7 +1,7 @@
 // SmartFAB.jsx — Smart Floating Action Button
 // Features: Voice input, QR scan, Dark/Light theme toggle, Language switch
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Mic, MicOff, QrCode, Sun, Moon, Globe, X, Zap } from 'lucide-react';
 import { showInAppToast } from '../utils/smartUtils';
 
@@ -76,7 +76,13 @@ const matchVoiceRoute = (transcript) => {
 };
 
 export default function SmartFAB({ user }) {
-  const navigate = useNavigate();
+  const navigate   = useNavigate();
+  const location   = useLocation();
+
+  // ✅ Chat page पर FAB ऊपर — input area block नहीं होगा
+  const isChat     = location.pathname === '/chat';
+  const fabBottom  = isChat ? 130 : 20;
+  const menuBottom = isChat ? 190 : 80;
   const [open, setOpen] = useState(false);
   const [isDark, setIsDark] = useState(() => localStorage.getItem('vp_theme') !== 'light');
   const [lang, setLang] = useState(getLang());
@@ -235,7 +241,7 @@ export default function SmartFAB({ user }) {
 
       {/* Action Menu */}
       {open && (
-        <div style={{ position: 'fixed', bottom: 80, right: 16, zIndex: 150, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+        <div style={{ position: 'fixed', bottom: menuBottom, right: 16, zIndex: 150, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
           {actions.map((a, i) => (
             <button key={i} onClick={() => { if (!a.disabled) a.onClick(); }}
               disabled={a.disabled}
@@ -261,7 +267,7 @@ export default function SmartFAB({ user }) {
       <button
         onClick={() => { setOpen(o => !o); if (listening) stopVoice(); }}
         style={{
-          position: 'fixed', bottom: 20, right: 16, zIndex: 160,
+          position: 'fixed', bottom: fabBottom, right: 16, zIndex: 160,
           background: listening ? '#dc2626' : 'linear-gradient(135deg, #7c3aed, #DC0000)',
           color: '#fff', border: 'none',
           width: 52, height: 52, borderRadius: '50%',

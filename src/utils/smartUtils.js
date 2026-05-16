@@ -177,7 +177,21 @@ export const getBase64Size = (base64) => {
 /**
  * Request notification permission (call once on app load)
  */
+export const requestNotificationPermission = async () => {
+  if (!('Notification' in window)) {
+    console.log('Notifications not supported');
+    return false;
+  }
+  if (Notification.permission === 'granted') return true;
+  if (Notification.permission === 'denied') return false;
 
+  try {
+    const permission = await Notification.requestPermission();
+    return permission === 'granted';
+  } catch {
+    return false;
+  }
+};
 
 /**
  * Show a local notification
@@ -592,48 +606,6 @@ export const getCurrentLocation = () => {
 // ──────────────────────────────────────────────────────────────────────────
 // 🎯 EXPORT ALL
 // ──────────────────────────────────────────────────────────────────────────
-
-
-const _VAPID_KEY = 'BKwecIw_aOdebFYVONRm-ZF3au68bNWU1uHPSXkwr1LvV7dIS-b-v614SMT6UgjHbcqigskmSAhFBWHxV9a__TM';
-function _b64ToUint8(b) {
-  const p = '='.repeat((4 - b.length % 4) % 4);
-  const d = atob((b + p).replace(/-/g, '+').replace(/_/g, '/'));
-  return Uint8Array.from([...d].map(c => c.charCodeAt(0)));
-}
-export const getTheme = () => localStorage.getItem('vp_theme') || 'dark';
-export const setTheme = (t) => {
-  localStorage.setItem('vp_theme', t);
-  document.documentElement.setAttribute('data-theme', t);
-  document.body.style.background = t === 'dark' ? '#020617' : '#f1f5f9';
-  document.body.style.removeProperty('color');
-};
-
-export const requestNotificationPermission = async () => {
-  if (!('Notification' in window)) return false;
-  if (Notification.permission === 'denied') return false;
-  const perm = await Notification.requestPermission().catch(() => 'denied');
-  if (perm !== 'granted') return false;
-  // Register push subscription with backend
-  if ('serviceWorker' in navigator && 'PushManager' in window) {
-    try {
-      const reg = await navigator.serviceWorker.ready;
-      const old = await reg.pushManager.getSubscription();
-      if (old) await old.unsubscribe().catch(() => {});
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: _b64ToUint8(_VAPID_KEY),
-      });
-      const base = import.meta.env.VITE_API_URL || 'https://vp-honda-backend.onrender.com';
-      await fetch(`${base}/api/push/save-push-subscription`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(sub.toJSON()),
-      });
-      console.log('[Push] ✅ Device registered!');
-    } catch (e) { console.warn('[Push]', e.message); }
-  }
-  return true;
-};
 
 export default {
   // WhatsApp
