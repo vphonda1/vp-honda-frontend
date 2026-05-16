@@ -243,10 +243,7 @@ function processSchedule(items = []) {
 
   console.log(`[SW] ${items.length} reminders processed`);
 }
-    const fireAt = new Date(item.fireAt).getTime();
-    const delay  = fireAt - now;
-    if (delay <= 48 * 3600 * 1000) {
-      const timer = setTimeout(() => {
+
 // ════════════════════════════════════════════════════════════════════════════
 // BACKGROUND CHECK (IndexedDB for reminders)
 // ════════════════════════════════════════════════════════════════════════════
@@ -346,5 +343,4 @@ function markField(db, id, field, value) {
     };
     get.onerror = () => res();
   });
-}}
 }
