@@ -64,12 +64,16 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // ✅ Auto re-subscribe push on every app load (keeps subscription fresh)
+  // ✅ Auto-prompt notification on app load — user just sees one popup
   useEffect(() => {
     if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
-    if (Notification.permission === 'granted') {
-      requestNotificationPermission().catch(() => {});
-    }
+    // Wait 2 seconds then auto-show permission popup
+    const timer = setTimeout(() => {
+      if (Notification.permission === 'default' || Notification.permission === 'granted') {
+        requestNotificationPermission().catch(() => {});
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
   }, []);
 
   // ⭐ Handle notification tap → navigate to correct page
@@ -524,4 +528,4 @@ export default function App() {
       </div>
     </Router>
   );
-}
+              }
