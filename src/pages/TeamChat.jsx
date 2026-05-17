@@ -519,4 +519,4 @@ export default function TeamChat({ user }) {
       </div>
     </div>
   );
-            }
+                                                                                          }
