@@ -64,6 +64,14 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // ✅ Auto re-subscribe push on every app load (keeps subscription fresh)
+  useEffect(() => {
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
+    if (Notification.permission === 'granted') {
+      requestNotificationPermission().catch(() => {});
+    }
+  }, []);
+
   // ⭐ Handle notification tap → navigate to correct page
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
