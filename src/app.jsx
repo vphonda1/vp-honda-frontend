@@ -38,6 +38,7 @@ import TeamChat from './pages/TeamChat';
 import MeetingRoom from './pages/MeetingRoom';
 import Navbar from './components/Navbar';
 import UniversalSearch from './components/UniversalSearch';
+import NotifBanner from './components/NotifBanner';
 import SmartFAB from './components/SmartFAB';
 import { requestNotificationPermission, showInAppToast, getTheme, setTheme } from './utils/smartUtils';
 
@@ -173,7 +174,8 @@ export default function App() {
     <Router>
       <div className="min-h-screen bg-gray-50">
         {user && <Navbar user={user} onLogout={handleLogout} />}
-        
+        {user && <NotifBanner />}
+
         <Routes>
           {/* Public Routes */}
           <Route path="/login" element={!user ? <LoginPage onLogin={handleLogin} /> : <Navigate to="/dashboard" />} />
@@ -528,4 +530,4 @@ export default function App() {
       </div>
     </Router>
   );
-              }
+            }
