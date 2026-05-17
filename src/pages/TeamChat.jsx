@@ -40,9 +40,7 @@ export default function TeamChat({ user }) {
   const [notifEnabled, setNotifEnabled] = useState(false);
   const [showSettings, setShowSettings] = useState(null); // groupId being edited
   const [groupMembers, setGroupMembers] = useState(getGroupMembers());
-  const [unread,       setUnread]       = useState(() => {
-    try { return JSON.parse(localStorage.getItem(LS_UNREAD) || '{}'); } catch { return {}; }
-  });
+  const [unread,       setUnread]       = useState({});
   const bottomRef   = useRef(null);
   const inputRef    = useRef(null);
   const pollRef     = useRef(null);
@@ -72,97 +70,13 @@ export default function TeamChat({ user }) {
   }, []);
 
   // ── Enable notifications ────────────────────────────────────────────────────
-  // ── Notification Setup with Debug ──────────────────────────────────────────
-  const [notifDebug, setNotifDebug] = useState('');
-
   const enableNotifications = async () => {
-    setNotifDebug('⏳ Setting up...');
-
-    // Step 1: Check browser support
-    if (!('Notification' in window)) {
-      setNotifDebug('❌ Browser में Notifications support नहीं है। Chrome use करें।');
-      return;
-    }
-    if (!('serviceWorker' in navigator)) {
-      setNotifDebug('❌ Service Worker नहीं है। App reload करें।');
-      return;
-    }
-    if (!('PushManager' in window)) {
-      setNotifDebug('❌ Push Manager नहीं है। Chrome/Android पर use करें।');
-      return;
-    }
-
-    // Step 2: Permission
-    setNotifDebug('⏳ Browser permission माँग रहे हैं...');
-    const perm = await Notification.requestPermission();
-    if (perm !== 'granted') {
-      setNotifDebug(`❌ Permission "${perm}" — Browser Settings → Site Settings → Notifications → Allow`);
-      return;
-    }
-    setNotifDebug('✅ Permission granted. Subscription बना रहे हैं...');
-
-    // Step 3: Service Worker ready
-    let reg;
-    try {
-      reg = await navigator.serviceWorker.ready;
-      setNotifDebug('✅ Service Worker ready. Push subscribe हो रहे हैं...');
-    } catch (e) {
-      setNotifDebug(`❌ Service Worker error: ${e.message}`);
-      return;
-    }
-
-    // Step 4: Subscribe
-    const VAPID = 'BKwecIw_aOdebFYVONRm-ZF3au68bNWU1uHPSXkwr1LvV7dIS-b-v614SMT6UgjHbcqigskmSAhFBWHxV9a__TM';
-    function toUint8(b) {
-      const p = '='.repeat((4 - b.length % 4) % 4);
-      const d = atob((b + p).replace(/-/g, '+').replace(/_/g, '/'));
-      return Uint8Array.from([...d].map(c => c.charCodeAt(0)));
-    }
-
-    let subscription;
-    try {
-      const old = await reg.pushManager.getSubscription();
-      if (old) { await old.unsubscribe(); }
-      subscription = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: toUint8(VAPID),
-      });
-      setNotifDebug('✅ Subscribed! Backend में save हो रहा है...');
-    } catch (e) {
-      setNotifDebug(`❌ Subscribe failed: ${e.message}`);
-      return;
-    }
-
-    // Step 5: Save to backend
-    try {
-      const base = import.meta.env.VITE_API_URL || 'https://vp-honda-backend.onrender.com';
-      const res  = await fetch(`${base}/api/push/save-push-subscription`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(subscription.toJSON()),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setNotifEnabled(true);
-        setNotifDebug(`✅ DONE! Device registered (Total: ${data.total || '?'}). अब messages notification आएंगी।`);
-        showInAppToast('🔔 Notifications चालू!', 'Chat messages phone पर आएंगे', 'success');
-      } else {
-        setNotifDebug(`❌ Backend save failed: ${data.error || res.status}`);
-      }
-    } catch (e) {
-      setNotifDebug(`❌ Backend error: ${e.message}`);
-    }
-  };
-
-  // Test notification
-  const testNotification = async () => {
-    try {
-      const base = import.meta.env.VITE_API_URL || 'https://vp-honda-backend.onrender.com';
-      const r = await fetch(`${base}/api/push/test-push-notification`, { method: 'POST' });
-      const d = await r.json();
-      setNotifDebug(r.ok ? `✅ Test sent! ${d.message}` : `❌ Test failed: ${d.error}`);
-    } catch (e) {
-      setNotifDebug(`❌ ${e.message}`);
+    const granted = await requestNotificationPermission();
+    if (granted) {
+      setNotifEnabled(true);
+      showInAppToast('🔔 Notifications ON!', 'अब messages phone पर आएंगे', 'success');
+    } else {
+      showInAppToast('❌ Permission denied', 'Browser settings में Allow करें', 'error');
     }
   };
 
@@ -184,9 +98,8 @@ export default function TeamChat({ user }) {
           const newMsgs  = data.filter(m => !existing.has(m._id));
           if (!newMsgs.length) return prev;
           lastIdRef.current = newMsgs[newMsgs.length - 1]._id;
-          // Sound + unread badge for others' messages
-          const fromOthers = newMsgs.filter(m => m.sender !== myName);
-          if (fromOthers.length > 0) {
+          // Sound for others' messages
+          if (newMsgs.some(m => m.sender !== myName)) {
             try {
               const ctx  = new (window.AudioContext || window.webkitAudioContext)();
               const osc  = ctx.createOscillator();
@@ -197,12 +110,6 @@ export default function TeamChat({ user }) {
               gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
               osc.start(); osc.stop(ctx.currentTime + 0.3);
             } catch {}
-            // Unread badge count
-            setUnread(prev => {
-              const u = { ...prev, [currentRoom]: (prev[currentRoom] || 0) + fromOthers.length };
-              try { localStorage.setItem(LS_UNREAD, JSON.stringify(u)); } catch {}
-              return u;
-            });
           }
           return [...prev, ...newMsgs];
         });
@@ -214,12 +121,6 @@ export default function TeamChat({ user }) {
     if (!currentRoom) return;
     setMessages([]); lastIdRef.current = null;
     loadMessages(true);
-    // ✅ Clear unread count when room opens
-    setUnread(prev => {
-      const u = { ...prev, [currentRoom]: 0 };
-      try { localStorage.setItem(LS_UNREAD, JSON.stringify(u)); } catch {}
-      return u;
-    });
     clearInterval(pollRef.current);
     pollRef.current = setInterval(() => loadMessages(false), 3000);
     return () => clearInterval(pollRef.current);
@@ -402,27 +303,17 @@ export default function TeamChat({ user }) {
               💬 Team Chat
             </h2>
             <div style={{ display:'flex', gap:6, alignItems:'center' }}>
-              {/* Notification button */}
-              <button
-                onClick={notifEnabled ? testNotification : enableNotifications}
-                style={{ background: notifEnabled ? '#16a34a' : '#DC0000', border:'none', borderRadius:6, padding:'5px 10px', cursor:'pointer', color:'#fff', display:'flex', alignItems:'center', gap:4, fontSize:10, fontWeight:700 }}>
-                {notifEnabled ? <><Bell size={12}/> Test</> : <><BellOff size={12}/> चालू करें</>}
+              {/* Notification toggle */}
+              <button onClick={notifEnabled ? null : enableNotifications} title={notifEnabled ? 'Notifications ON' : 'Enable Notifications'}
+                style={{ background: notifEnabled ? '#16a34a' : '#334155', border:'none', borderRadius:6, padding:'5px 8px', cursor:'pointer', color:'#fff', display:'flex', alignItems:'center', gap:4, fontSize:10, fontWeight:700 }}>
+                {notifEnabled ? <><Bell size={12}/> ON</> : <><BellOff size={12}/> OFF</>}
               </button>
               <button onClick={() => setSidebarOpen(false)} className="lg:hidden" style={{ background:'none', border:'none', color:'#94a3b8', cursor:'pointer' }}><X size={16}/></button>
             </div>
           </div>
-
-          {/* Debug status */}
-          {notifDebug && (
-            <div style={{ padding:'6px 10px', background: notifDebug.startsWith('✅') ? '#16a34a22' : notifDebug.startsWith('⏳') ? '#1e40af22' : '#dc262622', borderBottom:'1px solid #1e293b' }}>
-              <p style={{ fontSize:9, color: notifDebug.startsWith('✅') ? '#86efac' : notifDebug.startsWith('⏳') ? '#93c5fd' : '#fca5a5', margin:0, lineHeight:1.4 }}>{notifDebug}</p>
-              <button onClick={() => setNotifDebug('')} style={{ background:'none', border:'none', color:'#64748b', fontSize:9, cursor:'pointer', padding:0, marginTop:2 }}>✕ dismiss</button>
-            </div>
-          )}
-
           {/* Search */}
-          <div style={{ position:'relative', marginTop:8, padding:'0 10px 8px' }}>
-            <Search size={11} style={{ position:'absolute', left:19, top:9, color:'#64748b' }}/>
+          <div style={{ position:'relative', marginTop:8 }}>
+            <Search size={11} style={{ position:'absolute', left:9, top:9, color:'#64748b' }}/>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..."
               style={{ width:'100%', background:'#1e293b', border:'1px solid #334155', borderRadius:6, padding:'7px 7px 7px 26px', color:'#fff', fontSize:11, outline:'none' }}/>
           </div>
@@ -441,22 +332,13 @@ export default function TeamChat({ user }) {
         {/* List */}
         <div style={{ flex:1, overflowY:'auto' }}>
           {tab === 'groups' && DEFAULT_GROUPS.filter(g => !search || g.name.toLowerCase().includes(search.toLowerCase())).map(g => {
-            const active      = tab==='groups' && activeRoom===g.id;
+            const active = tab==='groups' && activeRoom===g.id;
             const memberCount = groupMembers[g.id]?.length || 0;
-            const unreadCount = unread[`group_${g.id}`] || 0;
             return (
               <div key={g.id} style={{ padding:'10px 12px', cursor:'pointer', background:active?'#DC000015':'transparent', borderLeft:active?`3px solid ${g.color}`:'3px solid transparent', display:'flex', alignItems:'center', gap:8 }}
                 onClick={() => { setActiveRoom(g.id); setSidebarOpen(false); }}>
                 <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-                    <p style={{ fontWeight:700, fontSize:12, margin:0 }}>{g.name}</p>
-                    {/* ✅ Unread badge WhatsApp जैसा */}
-                    {unreadCount > 0 && !active && (
-                      <span style={{ background:'#16a34a', color:'#fff', borderRadius:'50%', minWidth:18, height:18, fontSize:9, fontWeight:800, display:'flex', alignItems:'center', justifyContent:'center', padding:'0 3px' }}>
-                        {unreadCount > 99 ? '99+' : unreadCount}
-                      </span>
-                    )}
-                  </div>
+                  <p style={{ fontWeight:700, fontSize:12, margin:0 }}>{g.name}</p>
                   <p style={{ color:'#64748b', fontSize:10, margin:'2px 0 0' }}>
                     {memberCount > 0 ? `${memberCount} members` : 'All staff'} · {g.desc}
                   </p>
