@@ -637,3 +637,4 @@ export default {
   // Location
   getCurrentLocation,
 };
+              
