@@ -359,5 +359,6 @@ export function getReminderSummary(customers) {
       insuranceRenewal: reminders.filter(r => r.type === 'insurance-renewal').length,
     },
     items: reminders,
-  };
+  } 
 }
+          
