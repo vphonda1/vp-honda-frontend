@@ -177,17 +177,56 @@ export const getBase64Size = (base64) => {
 /**
  * Request notification permission (call once on app load)
  */
+// VAPID key (matches backend push.js)
+const _VAPID = 'BKwecIw_aOdebFYVONRm-ZF3au68bNWU1uHPSXkwr1LvV7dIS-b-v614SMT6UgjHbcqigskmSAhFBWHxV9a__TM';
+function _toUint8(b) {
+  const p = '='.repeat((4 - b.length % 4) % 4);
+  const d = atob((b + p).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...d].map(c => c.charCodeAt(0)));
+}
+
 export const requestNotificationPermission = async () => {
   if (!('Notification' in window)) {
     console.log('Notifications not supported');
     return false;
   }
-  if (Notification.permission === 'granted') return true;
   if (Notification.permission === 'denied') return false;
 
   try {
+    // Step 1: Browser permission
     const permission = await Notification.requestPermission();
-    return permission === 'granted';
+    if (permission !== 'granted') return false;
+
+    // Step 2: Push subscription → save to MongoDB (persistent)
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        // Remove old subscription first
+        const old = await reg.pushManager.getSubscription();
+        if (old) await old.unsubscribe().catch(() => {});
+        // Subscribe with VAPID
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: _toUint8(_VAPID),
+        });
+        // Save to backend MongoDB
+        const base = import.meta.env.VITE_API_URL || 'https://vp-honda-backend.onrender.com';
+        const res = await fetch(`${base}/api/push/save-push-subscription`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sub.toJSON()),
+        });
+        if (res.ok) {
+          console.log('[Push] ✅ Device registered! Chat & reminder notifications enabled.');
+        } else {
+          console.warn('[Push] Backend save failed:', res.status);
+        }
+      } catch (e) {
+        console.warn('[Push] Subscription failed:', e.message);
+      }
+    }
+
+    return true;
   } catch {
     return false;
   }
@@ -637,4 +676,3 @@ export default {
   // Location
   getCurrentLocation,
 };
-              
