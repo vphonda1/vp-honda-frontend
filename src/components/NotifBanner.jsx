@@ -52,11 +52,13 @@ export default function NotifBanner() {
     try {
       const reg = await navigator.serviceWorker.ready;
       let sub = await reg.pushManager.getSubscription();
-      if (sub) await sub.unsubscribe();
-      sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: toUint8(VAPID),
-      });
+      // ✅ Reuse existing subscription — don't create new one
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: toUint8(VAPID),
+        });
+      }
 
       // Save to backend
       const res = await fetch(`${BACKEND}/api/push/save-push-subscription`, {
