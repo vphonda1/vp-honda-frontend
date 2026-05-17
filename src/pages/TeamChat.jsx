@@ -1,29 +1,38 @@
-// TeamChat.jsx — VP Honda Team Chat (WhatsApp जैसा)
-// Features: Push notifications, Group member management, DM, Reply, Photo, Sound
+// TeamChat.jsx — VP Honda v3.0 [BUILD 2026] - Video Voice Document Location
+// Text, Photo, Video, Voice, Document, Location, Reply, Forward, Edit, Star, Search, Read receipts
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Image, X, Search, Menu, Bell, BellOff, Settings, Phone, Video, Users, Check, ChevronRight } from 'lucide-react';
-import { requestNotificationPermission, captureFromCamera, sendWhatsApp, showInAppToast } from '../utils/smartUtils';
+import { Send, Image, X, Search, Menu, Bell, BellOff, Settings, Phone, Video, Mic, MicOff, MapPin, FileText, Star, Forward, Edit2, Check, CheckCheck, Smile, Paperclip, ChevronRight, MoreVertical, Play, Pause, Download } from 'lucide-react';
+import { captureFromCamera, sendWhatsApp, showInAppToast } from '../utils/smartUtils';
 import { api } from '../utils/apiConfig';
 
-// Default groups
 const DEFAULT_GROUPS = [
-  { id: 'general',  name: '🏢 General',     desc: 'सब staff के लिए',       color: '#DC0000' },
-  { id: 'sales',    name: '🏍️ Sales',        desc: 'Vehicle sales',          color: '#2563eb' },
-  { id: 'service',  name: '🔧 Service',      desc: 'Service & repair',       color: '#16a34a' },
-  { id: 'accounts', name: '💰 Accounts',     desc: 'Payment & finance',      color: '#d97706' },
-  { id: 'manager',  name: '👔 Manager',      desc: 'Admin & manager only',   color: '#7c3aed' },
+  { id: 'general',  name: '🏢 General',     desc: 'सब staff',         color: '#DC0000' },
+  { id: 'sales',    name: '🏍️ Sales',        desc: 'Vehicle sales',   color: '#2563eb' },
+  { id: 'service',  name: '🔧 Service',      desc: 'Service & repair',color: '#16a34a' },
+  { id: 'accounts', name: '💰 Accounts',     desc: 'Finance',         color: '#d97706' },
+  { id: 'manager',  name: '👔 Manager',      desc: 'Admin',           color: '#7c3aed' },
 ];
+const EMOJIS = ['👍','❤️','😂','😊','🎉','🔥','✅','🙏','💪','👏','🏍️','🔧','💰','📞','⚠️','🙌','😍','😎','🤔','💯','✨','🚀'];
+const LS_MEMBERS = 'vp_group_members';
+const LS_UNREAD  = 'vp_chat_unread';
+const LS_DRAFTS  = 'vp_chat_drafts';
 
-const EMOJIS = ['👍','❤️','✅','🔧','🏍️','💰','📞','⚠️','🎉','👏','🙏','💪','😊','🙌'];
+function getLS(k, def) { try { return JSON.parse(localStorage.getItem(k) || JSON.stringify(def)); } catch { return def; } }
+function setLS(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 
-const LS_MEMBERS  = 'vp_group_members';   // { groupId: [staffName, ...] }
-const LS_UNREAD   = 'vp_chat_unread';     // { room: count }
-
-function getGroupMembers() {
-  try { return JSON.parse(localStorage.getItem(LS_MEMBERS) || '{}'); } catch { return {}; }
-}
-function saveGroupMembers(data) {
-  localStorage.setItem(LS_MEMBERS, JSON.stringify(data));
+// Compress image
+async function compressImage(dataUrl, maxW = 1000, q = 0.75) {
+  try {
+    const blob = await (await fetch(dataUrl)).blob();
+    const bmp  = await createImageBitmap(blob);
+    let { width: w, height: h } = bmp;
+    if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    bmp.close();
+    return c.toDataURL('image/jpeg', q);
+  } catch { return dataUrl; }
 }
 
 export default function TeamChat({ user }) {
@@ -34,53 +43,43 @@ export default function TeamChat({ user }) {
   const [input,        setInput]        = useState('');
   const [staff,        setStaff]        = useState([]);
   const [search,       setSearch]       = useState('');
+  const [msgSearch,    setMsgSearch]    = useState('');
+  const [searchResults,setSearchResults]= useState([]);
   const [replyTo,      setReplyTo]      = useState(null);
+  const [editingMsg,   setEditingMsg]   = useState(null);
   const [showEmoji,    setShowEmoji]    = useState(false);
+  const [showAttach,   setShowAttach]   = useState(false);
   const [sidebarOpen,  setSidebarOpen]  = useState(false);
-  const [notifEnabled, setNotifEnabled] = useState(false);
-  const [showSettings, setShowSettings] = useState(null); // groupId being edited
-  const [groupMembers, setGroupMembers] = useState(getGroupMembers());
-  const [unread,       setUnread]       = useState({});
-  const bottomRef   = useRef(null);
-  const inputRef    = useRef(null);
-  const pollRef     = useRef(null);
-  const sendingRef  = useRef(false);
-  const lastIdRef   = useRef(null);
+  const [showSettings, setShowSettings] = useState(null);
+  const [showStarred,  setShowStarred]  = useState(false);
+  const [showSearch,   setShowSearch]   = useState(false);
+  const [groupMembers, setGroupMembers] = useState(() => getLS(LS_MEMBERS, {}));
+  const [unread,       setUnread]       = useState(() => getLS(LS_UNREAD, {}));
+  const [recording,    setRecording]    = useState(false);
+  const [recordTime,   setRecordTime]   = useState(0);
+  const [playingAudio, setPlayingAudio] = useState(null);
+  const [forwardMsg,   setForwardMsg]   = useState(null);
+  const [showActions,  setShowActions]  = useState(null);
+  const [imageView,    setImageView]    = useState(null);
+  const bottomRef  = useRef(null);
+  const inputRef   = useRef(null);
+  const pollRef    = useRef(null);
+  const sendingRef = useRef(false);
+  const lastIdRef  = useRef(null);
+  const recorderRef= useRef(null);
+  const recordTimerRef = useRef(null);
+  const audioRef   = useRef(null);
 
   const myName     = user?.name || user?.email || 'Me';
-  const currentRoom = tab === 'groups'
-    ? `group_${activeRoom}`
+  const currentRoom = tab === 'groups' ? `group_${activeRoom}`
     : activeDM ? `dm_${[myName, activeDM.name].sort().join('_')}` : null;
 
-  // ── Load staff ──────────────────────────────────────────────────────────────
+  // ─── Load staff ─────────────────────────────────────────────────────────────
   useEffect(() => {
     fetch(api('/api/staff')).then(r => r.ok ? r.json() : []).then(setStaff).catch(() => {});
   }, []);
 
-  // ── Check push subscription ─────────────────────────────────────────────────
-  useEffect(() => {
-    const check = async () => {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-      const reg = await navigator.serviceWorker.ready.catch(() => null);
-      if (!reg) return;
-      const sub = await reg.pushManager.getSubscription().catch(() => null);
-      setNotifEnabled(!!sub);
-    };
-    check();
-  }, []);
-
-  // ── Enable notifications ────────────────────────────────────────────────────
-  const enableNotifications = async () => {
-    const granted = await requestNotificationPermission();
-    if (granted) {
-      setNotifEnabled(true);
-      showInAppToast('🔔 Notifications ON!', 'अब messages phone पर आएंगे', 'success');
-    } else {
-      showInAppToast('❌ Permission denied', 'Browser settings में Allow करें', 'error');
-    }
-  };
-
-  // ── Load messages ───────────────────────────────────────────────────────────
+  // ─── Load messages (polling) ────────────────────────────────────────────────
   const loadMessages = useCallback(async (initial = false) => {
     if (!currentRoom) return;
     try {
@@ -92,24 +91,30 @@ export default function TeamChat({ user }) {
       if (initial) {
         setMessages(data);
         if (data.length) lastIdRef.current = data[data.length - 1]._id;
+        // Mark as read
+        fetch(api(`/api/messages/${currentRoom}/read/${encodeURIComponent(myName)}`), { method:'PATCH' }).catch(()=>{});
       } else if (data.length) {
         setMessages(prev => {
           const existing = new Set(prev.map(m => m._id));
           const newMsgs  = data.filter(m => !existing.has(m._id));
           if (!newMsgs.length) return prev;
           lastIdRef.current = newMsgs[newMsgs.length - 1]._id;
-          // Sound for others' messages
-          if (newMsgs.some(m => m.sender !== myName)) {
+          // Sound + unread
+          const fromOthers = newMsgs.filter(m => m.sender !== myName);
+          if (fromOthers.length > 0) {
             try {
-              const ctx  = new (window.AudioContext || window.webkitAudioContext)();
-              const osc  = ctx.createOscillator();
-              const gain = ctx.createGain();
-              osc.connect(gain); gain.connect(ctx.destination);
+              const ctx = new (window.AudioContext || window.webkitAudioContext)();
+              const osc = ctx.createOscillator();
+              const g   = ctx.createGain();
+              osc.connect(g); g.connect(ctx.destination);
               osc.frequency.value = 880;
-              gain.gain.setValueAtTime(0.15, ctx.currentTime);
-              gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+              g.gain.setValueAtTime(0.15, ctx.currentTime);
+              g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
               osc.start(); osc.stop(ctx.currentTime + 0.3);
             } catch {}
+            setUnread(prev => { const u = { ...prev, [currentRoom]: (prev[currentRoom]||0) + fromOthers.length }; setLS(LS_UNREAD, u); return u; });
+            // Auto mark read since user is on this chat
+            fetch(api(`/api/messages/${currentRoom}/read/${encodeURIComponent(myName)}`), { method:'PATCH' }).catch(()=>{});
           }
           return [...prev, ...newMsgs];
         });
@@ -121,41 +126,60 @@ export default function TeamChat({ user }) {
     if (!currentRoom) return;
     setMessages([]); lastIdRef.current = null;
     loadMessages(true);
+    setUnread(prev => { const u = { ...prev, [currentRoom]: 0 }; setLS(LS_UNREAD, u); return u; });
     clearInterval(pollRef.current);
     pollRef.current = setInterval(() => loadMessages(false), 3000);
     return () => clearInterval(pollRef.current);
   }, [currentRoom]);
 
-  useEffect(() => {
-    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-  }, [messages]);
+  useEffect(() => { setTimeout(() => bottomRef.current?.scrollIntoView({ behavior:'smooth' }), 100); }, [messages]);
 
-  // ── Send message ────────────────────────────────────────────────────────────
+  // ─── Send message ──────────────────────────────────────────────────────────
   const sendMsg = async (extra = {}) => {
     if (sendingRef.current) return;
     const text = input.trim();
-    if (!text && !extra.photo) return;
+    if (!text && !extra.fileData && !extra.location) return;
     if (!currentRoom) return;
     sendingRef.current = true;
 
-    const msgData = {
-      sender:     myName,
-      senderRole: user?.role || 'staff',
-      text,
-      photo:      extra.photo || null,
-      replyTo:    replyTo ? { id: replyTo._id, sender: replyTo.sender, text: replyTo.text?.slice(0, 60) } : null,
-      room:       currentRoom,
+    // Edit existing
+    if (editingMsg) {
+      try {
+        const res = await fetch(api(`/api/messages/${currentRoom}/${editingMsg._id}/edit`), {
+          method: 'PATCH',
+          headers: { 'Content-Type':'application/json' },
+          body: JSON.stringify({ text, sender: myName }),
+        });
+        if (res.ok) {
+          const updated = await res.json();
+          setMessages(prev => prev.map(m => m._id === updated._id ? updated : m));
+        }
+      } catch {}
+      setEditingMsg(null); setInput('');
+      sendingRef.current = false;
+      return;
+    }
+
+    const data = {
+      sender: myName, senderRole: user?.role || 'staff',
+      text, room: currentRoom,
+      fileType: extra.fileType || 'text',
+      fileData: extra.fileData,
+      fileName: extra.fileName,
+      fileSize: extra.fileSize,
+      duration: extra.duration,
+      location: extra.location,
+      replyTo: replyTo ? { id: replyTo._id, sender: replyTo.sender, text: replyTo.text?.slice(0, 60), fileType: replyTo.fileType } : null,
     };
-    const tempId    = `opt_${Date.now()}`;
-    const optimistic = { ...msgData, _id: tempId, createdAt: new Date().toISOString(), optimistic: true };
+    const tempId = `tmp_${Date.now()}`;
+    const optimistic = { ...data, _id: tempId, createdAt: new Date().toISOString(), optimistic: true };
     setMessages(prev => [...prev, optimistic]);
     setInput(''); setReplyTo(null); inputRef.current?.focus();
 
     try {
       const res = await fetch(api(`/api/messages/${currentRoom}`), {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(msgData),
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(data),
       });
       if (res.ok) {
         const saved = await res.json();
@@ -163,6 +187,7 @@ export default function TeamChat({ user }) {
         if (saved._id) lastIdRef.current = saved._id;
       } else {
         setMessages(prev => prev.filter(m => m._id !== tempId));
+        showInAppToast('❌ Send failed', '', 'error');
       }
     } catch {
       setMessages(prev => prev.filter(m => m._id !== tempId));
@@ -171,55 +196,234 @@ export default function TeamChat({ user }) {
     }
   };
 
-  const deleteMsg  = async (msg) => {
+  // ─── Photo: Camera ─────────────────────────────────────────────────────────
+  const sendPhotoCamera = async () => {
+    setShowAttach(false);
+    try {
+      const raw = await captureFromCamera('environment');
+      const comp = await compressImage(raw);
+      await sendMsg({ fileType:'image', fileData: comp, fileName:'photo.jpg' });
+    } catch (e) { showInAppToast('❌ Camera', String(e), 'error'); }
+  };
+
+  // ─── Photo: Gallery ────────────────────────────────────────────────────────
+  const sendPhotoGallery = () => {
+    setShowAttach(false);
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*';
+    inp.onchange = (e) => {
+      const f = e.target.files?.[0]; if (!f) return;
+      const r = new FileReader();
+      r.onload = async () => {
+        const comp = await compressImage(r.result);
+        await sendMsg({ fileType:'image', fileData: comp, fileName: f.name });
+      };
+      r.readAsDataURL(f);
+    };
+    inp.click();
+  };
+
+  // ─── Video ─────────────────────────────────────────────────────────────────
+  const sendVideo = () => {
+    setShowAttach(false);
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'video/*';
+    inp.onchange = (e) => {
+      const f = e.target.files?.[0]; if (!f) return;
+      if (f.size > 20*1024*1024) { showInAppToast('❌', 'Video 20MB से छोटा होना चाहिए', 'error'); return; }
+      const r = new FileReader();
+      r.onload = () => sendMsg({ fileType:'video', fileData: r.result, fileName: f.name, fileSize: f.size });
+      r.readAsDataURL(f);
+    };
+    inp.click();
+  };
+
+  // ─── Document ──────────────────────────────────────────────────────────────
+  const sendDocument = () => {
+    setShowAttach(false);
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.pdf,.doc,.docx,.xls,.xlsx,.txt';
+    inp.onchange = (e) => {
+      const f = e.target.files?.[0]; if (!f) return;
+      if (f.size > 10*1024*1024) { showInAppToast('❌', 'File 10MB से छोटी', 'error'); return; }
+      const r = new FileReader();
+      r.onload = () => sendMsg({ fileType:'document', fileData: r.result, fileName: f.name, fileSize: f.size });
+      r.readAsDataURL(f);
+    };
+    inp.click();
+  };
+
+  // ─── Location ──────────────────────────────────────────────────────────────
+  const sendLocation = () => {
+    setShowAttach(false);
+    if (!navigator.geolocation) { showInAppToast('❌', 'GPS not available', 'error'); return; }
+    showInAppToast('📍', 'Location ले रहे हैं...', 'info');
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude: lat, longitude: lng } = pos.coords;
+        const address = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        await sendMsg({ fileType:'location', location: { lat, lng, address } });
+      },
+      (e) => showInAppToast('❌ Location', e.message, 'error'),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  // ─── Voice recording ───────────────────────────────────────────────────────
+  const startRecord = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const chunks = [];
+      const mr = new MediaRecorder(stream);
+      recorderRef.current = mr;
+      mr.ondataavailable = (e) => chunks.push(e.data);
+      mr.onstop = async () => {
+        const blob = new Blob(chunks, { type:'audio/webm' });
+        const r = new FileReader();
+        r.onload = () => sendMsg({ fileType:'audio', fileData: r.result, fileName:'voice.webm', duration: recordTime });
+        r.readAsDataURL(blob);
+        stream.getTracks().forEach(t => t.stop());
+      };
+      mr.start();
+      setRecording(true);
+      setRecordTime(0);
+      recordTimerRef.current = setInterval(() => setRecordTime(t => t + 1), 1000);
+    } catch (e) {
+      showInAppToast('❌ Mic', 'Microphone permission denied', 'error');
+    }
+  };
+
+  const stopRecord = () => {
+    if (recorderRef.current) { recorderRef.current.stop(); recorderRef.current = null; }
+    clearInterval(recordTimerRef.current);
+    setRecording(false);
+  };
+
+  const cancelRecord = () => {
+    if (recorderRef.current) {
+      const stream = recorderRef.current.stream;
+      recorderRef.current.ondataavailable = null;
+      recorderRef.current.stop();
+      stream.getTracks().forEach(t => t.stop());
+      recorderRef.current = null;
+    }
+    clearInterval(recordTimerRef.current);
+    setRecording(false);
+    setRecordTime(0);
+  };
+
+  // ─── Play audio ────────────────────────────────────────────────────────────
+  const playAudio = (msg) => {
+    if (playingAudio === msg._id) { audioRef.current?.pause(); setPlayingAudio(null); return; }
+    if (audioRef.current) audioRef.current.pause();
+    const audio = new Audio(msg.fileData);
+    audioRef.current = audio;
+    audio.onended = () => setPlayingAudio(null);
+    audio.play();
+    setPlayingAudio(msg._id);
+  };
+
+  // ─── Delete message ────────────────────────────────────────────────────────
+  const deleteMsg = async (msg) => {
     if (msg.sender !== myName || !window.confirm('Delete?')) return;
     setMessages(prev => prev.filter(m => m._id !== msg._id));
-    try { await fetch(api(`/api/messages/${currentRoom}/${msg._id}`), { method: 'DELETE' }); } catch {}
+    try { await fetch(api(`/api/messages/${currentRoom}/${msg._id}`), { method:'DELETE' }); } catch {}
+    setShowActions(null);
   };
-  const sendPhoto  = async () => {
-    try { const p = await captureFromCamera('environment'); await sendMsg({ photo: p }); }
-    catch (e) { showInAppToast('❌ Camera error', String(e), 'error'); }
+
+  // ─── Edit message ──────────────────────────────────────────────────────────
+  const startEdit = (msg) => {
+    setEditingMsg(msg);
+    setInput(msg.text);
+    setShowActions(null);
+    inputRef.current?.focus();
   };
-  const pickPhoto  = () => {
-    const input = document.createElement('input');
-    input.type  = 'file'; input.accept = 'image/*';
-    input.onchange = (e) => {
-      const file = e.target.files?.[0]; if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => sendMsg({ photo: reader.result });
-      reader.readAsDataURL(file);
-    };
-    input.click();
+
+  // ─── Star message ──────────────────────────────────────────────────────────
+  const toggleStar = async (msg) => {
+    const isStarred = msg.starredBy?.includes(myName);
+    setMessages(prev => prev.map(m => m._id === msg._id ? {...m, starredBy: isStarred ? m.starredBy.filter(n=>n!==myName) : [...(m.starredBy||[]), myName]} : m));
+    try { await fetch(api(`/api/messages/${currentRoom}/${msg._id}/star`), { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ user: myName, star: !isStarred }) }); } catch {}
+    setShowActions(null);
   };
-  const forwardWA  = (msg) => {
+
+  // ─── Forward message ───────────────────────────────────────────────────────
+  const forwardToRoom = async (targetRoom) => {
+    if (!forwardMsg) return;
+    try {
+      await fetch(api(`/api/messages/${targetRoom}`), {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          sender: myName, senderRole: user?.role || 'staff',
+          text: forwardMsg.text,
+          fileType: forwardMsg.fileType, fileData: forwardMsg.fileData, fileName: forwardMsg.fileName,
+          fileSize: forwardMsg.fileSize, duration: forwardMsg.duration,
+          location: forwardMsg.location,
+          forwarded: true,
+        }),
+      });
+      showInAppToast('✅ Forwarded', '', 'success');
+    } catch {}
+    setForwardMsg(null);
+  };
+
+  // ─── WhatsApp forward (external) ───────────────────────────────────────────
+  const waForward = (msg) => {
     const ph = prompt('WhatsApp number:');
-    if (ph) sendWhatsApp(ph, `*VP Honda Team*\n${msg.sender}: ${msg.text || '📷'}`);
-  };
-  const handleKey  = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } };
-
-  // ── Group member management ─────────────────────────────────────────────────
-  const toggleMember = (groupId, staffName) => {
-    const updated = { ...groupMembers };
-    if (!updated[groupId]) updated[groupId] = [];
-    if (updated[groupId].includes(staffName)) {
-      updated[groupId] = updated[groupId].filter(n => n !== staffName);
-    } else {
-      updated[groupId] = [...updated[groupId], staffName];
-    }
-    setGroupMembers(updated);
-    saveGroupMembers(updated);
+    if (!ph) return;
+    let text = `*VP Honda — ${msg.sender}*\n`;
+    if (msg.text) text += msg.text;
+    else if (msg.fileType === 'image') text += '📷 Photo';
+    else if (msg.fileType === 'video') text += '🎥 Video';
+    else if (msg.fileType === 'audio') text += '🎤 Voice note';
+    else if (msg.fileType === 'document') text += `📄 ${msg.fileName}`;
+    else if (msg.fileType === 'location') text += `📍 https://maps.google.com/?q=${msg.location.lat},${msg.location.lng}`;
+    sendWhatsApp(ph, text);
+    setShowActions(null);
   };
 
-  const isGroupMember = (groupId, staffName) => {
-    if (!groupMembers[groupId] || groupMembers[groupId].length === 0) return true; // no filter = all
-    return groupMembers[groupId].includes(staffName);
+  // ─── Download media ────────────────────────────────────────────────────────
+  const downloadMedia = (msg) => {
+    if (!msg.fileData) return;
+    const a = document.createElement('a');
+    a.href = msg.fileData;
+    a.download = msg.fileName || `vp_${msg.fileType}_${msg._id}`;
+    a.click();
+    setShowActions(null);
   };
 
-  const filteredStaff  = staff.filter(s => s.name !== myName && (!search || s.name.toLowerCase().includes(search.toLowerCase())));
-  const roomLabel      = tab === 'groups'
-    ? DEFAULT_GROUPS.find(g => g.id === activeRoom)?.name
-    : `💬 ${activeDM?.name || ''}`;
-  const activeGroup    = DEFAULT_GROUPS.find(g => g.id === activeRoom);
+  // ─── Search messages ───────────────────────────────────────────────────────
+  const searchMessages = async (q) => {
+    setMsgSearch(q);
+    if (!q || q.length < 2) { setSearchResults([]); return; }
+    try {
+      const res = await fetch(api(`/api/messages/search/${encodeURIComponent(myName)}?q=${encodeURIComponent(q)}`));
+      if (res.ok) setSearchResults(await res.json());
+    } catch {}
+  };
+
+  // ─── Show starred ──────────────────────────────────────────────────────────
+  const loadStarred = async () => {
+    try {
+      const res = await fetch(api(`/api/messages/starred/${encodeURIComponent(myName)}`));
+      if (res.ok) setMessages(await res.json());
+    } catch {}
+  };
+
+  const handleKey = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } };
+
+  // ─── Group members ─────────────────────────────────────────────────────────
+  const toggleMember = (gid, name) => {
+    const u = { ...groupMembers };
+    if (!u[gid]) u[gid] = [];
+    u[gid] = u[gid].includes(name) ? u[gid].filter(n=>n!==name) : [...u[gid], name];
+    setGroupMembers(u); setLS(LS_MEMBERS, u);
+  };
+
+  // ─── Computed ──────────────────────────────────────────────────────────────
+  const filteredStaff = staff.filter(s => s.name !== myName && (!search || s.name.toLowerCase().includes(search.toLowerCase())));
+  const activeGroup = DEFAULT_GROUPS.find(g => g.id === activeRoom);
+  const roomLabel = tab === 'groups' ? activeGroup?.name : `💬 ${activeDM?.name || ''}`;
 
   // ── GROUP SETTINGS MODAL ────────────────────────────────────────────────────
   const GroupSettingsModal = () => {
@@ -519,4 +723,4 @@ export default function TeamChat({ user }) {
       </div>
     </div>
   );
-                                                                                          }
+}
