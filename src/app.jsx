@@ -40,7 +40,7 @@ import Navbar from './components/Navbar';
 import UniversalSearch from './components/UniversalSearch';
 import NotifBanner from './components/NotifBanner';
 import SmartFAB from './components/SmartFAB';
-import { requestNotificationPermission, showInAppToast, getTheme, setTheme } from './utils/smartUtils';
+import { requestNotificationPermission, showInAppToast } from './utils/smartUtils';
 
 function ProtectedRoute({ children, user }) {
   return user ? children : <Navigate to="/login" />;
