@@ -39,8 +39,9 @@ const folderKey = (name, date) => {
   return `${(name || 'Unknown').replace(/\s+/g, '_')}_${d}`;
 };
 
-// ── Image compression — 3 methods, retry, fallback ───────────────────────────
-async function compressImageRobust(dataUrl, maxWidth = 1200, quality = 0.78) {
+// ── Image compression — Aggressive (1000px max, 0.7 quality) ─────────────────
+// Documents जैसे Aadhar/PAN के लिए optimized — readable रहेगा लेकिन छोटी size
+async function compressImageRobust(dataUrl, maxWidth = 1000, quality = 0.70) {
   const origKB = Math.round(dataUrl.length * 0.75 / 1024);
 
   // Method 1: createImageBitmap (modern, fast)
@@ -92,7 +93,13 @@ async function compressImageRobust(dataUrl, maxWidth = 1200, quality = 0.78) {
 // ── File processor with compression status ─────────────────────────────────────
 async function processFile(file, type) {
   return new Promise((resolve, reject) => {
-    if (file.size > 30 * 1024 * 1024) { alert('फाइल 30MB से छोटी चाहिए'); reject(); return; }
+    // Type-specific size limits (storage protection)
+    const limits = { image: 30, pdf: 5, video: 15 }; // MB
+    const limitMB = limits[type] || 10;
+    if (file.size > limitMB * 1024 * 1024) {
+      alert(`${type.toUpperCase()} ${limitMB}MB से छोटी होनी चाहिए। आपकी file: ${Math.round(file.size/1024/1024)}MB`);
+      reject(); return;
+    }
     const reader = new FileReader();
     reader.onload = async (e) => {
       let dataUrl   = e.target.result;
@@ -103,6 +110,10 @@ async function processFile(file, type) {
         compInfo = await compressImageRobust(dataUrl);
         dataUrl  = compInfo.dataUrl;
         sizeKB   = compInfo.sizeKB;
+      }
+      // PDFs और Videos: browser में compress नहीं हो सकती — size warning दिखाते हैं
+      if ((type === 'pdf' || type === 'video') && sizeKB > 2048) {
+        console.warn(`[${type}] बड़ी file: ${sizeKB}KB. Storage के लिए छोटी file बेहतर।`);
       }
 
       resolve({
@@ -307,7 +318,16 @@ export default function DocumentVault() {
     try {
       const raw  = await captureFromCamera('environment');
       const comp = await compressImageRobust(raw);
-      setFileData({ dataUrl: comp, fileType: 'image', fileName: 'camera_photo.jpg' });
+      // ✅ BUG FIX: comp is an object {dataUrl, sizeKB, method, origKB} — use comp.dataUrl
+      setFileData({
+        dataUrl:    comp.dataUrl,
+        fileType:   'image',
+        fileName:   'camera_photo.jpg',
+        sizeKB:     comp.sizeKB,
+        origKB:     comp.origKB,
+        compFailed: comp.failed || false,
+        compMethod: comp.method,
+      });
     } catch (e) { showInAppToast('❌ Camera error', String(e), 'error'); }
     setCapturing(false);
   };

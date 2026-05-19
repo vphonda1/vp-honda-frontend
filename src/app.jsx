@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage, { doLogout } from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
@@ -34,12 +34,15 @@ import ManagerView from './pages/ManagerView';
 import CalendarView from './pages/CalendarView';
 import PaymentTracker from './pages/PaymentTracker';
 import DocumentVault from './pages/DocumentVault';
-import TeamChat from './pages/TeamChat';
+// TeamChat lazy-loaded — won't crash app if it has issues
+const TeamChat = lazy(() => import('./pages/TeamChat'));
 import MeetingRoom from './pages/MeetingRoom';
 import Navbar from './components/Navbar';
 import UniversalSearch from './components/UniversalSearch';
+import NotifBanner from './components/NotifBanner';
+import ErrorBoundary from './components/ErrorBoundary';
 import SmartFAB from './components/SmartFAB';
-import { requestNotificationPermission, showInAppToast, getTheme, setTheme } from './utils/smartUtils';
+import { requestNotificationPermission, showInAppToast } from './utils/smartUtils';
 
 function ProtectedRoute({ children, user }) {
   return user ? children : <Navigate to="/login" />;
@@ -63,6 +66,18 @@ function AdminRoute({ children, user }) {
 export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // ✅ Auto-prompt notification on app load — user just sees one popup
+  useEffect(() => {
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
+    // Wait 2 seconds then auto-show permission popup
+    const timer = setTimeout(() => {
+      if (Notification.permission === 'default' || Notification.permission === 'granted') {
+        requestNotificationPermission().catch(() => {});
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, []);
 
   // ⭐ Handle notification tap → navigate to correct page
   useEffect(() => {
@@ -161,7 +176,8 @@ export default function App() {
     <Router>
       <div className="min-h-screen bg-gray-50">
         {user && <Navbar user={user} onLogout={handleLogout} />}
-        
+        {user && <NotifBanner />}
+
         <Routes>
           {/* Public Routes */}
           <Route path="/login" element={!user ? <LoginPage onLogin={handleLogin} /> : <Navigate to="/dashboard" />} />
@@ -487,7 +503,11 @@ export default function App() {
             element={
               <ProtectedRoute user={user}>
                 <RoleRoute user={user} requiredRole="staff">
-                  <TeamChat user={user} />
+                  <ErrorBoundary>
+                    <Suspense fallback={<div style={{padding:20,color:'#fff',background:'#020617',height:'100vh'}}>💬 Chat loading...</div>}>
+                      <TeamChat user={user} />
+                    </Suspense>
+                  </ErrorBoundary>
                 </RoleRoute>
               </ProtectedRoute>
             }
