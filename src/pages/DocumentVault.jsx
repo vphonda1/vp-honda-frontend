@@ -32,11 +32,12 @@ const INSURANCE_REQUIRED_KEYS = ['vp_tax_invoice', 'aadhar', 'pan', 'challan', '
 // RTO/Pal: SU Tax Invoice, Insurance, Aadhar, PAN, Chassis Trace, Chassis Photo
 const RTO_REQUIRED_KEYS = ['su_tax_invoice', 'insurance', 'aadhar', 'pan', 'chassis_trace', 'chassis_photo'];
 
-const folderKey = (name, date) => {
-  const d = date
-    ? new Date(date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })
-    : new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' });
-  return `${(name || 'Unknown').replace(/\s+/g, '_')}_${d}`;
+// ✅ FIX: Folder key per customer (NO date) — एक customer = एक folder हमेशा
+const folderKey = (name, phone) => {
+  const cleanName  = (name || 'Unknown').trim().replace(/\s+/g, '_');
+  const cleanPhone = (phone || '').toString().replace(/\D/g, '');
+  // Phone available → name+phone, else just name
+  return cleanPhone ? `${cleanName}_${cleanPhone}` : cleanName;
 };
 
 // ── Image compression — Aggressive (1000px max, 0.7 quality) ─────────────────
@@ -256,7 +257,7 @@ export default function DocumentVault() {
 
   // ── Folders ─────────────────────────────────────────────────────────────────
   const folders = docs.reduce((acc, d) => {
-    const key = d.folder || folderKey(d.customerName, d.savedAt);
+    const key = d.folder || folderKey(d.customerName, d.customerPhone);
     if (!acc[key]) acc[key] = { name: d.customerName, phone: d.customerPhone, docs: [], date: d.savedAt, nomineeName: '', hypothecation: '' };
     acc[key].docs.push(d);
     if (d.nomineeName)   acc[key].nomineeName   = d.nomineeName;
@@ -264,6 +265,20 @@ export default function DocumentVault() {
     return acc;
   }, {});
   const folderList = Object.entries(folders).sort((a, b) => new Date(b[1].date) - new Date(a[1].date));
+  // ✅ Filter folders by search query
+  const visibleFolders = search.trim()
+    ? folderList.filter(([_, f]) => {
+        const q = search.toLowerCase();
+        return (f.name || '').toLowerCase().includes(q) || (f.phone || '').includes(q);
+      })
+    : folderList;
+  // ✅ Auto-open folder if search matches exactly 1
+  useEffect(() => {
+    if (search.trim() && visibleFolders.length === 1 && view === 'folders' && !activeFolder) {
+      setActiveFolder(visibleFolders[0][0]);
+      setView('folder_detail');
+    }
+  }, [search, visibleFolders.length]);
 
   // ── Save document ────────────────────────────────────────────────────────────
   const saveDoc = async (stayOpen = false) => {
@@ -272,7 +287,7 @@ export default function DocumentVault() {
     const docType = DOC_TYPES.find(d => d.key === form.docType) || DOC_TYPES[0];
     const now = new Date().toISOString();
     const payload = {
-      folder: folderKey(form.customerName, now),
+      folder: folderKey(form.customerName, form.customerPhone),
       customerName: form.customerName, customerPhone: form.customerPhone,
       aadharNo: form.aadharNo, vehicleModel: form.vehicleModel, chassisNo: form.chassisNo,
       nomineeName: form.nomineeName, hypothecation: form.hypothecation,
@@ -399,7 +414,7 @@ export default function DocumentVault() {
   // ── Derived data ─────────────────────────────────────────────────────────────
   const filtered = view === 'all'
     ? docs.filter(d => !search || d.customerName.toLowerCase().includes(search.toLowerCase()))
-    : docs.filter(d => (d.folder || folderKey(d.customerName, d.savedAt)) === activeFolder);
+    : docs.filter(d => (d.folder || folderKey(d.customerName, d.customerPhone)) === activeFolder);
 
   const expiringSoon = docs.filter(d => d.expiryDate && checkExpiry(d.expiryDate, d.docTypeLabel)?.status !== 'ok');
 
@@ -454,23 +469,28 @@ export default function DocumentVault() {
 
       {/* Search + View Toggle */}
       <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap' }}>
-        <input value={search} onChange={e => { setSearch(e.target.value); setView('all'); if (!e.target.value) setView('folders'); }}
-          placeholder="Customer name search..."
+        <input value={search} onChange={e => {
+          setSearch(e.target.value);
+          // ✅ FIX: Search करते वक्त folders view में रहें, all में नहीं
+          if (!e.target.value) { setView('folders'); setActiveFolder(null); }
+          else setView('folders');
+        }}
+          placeholder="Customer name/phone search..."
           style={{ flex:1, background:'#1e293b', color:'#fff', border:'1px solid #334155', borderRadius:8, padding:'9px 12px', fontSize:13, outline:'none' }}/>
         <button onClick={() => { setView('folders'); setSearch(''); setActiveFolder(null); }}
           style={{ background:view==='folders'?'#DC0000':'#1e293b', color:'#fff', border:'none', padding:'8px 14px', borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer' }}>📁 Folders</button>
-        <button onClick={() => setView('all')}
+        <button onClick={() => { setView('all'); setActiveFolder(null); }}
           style={{ background:view==='all'?'#DC0000':'#1e293b', color:'#fff', border:'none', padding:'8px 14px', borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer' }}>📋 All</button>
       </div>
 
       {/* FOLDER LIST */}
       {view === 'folders' && !activeFolder && (
         <div>
-          {folderList.length === 0 ? (
+          {visibleFolders.length === 0 ? (
             <div style={{ background:'#0f172a', border:'1px solid #1e293b', borderRadius:12, padding:40, textAlign:'center', color:'#64748b' }}>
-              + Add Document से शुरू करें
+              {search ? '❌ कोई customer नहीं मिला' : '+ Add Document से शुरू करें'}
             </div>
-          ) : folderList.map(([key, folder]) => {
+          ) : visibleFolders.map(([key, folder]) => {
             const insCount = folder.docs.filter(d => INSURANCE_REQUIRED_KEYS.includes(d.docType)).length;
             const rtoCount = folder.docs.filter(d => RTO_REQUIRED_KEYS.includes(d.docType)).length;
             return (

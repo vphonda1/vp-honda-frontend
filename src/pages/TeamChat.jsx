@@ -69,12 +69,22 @@ export default function TeamChat({ user }) {
   const recordTimerRef = useRef(null);
   const audioRef   = useRef(null);
 
-  const myName     = user?.name || user?.email || 'Me';
+  // ✅ Admin special handling — Admin logged in तो name = "Admin"
+  const isAdmin    = user?.role === 'admin' || user?.email === 'admin@vphonda.com';
+  const myName     = isAdmin ? 'Admin' : (user?.name || user?.email || 'Me');
   const currentRoom = tab === 'groups' ? `group_${activeRoom}`
     : activeDM ? `dm_${[myName, activeDM.name].sort().join('_')}` : null;
 
   useEffect(() => {
-    fetch(api('/api/staff')).then(r => r.ok ? r.json() : []).then(setStaff).catch(() => {});
+    fetch(api('/api/staff')).then(r => r.ok ? r.json() : []).then(data => {
+      // ✅ Always prepend Admin to staff list (so anyone can DM Admin)
+      const hasAdmin = data.some(s => (s.name || '').toLowerCase() === 'admin');
+      const list = hasAdmin ? data : [
+        { _id: 'admin_system', name: 'Admin', position: '👑 Administrator', phone: '9713394738' },
+        ...data
+      ];
+      setStaff(list);
+    }).catch(() => {});
   }, []);
 
   const loadMessages = useCallback(async (initial = false) => {
