@@ -20,23 +20,23 @@ const DOC_TYPES = [
   { key: 'rto_form',       label: 'RTO Form',                  icon: '🚗', hasExpiry: false },
   { key: 'rc',             label: 'RC Book',                   icon: '📄', hasExpiry: false },
   { key: 'insurance',      label: 'Insurance Policy',          icon: '🛡️', hasExpiry: true  },
-  { key: 'puc',            label: 'PUC Certificate',           icon: '🔬', hasExpiry: true  },
+  { key: 'intimation',     label: 'Intimation',                icon: '📝', hasExpiry: false },
   { key: 'bank_passbook',  label: 'Bank Passbook',             icon: '🏦', hasExpiry: false },
   { key: 'signature',      label: 'Customer Signature',        icon: '✍️', hasExpiry: false },
   { key: 'customer_photo', label: 'Customer Photo',            icon: '👤', hasExpiry: false },
   { key: 'other',          label: 'Other Document',            icon: '📁', hasExpiry: false },
 ];
 
-// Insurance: VP Tax Invoice, Aadhar, PAN, Challan, Chassis Trace
-const INSURANCE_REQUIRED_KEYS = ['vp_tax_invoice', 'aadhar', 'pan', 'challan', 'chassis_trace'];
+// ✅ Insurance: सिर्फ 4 docs (Challan हटाया) + Nominee/Hypothecation manual entry
+const INSURANCE_REQUIRED_KEYS = ['vp_tax_invoice', 'aadhar', 'pan', 'chassis_trace'];
 // RTO/Pal: SU Tax Invoice, Insurance, Aadhar, PAN, Chassis Trace, Chassis Photo
 const RTO_REQUIRED_KEYS = ['su_tax_invoice', 'insurance', 'aadhar', 'pan', 'chassis_trace', 'chassis_photo'];
 
-// ✅ FIX: Folder key per customer (NO date) — एक customer = एक folder हमेशा
+// ✅ FIX: Aggressive normalize — lowercase + trim + space hata
+// साथ ही पुराने date-based d.folder field को IGNORE करें (always recompute)
 const folderKey = (name, phone) => {
-  const cleanName  = (name || 'Unknown').trim().replace(/\s+/g, '_');
+  const cleanName  = (name || 'unknown').toString().trim().toLowerCase().replace(/\s+/g, '');
   const cleanPhone = (phone || '').toString().replace(/\D/g, '');
-  // Phone available → name+phone, else just name
   return cleanPhone ? `${cleanName}_${cleanPhone}` : cleanName;
 };
 
@@ -256,12 +256,16 @@ export default function DocumentVault() {
   };
 
   // ── Folders ─────────────────────────────────────────────────────────────────
+  // ✅ FIX: Always recompute key (ignore old d.folder) — पुराने duplicate folders merge हो जाएंगे
   const folders = docs.reduce((acc, d) => {
-    const key = d.folder || folderKey(d.customerName, d.customerPhone);
+    const key = folderKey(d.customerName, d.customerPhone);
     if (!acc[key]) acc[key] = { name: d.customerName, phone: d.customerPhone, docs: [], date: d.savedAt, nomineeName: '', hypothecation: '' };
     acc[key].docs.push(d);
+    // Latest non-empty values रखें (अगर किसी एक doc में हैं)
     if (d.nomineeName)   acc[key].nomineeName   = d.nomineeName;
     if (d.hypothecation) acc[key].hypothecation = d.hypothecation;
+    // Latest date
+    if (new Date(d.savedAt) > new Date(acc[key].date)) acc[key].date = d.savedAt;
     return acc;
   }, {});
   const folderList = Object.entries(folders).sort((a, b) => new Date(b[1].date) - new Date(a[1].date));
@@ -366,7 +370,7 @@ export default function DocumentVault() {
   const sendInsurance = async (folderDocs, folder) => {
     // For sharing, need full fileData — fetch each
     const needed = folderDocs.filter(d => INSURANCE_REQUIRED_KEYS.includes(d.docType));
-    if (needed.length === 0) { alert('कोई Insurance document नहीं है।\nजरूरी: VP Tax Invoice, Aadhar, PAN, Challan, Chassis Trace'); return; }
+    if (needed.length === 0) { alert('कोई Insurance document नहीं है।\nजरूरी: VP Tax Invoice, Aadhar, PAN, Chassis Trace'); return; }
 
     showInAppToast('⏳', 'Documents load हो रहे हैं...', 'info');
     const withData = await Promise.all(needed.map(async d => {
@@ -414,7 +418,7 @@ export default function DocumentVault() {
   // ── Derived data ─────────────────────────────────────────────────────────────
   const filtered = view === 'all'
     ? docs.filter(d => !search || d.customerName.toLowerCase().includes(search.toLowerCase()))
-    : docs.filter(d => (d.folder || folderKey(d.customerName, d.customerPhone)) === activeFolder);
+    : docs.filter(d => folderKey(d.customerName, d.customerPhone) === activeFolder);
 
   const expiringSoon = docs.filter(d => d.expiryDate && checkExpiry(d.expiryDate, d.docTypeLabel)?.status !== 'ok');
 
