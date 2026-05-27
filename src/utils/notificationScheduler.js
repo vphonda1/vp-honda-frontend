@@ -85,13 +85,6 @@ const diffDays = (d) => Math.ceil((new Date(d) - new Date()) / 86400000);
 export function buildAllReminders(customers) {
   const reminders = [];
 
-  // ✅ Helper: validate date string
-  const isValidDate = (d) => {
-    if (!d || d === '' || d === '0') return false;
-    const dt = new Date(d);
-    return !isNaN(dt.getTime()) && dt.getFullYear() > 1990;
-  };
-
   customers.forEach(c => {
     const name    = c.customerName || c.name || 'Customer';
     const phone   = c.mobileNo || c.phone || '';
@@ -122,7 +115,6 @@ export function buildAllReminders(customers) {
     // ── 2. Done-Service Based Reminders ───────────────────────────────────
     SERVICE_MAP.forEach(({ done, label, days: interval }) => {
       const doneDate = c[done];
-      if (!isValidDate(doneDate)) return;
       if (doneDate) {
         const due  = addDays(new Date(doneDate), interval);
         const days = diffDays(due);
@@ -368,33 +360,5 @@ export function getReminderSummary(customers) {
     },
     items: reminders,
   };
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// ✅ DONE SYSTEM — Call/Service done → notification stop
-// ════════════════════════════════════════════════════════════════════════════
-const DONE_KEY = 'vp_notif_done';
-
-export function markReminderDone(reminderId, reason = 'done') {
-  try {
-    const done = JSON.parse(localStorage.getItem(DONE_KEY) || '{}');
-    done[reminderId] = { reason, doneAt: new Date().toISOString() };
-    localStorage.setItem(DONE_KEY, JSON.stringify(done));
-    return true;
-  } catch { return false; }
-}
-
-export function isReminderDone(reminderId) {
-  try {
-    return !!(JSON.parse(localStorage.getItem(DONE_KEY) || '{}')[reminderId]);
-  } catch { return false; }
-}
-
-export function getDoneReminders() {
-  try { return JSON.parse(localStorage.getItem(DONE_KEY) || '{}'); } catch { return {}; }
-}
-
-export function filterActivReminders(reminders) {
-  const done = getDoneReminders();
-  return reminders.filter(r => !done[r.id]);
-}
+      }
+          
