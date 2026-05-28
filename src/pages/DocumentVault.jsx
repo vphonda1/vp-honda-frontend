@@ -17,7 +17,7 @@ const DOC_TYPES = [
   { key: 'delivery_photo', label: 'Delivery Photo',            icon: '📸', hasExpiry: false },
   { key: 'old_rc',         label: 'Old RC Card',               icon: '🪪', hasExpiry: false },
   { key: 'old_noc',        label: 'Old Bike NOC',              icon: '📑', hasExpiry: false },
-  { key: 'rto_form',       label: 'RTO Form',                  icon: '🚗', hasExpiry: false },
+  { key: 'bty',            label: 'Bettery No',                icon: '🚗', hasExpiry: false },
   { key: 'rc',             label: 'RC Book',                   icon: '📄', hasExpiry: false },
   { key: 'insurance',      label: 'Insurance Policy',          icon: '🛡️', hasExpiry: true  },
   { key: 'intimation',     label: 'Intimation',                icon: '📝', hasExpiry: false },
