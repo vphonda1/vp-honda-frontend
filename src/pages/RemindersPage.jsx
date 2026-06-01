@@ -593,6 +593,7 @@ export default function RemindersPage() {
                   fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap',
                 }}>
                   🧪 Test करें
+                  <ReminderPushButton/>
                 </button>
                 <button onClick={async () => {
                   const result = await scheduleReminderNotifications([]);
