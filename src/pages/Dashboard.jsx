@@ -14,6 +14,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { api } from '../utils/apiConfig';
+import ReminderPushButton from '../components/ReminderPushButton';
 
 const COLORS = {
   primary:'#DC0000', accent:'#0ea5e9', warning:'#f59e0b', danger:'#ef4444',
