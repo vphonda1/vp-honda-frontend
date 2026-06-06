@@ -1,0 +1,43 @@
+name: VP Honda Daily Reminders
+
+# रोज सुबह 9:00 AM IST (= 3:30 AM UTC) पर चलेगा
+on:
+  schedule:
+    - cron: '30 3 * * *'      # 9:00 AM IST daily
+  workflow_dispatch:           # manual trigger button भी (GitHub Actions tab से)
+
+jobs:
+  send-reminders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake Render + Send Reminder Notifications
+        run: |
+          URL="https://vp-honda-backend.onrender.com"
+
+          echo "Step 1: Render को जगा रहे हैं (warm-up ping)..."
+          curl -s -o /dev/null "$URL/" || true
+          echo "Waiting 60 sec for Render to fully wake up..."
+          sleep 60
+
+          echo "Step 2: Reminder push भेज रहे हैं (3 retries)..."
+          for i in 1 2 3; do
+            echo "Attempt $i..."
+            HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+              -X POST "$URL/api/push/send-reminder-summary" \
+              -H "Content-Type: application/json")
+
+            echo "HTTP Status: $HTTP_CODE"
+            cat /tmp/response.txt
+            echo ""
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Success!"
+              exit 0
+            fi
+
+            echo "Attempt $i failed (HTTP $HTTP_CODE). Retrying in 30 sec..."
+            sleep 30
+          done
+
+          echo "❌ All 3 attempts failed"
+          exit 1
