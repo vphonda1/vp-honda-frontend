@@ -44,6 +44,7 @@ import { ensurePushSubscription } from './utils/pushSubscribe';
 import ErrorBoundary from './components/ErrorBoundary';
 import SmartFAB from './components/SmartFAB';
 import { requestNotificationPermission, showInAppToast } from './utils/smartUtils';
+import ReceivedPaymentPage from './pages/ReceivedPaymentPage';
 
 function ProtectedRoute({ children, user }) {
   return user ? children : <Navigate to="/login" />;
@@ -431,6 +432,7 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          <Route path="/received-payments" element={<ReceivedPaymentPage/>}/>
 
           {/* ⭐ NEW: Smart Features */}
           <Route path="/visitors"
