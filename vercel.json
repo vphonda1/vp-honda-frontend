@@ -1,0 +1,13 @@
+{
+  "crons": [
+    { "path": "/api/send-reminders?type=payment",   "schedule": "30 3 * * *" },
+    { "path": "/api/send-reminders?type=insurance", "schedule": "30 4 * * *" },
+    { "path": "/api/send-reminders?type=service",   "schedule": "30 5 * * *" },
+    { "path": "/api/send-reminders?type=payment",   "schedule": "30 8 * * *" },
+    { "path": "/api/send-reminders?type=insurance", "schedule": "30 9 * * *" },
+    { "path": "/api/send-reminders?type=service",   "schedule": "30 10 * * *" }
+  ],
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/" }
+  ]
+}
