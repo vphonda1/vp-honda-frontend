@@ -1,0 +1,56 @@
+# ════════════════════════════════════════════════════════════════════════════
+# ⚠️ यह workflow अब बंद है — जान-बूझकर
+# ════════════════════════════════════════════════════════════════════════════
+# क्यों:
+#   यह Render backend को दिन में 2 बार जगाता था:
+#       curl "$URL/"                       ← जगाने वाला ping
+#       sleep 60                           ← 60 सेकंड इंतज़ार
+#       curl "$URL/api/push/send-reminder-summary"   (3 बार तक retry)
+#
+#   Render 15 मिनट ख़ामोशी पर सोता है. हर बार जगाने से कम से कम 15 मिनट
+#   जागी रहती थी — महीने में लगभग 15 घंटे, वह भी दुकान बंद होने पर.
+#   मुफ़्त कोटा 750 घंटे का है और आपका पहले ही ऊपर जा रहा है.
+#
+# अब reminder कौन भेजेगा?
+#   Vercel Cron → /api/send-reminders — वे सातों घंटे-वार जॉब.
+#   वे सीधे MongoDB से बात करते हैं और **Render को छूते ही नहीं**.
+#   यानी notification पहले जैसी आती रहेंगी, पर Render सोती रहेगी.
+#   (schedule की पूरी जानकारी NOTIFICATION-SCHEDULE.md में है)
+#
+# दोबारा चालू करना हो तो नीचे `schedule:` वाली दो lines से # हटा दें —
+# पर याद रखें, वह सीधे कोटा खाएगा.
+# ════════════════════════════════════════════════════════════════════════════
+
+name: VP Honda Daily Reminders (बंद)
+
+on:
+  # schedule:
+  #   - cron: '30 3 * * *'      # 9:00 AM IST
+  #   - cron: '30 9 * * *'      # 3:00 PM IST
+  workflow_dispatch:            # सिर्फ़ हाथ से — Actions tab के "Run workflow" बटन से
+
+jobs:
+  send-reminders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Reminder Notifications (हाथ से चलाने पर ही)
+        run: |
+          URL="https://vp-honda-backend.onrender.com"
+
+          echo "⚠️ यह Render को जगाएगा और मुफ़्त घंटे कटेंगे."
+          echo "रोज़ की notification के लिए Vercel Cron पहले से चल रहा है."
+          echo ""
+
+          echo "Render को जगा रहे हैं…"
+          curl -s -o /dev/null "$URL/" || true
+          sleep 45
+
+          for i in 1 2 3; do
+            CODE=$(curl -s -o /tmp/r.txt -w "%{http_code}" \
+              -X POST "$URL/api/push/send-reminder-summary" \
+              -H "Content-Type: application/json")
+            echo "कोशिश $i — HTTP $CODE"; cat /tmp/r.txt; echo ""
+            [ "$CODE" = "200" ] && exit 0
+            sleep 20
+          done
+          exit 1
