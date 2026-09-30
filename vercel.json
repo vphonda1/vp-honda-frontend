@@ -1,0 +1,81 @@
+{
+  "crons": [
+    {
+      "path": "/api/send-reminders?type=emi&slot=1",
+      "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/send-reminders?type=service&slot=2",
+      "schedule": "30 4 * * *"
+    },
+    {
+      "path": "/api/send-reminders?type=payment&slot=3",
+      "schedule": "30 5 * * *"
+    },
+    {
+      "path": "/api/send-reminders?type=manual&slot=4",
+      "schedule": "30 6 * * *"
+    },
+    {
+      "path": "/api/send-reminders?type=insurance&slot=5",
+      "schedule": "30 8 * * *"
+    },
+    {
+      "path": "/api/send-reminders?type=emi&slot=6",
+      "schedule": "30 9 * * *"
+    },
+    {
+      "path": "/api/send-reminders?type=rto&slot=7",
+      "schedule": "30 11 * * *"
+    }
+  ],
+  "functions": {
+    "api/send-reminders.js": {
+      "maxDuration": 60,
+      "memory": 1024
+    },
+    "api/alerts.js": {
+      "maxDuration": 30,
+      "memory": 512
+    },
+    "api/push-subscribe.js": {
+      "maxDuration": 15,
+      "memory": 512
+    }
+  },
+  "headers": [
+    {
+      "source": "/service-worker.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/manifest.json",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/index.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
