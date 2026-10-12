@@ -1079,25 +1079,89 @@ export default function DocumentVault() {
       ).slice(0, 12)
     : [];
 
+  // ── पिछले document से जानकारी उठाना ────────────────────────────────────────
+  //    आधार नंबर / गाड़ी / chassis / Nominee / Hypothecation — ये Customer
+  //    Management के record में अक्सर खाली रहते हैं, पर इसी ग्राहक के पुराने
+  //    document में भरे हुए होते हैं। वहीं से उठा लेते हैं।
+  const prevDocInfo = (name, phone) => {
+    const key  = folderKey(name, phone);
+    const ph10 = (phone || '').toString().replace(/\D/g, '').slice(-10);
+    const mine = docs
+      .filter(d => {
+        if (folderKey(d.customerName, d.customerPhone) === key) return true;
+        const p = (d.customerPhone || '').toString().replace(/\D/g, '').slice(-10);
+        return ph10.length === 10 && p === ph10;      // नंबर मिल जाए तो भी चलेगा
+      })
+      .sort((a, b) => new Date(b.savedAt || 0) - new Date(a.savedAt || 0));
+
+    const pick = (f) => {
+      for (const d of mine) if (d[f] && String(d[f]).trim()) return String(d[f]).trim();
+      return '';
+    };
+    return {
+      aadharNo:      pick('aadharNo'),
+      vehicleModel:  pick('vehicleModel'),
+      chassisNo:     pick('chassisNo'),
+      nomineeName:   pick('nomineeName'),
+      hypothecation: pick('hypothecation'),
+      count:         mine.length,
+    };
+  };
+
+  // Hypothecation की list — पहले इस्तेमाल हुए सब financer, menu में आएँगे
+  const financerOptions = useMemo(() => {
+    const s = new Set();
+    docs.forEach(d => { if (d.hypothecation) s.add(String(d.hypothecation).trim()); });
+    customerPool.forEach(c => {
+      const v = c.financerName || c.financeCompany || c.hypothecation || c.financer;
+      if (v) s.add(String(v).trim());
+    });
+    return [...s].filter(Boolean).sort((a, b) => a.localeCompare(b)).slice(0, 50);
+  }, [docs, customerPool]);
+
   const selectCustomer = (c) => {
-    // ✅ FIX: सब phone field variants + both numbers + aadhar
+    // ✅ सब phone field variants + दोनों नंबर
     const phone1 = c.phone || c.mobileNo || '';
     const phone2 = c.alternatePhone || c.alternateMobileNo || c.phone2 || c.mobileNo2 || '';
     const combinedPhone = phone2 && phone2 !== phone1 ? `${phone1}/ ${phone2}` : phone1;
-    setForm({ ...form,
-      customerName:  c.customerName || c.name || '',
-      customerPhone: combinedPhone,
-      aadharNo:      c.aadhar || c.aadharNo || c.aadhaar || '',
-      vehicleModel:  c.vehicleModel || c.linkedVehicle?.name || '',
-      // ✅ Customer Management वाली shape में chassis का नाम frameNo है
-      chassisNo:     c.chassisNo || c.linkedVehicle?.chassisNo || c.linkedVehicle?.frameNo || '',
-      // ✅ Hypothecation (फाइनेंस कंपनी) खुद भर जाएगा
-      nomineeName:   c.nomineeName || form.nomineeName || '',
-      hypothecation: c.hypothecation || c.financerName || c.financeCompany || form.hypothecation || '',
-    });
+    const nm = c.customerName || c.name || '';
 
-    setCustSearch(c.customerName || c.name || '');
+    // 1️⃣ Customer Management के record से
+    const fromCust = {
+      aadharNo:      c.aadhar || c.aadharNo || c.aadhaar || '',
+      vehicleModel:  c.vehicleModel || c.linkedVehicle?.name || c.vehicle || '',
+      chassisNo:     c.chassisNo || c.linkedVehicle?.chassisNo || c.linkedVehicle?.frameNo || c.frameNo || '',
+      nomineeName:   c.nomineeName || c.nominee || '',
+      hypothecation: c.hypothecation || c.financerName || c.financeCompany || c.financer || '',
+    };
+    // 2️⃣ जो वहाँ खाली है वह इसी ग्राहक के पुराने document से
+    const prev = prevDocInfo(nm, phone1);
+    const take = (a, b) => (a && String(a).trim()) ? String(a).trim() : (b || '');
+
+    const next = {
+      ...form,
+      customerName:  nm,
+      customerPhone: combinedPhone,
+      aadharNo:      take(fromCust.aadharNo, prev.aadharNo).replace(/\D/g, '').slice(0, 12),
+      vehicleModel:  take(fromCust.vehicleModel,  prev.vehicleModel),
+      chassisNo:     take(fromCust.chassisNo,     prev.chassisNo).toUpperCase(),
+      nomineeName:   take(fromCust.nomineeName,   prev.nomineeName),
+      hypothecation: take(fromCust.hypothecation, prev.hypothecation),
+    };
+    setForm(next);
+    setCustSearch(nm);
     setShowDropdown(false);
+
+    // कौन-कौन से खाने भर गए, कौन बाक़ी हैं — साफ़ बता दें
+    const LABEL = { aadharNo:'आधार', vehicleModel:'गाड़ी', chassisNo:'Chassis', nomineeName:'Nominee', hypothecation:'Bank' };
+    const got  = Object.keys(LABEL).filter(k => next[k]);
+    const miss = Object.keys(LABEL).filter(k => !next[k]);
+    showInAppToast(
+      got.length ? '✅ भर गया' : 'ℹ️ जानकारी नहीं मिली',
+      (got.length ? got.map(k => LABEL[k]).join(', ') : '') +
+      (miss.length ? `${got.length ? ' · ' : ''}हाथ से भरें: ${miss.map(k => LABEL[k]).join(', ')}` : ''),
+      got.length ? 'success' : 'info'
+    );
   };
 
   const handleCustNameChange = (value) => {
@@ -1988,16 +2052,60 @@ export default function DocumentVault() {
                         onMouseEnter={e => e.currentTarget.style.background='#334155'}
                         onMouseLeave={e => e.currentTarget.style.background='transparent'}>
                         <strong style={{ color:'#fff', fontSize:12 }}>{c.customerName || c.name}</strong>
+                        {(() => {
+                          const n = prevDocInfo(c.customerName || c.name, c.phone || c.mobileNo).count;
+                          return n ? <span style={{ marginLeft:6, fontSize:9, color:'#4ade80', background:'#052e16', border:'1px solid #166534', borderRadius:8, padding:'1px 6px' }}>📄 {n}</span> : null;
+                        })()}
                         <br/><span style={{ fontSize:10, color:'#94a3b8' }}>📞 {[c.phone||c.mobileNo, c.alternatePhone||c.alternateMobileNo||c.phone2].filter(Boolean).join('/ ')} · 🪪 {c.aadhar||c.aadharNo||'—'}</span>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
+              {/* ग्राहक Customer Management में न हो, पर पुराने document हों — तो यहाँ से भरें */}
+              {(() => {
+                const p = prevDocInfo(form.customerName || custSearch, form.customerPhone);
+                const empty = ['aadharNo','vehicleModel','chassisNo','nomineeName','hypothecation'].filter(k => !form[k] && p[k]);
+                if (!p.count || !empty.length) return null;
+                return (
+                  <button type="button"
+                    onClick={() => setForm(f => ({
+                      ...f,
+                      aadharNo:      f.aadharNo      || p.aadharNo,
+                      vehicleModel:  f.vehicleModel  || p.vehicleModel,
+                      chassisNo:     f.chassisNo     || p.chassisNo,
+                      nomineeName:   f.nomineeName   || p.nomineeName,
+                      hypothecation: f.hypothecation || p.hypothecation,
+                    }))}
+                    style={{ background:'#052e16', border:'1px solid #166534', color:'#86efac', borderRadius:8,
+                             padding:'8px 10px', fontSize:11, fontWeight:700, cursor:'pointer', textAlign:'left' }}>
+                    📄 इस ग्राहक के {p.count} पुराने document से भरें ({empty.length} खाने)
+                  </button>
+                );
+              })()}
               <div><label style={lbl}>Mobile Number</label><input value={form.customerPhone} onChange={e => setForm({...form, customerPhone: e.target.value.replace(/\D/g,'')})} maxLength={10} placeholder="10-digit" style={inp}/></div>
               <div><label style={lbl}>Aadhar Number</label><input value={form.aadharNo} onChange={e => setForm({...form, aadharNo: e.target.value.replace(/\D/g,'').slice(0,12)})} maxLength={12} placeholder="12-digit" style={inp}/></div>
               <div><label style={lbl}>Nominee Name</label><input value={form.nomineeName} onChange={e => setForm({...form, nomineeName: e.target.value})} placeholder="जैसे: Sita Devi" style={inp}/></div>
-              <div><label style={lbl}>Hypothecation (Bank/Financer)</label><input value={form.hypothecation} onChange={e => setForm({...form, hypothecation: e.target.value})} placeholder="जैसे: HDFC Bank" style={inp}/></div>
+              <div>
+                <label style={lbl}>Hypothecation (Bank/Financer)</label>
+                {/* ✅ menu — पहले इस्तेमाल हुए सब financer यहाँ मिलेंगे, टाइप करने की ज़रूरत नहीं */}
+                <input value={form.hypothecation} onChange={e => setForm({...form, hypothecation: e.target.value})}
+                  list="vp-financer-list" placeholder="लिखें या list से चुनें — जैसे: HDB, HDFC Bank" style={inp} autoComplete="off"/>
+                <datalist id="vp-financer-list">
+                  {financerOptions.map(f => <option key={f} value={f}/>)}
+                </datalist>
+                {financerOptions.length > 0 && (
+                  <div style={{ display:'flex', gap:5, flexWrap:'wrap', marginTop:5 }}>
+                    {financerOptions.slice(0, 6).map(f => (
+                      <button key={f} type="button" onClick={() => setForm({...form, hypothecation: f})}
+                        style={{ background: form.hypothecation === f ? '#1d4ed8' : '#1e293b', color:'#cbd5e1',
+                                 border:'1px solid #334155', borderRadius:12, padding:'3px 9px', fontSize:10, cursor:'pointer' }}>
+                        {f}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div><label style={lbl}>Vehicle Model</label><input value={form.vehicleModel} onChange={e => setForm({...form, vehicleModel: e.target.value})} placeholder="SP125, Activa" style={inp}/></div>
               <div><label style={lbl}>Chassis No</label><input value={form.chassisNo} onChange={e => setForm({...form, chassisNo: e.target.value.toUpperCase()})} placeholder="ME4JC94FDTG104998" style={inp}/></div>
               <div><label style={lbl}>Document Type *</label>
