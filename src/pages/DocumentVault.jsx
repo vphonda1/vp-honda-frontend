@@ -1026,6 +1026,29 @@ export default function DocumentVault() {
   const [savePick,     setSavePick]     = useState(null);   // { folder, docs }
   const [savePickSel,  setSavePickSel]  = useState([]);     // चुने हुए doc ids
   const [sentIdx,      setSentIdx]      = useState([]);
+  // ✅ "भेजा गया" रिकॉर्ड — हर customer × (Insurance / RTO / SU Tax) का, फोन में हमेशा के लिए सेव
+  const [sentLog,      setSentLog]      = useState(() => {
+    try { const v = JSON.parse(localStorage.getItem('vpDocSentLog') || '{}'); return v && typeof v === 'object' ? v : {}; }
+    catch { return {}; }
+  });
+  const sentPackRef = useRef(null);
+  const markSent = (meta, nFiles) => {
+    if (!meta?.fKey || !meta?.kind) return;
+    const k = `${meta.fKey}|${meta.kind}`;
+    const newPack = sentPackRef.current !== meta.packId;   // एक ही share-window में कई files = 1 बार
+    sentPackRef.current = meta.packId;
+    setSentLog(prev => {
+      const old = prev[k] || { count: 0 };
+      const next = { ...prev, [k]: { count: old.count + (newPack ? 1 : 0), last: new Date().toISOString(), files: nFiles || old.files || 0 } };
+      try { localStorage.setItem('vpDocSentLog', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  const sentInfo = (fKey, kind) => sentLog[`${fKey}|${kind}`] || null;
+  const sentWhen = (iso) => {
+    try { return new Date(iso).toLocaleString('en-IN', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }); }
+    catch { return ''; }
+  };
   const dropdownRef = useRef(null);
 
   // ── Load documents ──────────────────────────────────────────────────────────
@@ -1377,7 +1400,7 @@ export default function DocumentVault() {
   };
 
   // ── STEP 1: तैयारी (slow काम — download + PDF बनाना) ───────────────────────
-  const prepareShare = async (validDocs, textMsg, title) => {
+  const prepareShare = async (validDocs, textMsg, title, meta) => {
     setPreparing(true);
     setSentIdx([]);
     setPrepStatus('');
@@ -1389,7 +1412,8 @@ export default function DocumentVault() {
         setPreparing(false);
         return;
       }
-      setSharePack({ files, fileLabels, failReasons, totalKB, textMsg, title, docs: validDocs });
+      setSharePack({ files, fileLabels, failReasons, totalKB, textMsg, title, docs: validDocs,
+        meta: meta ? { ...meta, packId: meta.packId || `${Date.now()}-${Math.random().toString(36).slice(2,7)}` } : null });
       // छोटी हुई files record में update हो चुकी हैं — list ताज़ा कर लें
       apiFetch('/api/documents').then(dd => setDocs(Array.isArray(dd) ? dd : [])).catch(() => {});
       showInAppToast('✅ तैयार!', `${files.length} PDFs · ${totalKB} KB — अब भेजें दबाएं`, 'success');
@@ -1402,8 +1426,8 @@ export default function DocumentVault() {
   // ── STEP 2: भेजना — इसमें कोई await नहीं, इसलिए पहली ही click में चलेगा ─────
   const doShareAll = () => {
     if (!sharePack) return;
-    const { files, textMsg, title } = sharePack;
-    if (!navigator.share) { downloadAllFiles(files).then(() => { const p = prompt('📱 WhatsApp number (10 digit):'); if (p) sendWhatsApp(p, textMsg); }); return; }
+    const { files, textMsg, title, meta } = sharePack;
+    if (!navigator.share) { downloadAllFiles(files).then(() => { const p = prompt('📱 WhatsApp number (10 digit):'); if (p) { sendWhatsApp(p, textMsg); markSent(meta, files.length); } }); return; }
     if (!(navigator.canShare && navigator.canShare({ files }))) {
       showInAppToast('⚠️', 'फोन एक साथ इतनी files नहीं भेज सकता — नीचे से एक-एक भेजें', 'warning');
       return;
@@ -1411,6 +1435,7 @@ export default function DocumentVault() {
     navigator.share({ title, text: textMsg, files })
       .then(() => {
         setSentIdx(files.map((_, i) => i));
+        markSent(meta, files.length);
         showInAppToast('✅ भेज दिया', `${files.length} documents`, 'success');
         navigator.clipboard?.writeText(textMsg).catch(() => {});
       })
@@ -1424,13 +1449,13 @@ export default function DocumentVault() {
   // एक file भेजें (हर tap = नया gesture = सबसे भरोसेमंद तरीका)
   const doShareOne = (i) => {
     if (!sharePack) return;
-    const { files, fileLabels, textMsg, title } = sharePack;
+    const { files, fileLabels, textMsg, title, meta } = sharePack;
     const f = files[i];
     if (!f) return;
     if (!navigator.share) { downloadAllFiles([f]); return; }
     const cap = i === 0 ? textMsg : `📄 ${fileLabels[i]} — ${title}`;
     navigator.share({ title: f.name, text: cap, files: [f] })
-      .then(() => setSentIdx(prev => prev.includes(i) ? prev : [...prev, i]))
+      .then(() => { setSentIdx(prev => prev.includes(i) ? prev : [...prev, i]); markSent(meta, files.length); })
       .catch(err => {
         if (err?.name === 'AbortError') return;
         showInAppToast('❌', `${fileLabels[i]} नहीं गया — दोबारा दबाएं`, 'error');
@@ -1557,7 +1582,7 @@ export default function DocumentVault() {
 
     const msg = `🛡️ *VP Honda — Insurance Documents*\n👤 ${folder.name}\n📞 ${folder.phone || ''}\n👥 Nominee: ${folder.nomineeName || '—'}\n🏦 Hypothecation: ${folder.hypothecation || '—'}\n\n📎 Documents:\n${valid.map(d => `✅ ${d.docTypeLabel}`).join('\n')}${needed.length < INSURANCE_REQUIRED_KEYS.length ? `\n\n❌ Missing:\n${INSURANCE_REQUIRED_KEYS.filter(k => !folderDocs.some(d=>d.docType===k)).map(k => `❌ ${DOC_TYPES.find(t=>t.key===k)?.label||k}`).join('\n')}` : ''}\n\n📅 ${new Date().toLocaleDateString('en-IN')}\n🏍️ VP Honda, Bhopal · 📞 9713394738`;
 
-    await prepareShare(valid, msg, `Insurance - ${folder.name}`);
+    await prepareShare(valid, msg, `Insurance - ${folder.name}`, { fKey: folderKey(folder.name, folder.phone), kind: 'ins' });
   };
 
   // ── RTO/Pal share ────────────────────────────────────────────────────────────
@@ -1589,7 +1614,7 @@ export default function DocumentVault() {
 
     const msg = `🚗 *VP Honda — RTO Documents (Pal)*\n👤 ${folder.name}\n📞 ${folder.phone || ''}\n🏍️ ${first?.vehicleModel || ''}\n🔢 Chassis: ${first?.chassisNo || ''}\n\n📎 Documents:\n${valid.map(d => `✅ ${d.docTypeLabel}`).join('\n')}\n\n📅 ${new Date().toLocaleDateString('en-IN')}\n🏍️ VP Honda, Bhopal · 📞 9713394738`;
 
-    await prepareShare(valid, msg, `RTO - ${folder.name}`);
+    await prepareShare(valid, msg, `RTO - ${folder.name}`, { fKey: folderKey(folder.name, folder.phone), kind: 'rto' });
   };
 
   // ── SU Tax Invoice share ─────────────────────────────────────────────────────
@@ -1625,7 +1650,7 @@ export default function DocumentVault() {
 
     const msg = `📄 *VP Honda — SU Tax Invoice Documents*\n👤 ${folder.name}\n📞 ${folder.phone || ''}\n🏍️ ${first?.vehicleModel || ''}\n🔢 Chassis: ${first?.chassisNo || ''}\n\n📎 Documents:\n${valid.map(d => `✅ ${d.docTypeLabel}`).join('\n')}${missingText}\n\n📅 ${new Date().toLocaleDateString('en-IN')}\n🏍️ VP Honda, Bhopal · 📞 9713394738`;
 
-    await prepareShare(valid, msg, `SU Tax - ${folder.name}`);
+    await prepareShare(valid, msg, `SU Tax - ${folder.name}`, { fKey: folderKey(folder.name, folder.phone), kind: 'su' });
   };
 
   // ── Single doc share ─────────────────────────────────────────────────────────
@@ -1739,18 +1764,24 @@ export default function DocumentVault() {
                     </div>
                   </div>
                   <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                    {(() => { const si = sentInfo(key, 'ins'); return (
                     <button onClick={() => sendInsurance(folder.docs, folder)}
-                      style={{ background:insCount>=5?'#16a34a':'#334155', color:'#fff', border:'none', padding:'7px 12px', borderRadius:8, fontSize:11, fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' }}>
-                      🛡️ Insurance ({insCount}/{INSURANCE_REQUIRED_KEYS.length})
-                    </button>
+                      style={{ background:si?'#065f46':(insCount>=5?'#16a34a':'#334155'), color:'#fff', border:si?'2px solid #34d399':'2px solid transparent', padding:'6px 12px', borderRadius:8, fontSize:11, fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' }}>
+                      {si ? `✅ Insurance भेजा ×${si.count}` : `🛡️ Insurance (${insCount}/${INSURANCE_REQUIRED_KEYS.length})`}
+                      {si && <div style={{ fontSize:9, fontWeight:600, opacity:0.85 }}>{sentWhen(si.last)}</div>}
+                    </button>); })()}
+                    {(() => { const si = sentInfo(key, 'rto'); return (
                     <button onClick={() => sendRTO(folder.docs, folder)}
-                      style={{ background:rtoCount>=6?'#7c3aed':'#334155', color:'#fff', border:'none', padding:'7px 12px', borderRadius:8, fontSize:11, fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' }}>
-                      🚗 RTO ({rtoCount}/{RTO_REQUIRED_KEYS.length})
-                    </button>
+                      style={{ background:si?'#065f46':(rtoCount>=6?'#7c3aed':'#334155'), color:'#fff', border:si?'2px solid #34d399':'2px solid transparent', padding:'6px 12px', borderRadius:8, fontSize:11, fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' }}>
+                      {si ? `✅ RTO भेजा ×${si.count}` : `🚗 RTO (${rtoCount}/${RTO_REQUIRED_KEYS.length})`}
+                      {si && <div style={{ fontSize:9, fontWeight:600, opacity:0.85 }}>{sentWhen(si.last)}</div>}
+                    </button>); })()}
+                    {(() => { const si = sentInfo(key, 'su'); return (
                     <button onClick={() => sendSUTax(folder.docs, folder)}
-                      style={{ background:suCount>=4?'#f59e0b':'#334155', color:'#fff', border:'none', padding:'7px 12px', borderRadius:8, fontSize:11, fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' }}>
-                      📄 SU Tax ({suCount}/{SU_TAX_REQUIRED_KEYS.length})
-                    </button>
+                      style={{ background:si?'#065f46':(suCount>=4?'#f59e0b':'#334155'), color:'#fff', border:si?'2px solid #34d399':'2px solid transparent', padding:'6px 12px', borderRadius:8, fontSize:11, fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' }}>
+                      {si ? `✅ SU Tax भेजा ×${si.count}` : `📄 SU Tax (${suCount}/${SU_TAX_REQUIRED_KEYS.length})`}
+                      {si && <div style={{ fontSize:9, fontWeight:600, opacity:0.85 }}>{sentWhen(si.last)}</div>}
+                    </button>); })()}
                     <button onClick={() => openSavePicker(folder.docs, folder)}
                       style={{ background:'#0891b2', color:'#fff', border:'none', padding:'7px 12px', borderRadius:8, fontSize:11, fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' }}>
                       💾 Save ({folder.docs.length})
@@ -1783,23 +1814,38 @@ export default function DocumentVault() {
               {folder.hypothecation && <p style={{ color:'#fbbf24', fontSize:11, margin:'2px 0' }}>🏦 Bank: {folder.hypothecation}</p>}
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10, marginTop:12 }}>
                 <button onClick={() => sendInsurance(folder.docs, folder)}
-                  style={{ background:'linear-gradient(135deg,#16a34a,#15803d)', color:'#fff', border:'none', padding:12, borderRadius:10, fontWeight:800, fontSize:12, cursor:'pointer', textAlign:'left' }}>
-                  <div style={{ fontSize:18, marginBottom:3 }}>🛡️</div>
+                  style={{ background: sentInfo(activeFolder, 'ins') ? 'linear-gradient(135deg,#047857,#065f46)' : 'linear-gradient(135deg,#16a34a,#15803d)', color:'#fff', border: sentInfo(activeFolder, 'ins') ? '2px solid #34d399' : '2px solid transparent', padding:10, borderRadius:10, fontWeight:800, fontSize:12, cursor:'pointer', textAlign:'left' }}>
+                  <div style={{ fontSize:18, marginBottom:3 }}>{sentInfo(activeFolder, 'ins') ? '✅' : '🛡️'}</div>
                   <div>Insurance Documents</div>
+                  {sentInfo(activeFolder, 'ins') && (
+                    <div style={{ fontSize:10, marginTop:3, background:'rgba(0,0,0,.35)', borderRadius:6, padding:'3px 6px', display:'inline-block' }}>
+                      ✅ भेजा गया ×{sentInfo(activeFolder, 'ins').count} · {sentWhen(sentInfo(activeFolder, 'ins').last)}
+                    </div>
+                  )}
                   <div style={{ fontSize:10, opacity:0.8, marginTop:2 }}>{insCount}/{INSURANCE_REQUIRED_KEYS.length} ready</div>
                   {INSURANCE_REQUIRED_KEYS.map(k => <div key={k} style={{ fontSize:9, marginTop:1 }}>{folder.docs.some(d=>d.docType===k)?'✅':'❌'} {DOC_TYPES.find(t=>t.key===k)?.label}</div>)}
                 </button>
                 <button onClick={() => sendRTO(folder.docs, folder)}
-                  style={{ background:'linear-gradient(135deg,#7c3aed,#6d28d9)', color:'#fff', border:'none', padding:12, borderRadius:10, fontWeight:800, fontSize:12, cursor:'pointer', textAlign:'left' }}>
-                  <div style={{ fontSize:18, marginBottom:3 }}>🚗</div>
+                  style={{ background: sentInfo(activeFolder, 'rto') ? 'linear-gradient(135deg,#047857,#065f46)' : 'linear-gradient(135deg,#7c3aed,#6d28d9)', color:'#fff', border: sentInfo(activeFolder, 'rto') ? '2px solid #34d399' : '2px solid transparent', padding:10, borderRadius:10, fontWeight:800, fontSize:12, cursor:'pointer', textAlign:'left' }}>
+                  <div style={{ fontSize:18, marginBottom:3 }}>{sentInfo(activeFolder, 'rto') ? '✅' : '🚗'}</div>
                   <div>RTO / Pal</div>
+                  {sentInfo(activeFolder, 'rto') && (
+                    <div style={{ fontSize:10, marginTop:3, background:'rgba(0,0,0,.35)', borderRadius:6, padding:'3px 6px', display:'inline-block' }}>
+                      ✅ भेजा गया ×{sentInfo(activeFolder, 'rto').count} · {sentWhen(sentInfo(activeFolder, 'rto').last)}
+                    </div>
+                  )}
                   <div style={{ fontSize:10, opacity:0.8, marginTop:2 }}>{rtoCount}/{RTO_REQUIRED_KEYS.length} ready</div>
                   {RTO_REQUIRED_KEYS.map(k => <div key={k} style={{ fontSize:9, marginTop:1 }}>{folder.docs.some(d=>d.docType===k)?'✅':'❌'} {DOC_TYPES.find(t=>t.key===k)?.label}</div>)}
                 </button>
                 <button onClick={() => sendSUTax(folder.docs, folder)}
-                  style={{ background:'linear-gradient(135deg,#f59e0b,#d97706)', color:'#fff', border:'none', padding:12, borderRadius:10, fontWeight:800, fontSize:12, cursor:'pointer', textAlign:'left' }}>
-                  <div style={{ fontSize:18, marginBottom:3 }}>📄</div>
+                  style={{ background: sentInfo(activeFolder, 'su') ? 'linear-gradient(135deg,#047857,#065f46)' : 'linear-gradient(135deg,#f59e0b,#d97706)', color:'#fff', border: sentInfo(activeFolder, 'su') ? '2px solid #34d399' : '2px solid transparent', padding:10, borderRadius:10, fontWeight:800, fontSize:12, cursor:'pointer', textAlign:'left' }}>
+                  <div style={{ fontSize:18, marginBottom:3 }}>{sentInfo(activeFolder, 'su') ? '✅' : '📄'}</div>
                   <div>SU Tax Invoice</div>
+                  {sentInfo(activeFolder, 'su') && (
+                    <div style={{ fontSize:10, marginTop:3, background:'rgba(0,0,0,.35)', borderRadius:6, padding:'3px 6px', display:'inline-block' }}>
+                      ✅ भेजा गया ×{sentInfo(activeFolder, 'su').count} · {sentWhen(sentInfo(activeFolder, 'su').last)}
+                    </div>
+                  )}
                   <div style={{ fontSize:10, opacity:0.8, marginTop:2 }}>{suCount}/{SU_TAX_REQUIRED_KEYS.length} ready</div>
                   {SU_TAX_REQUIRED_KEYS.map(k => <div key={k} style={{ fontSize:9, marginTop:1 }}>{folder.docs.some(d=>d.docType===k)?'✅':'❌'} {DOC_TYPES.find(t=>t.key===k)?.label}</div>)}
                 </button>
@@ -1985,7 +2031,7 @@ export default function DocumentVault() {
             </div>
 
             {sharePack.files.some(f => f.size > MAX_PDF_KB * 1024) && (
-              <button onClick={() => prepareShare(sharePack.docs, sharePack.textMsg, sharePack.title)}
+              <button onClick={() => prepareShare(sharePack.docs, sharePack.textMsg, sharePack.title, sharePack.meta)}
                 style={{ width:'100%', background:'#7c2d12', color:'#fff', border:'1px solid #ea580c', padding:'11px', borderRadius:10, fontWeight:700, fontSize:12, cursor:'pointer', marginBottom:12 }}>
                 🗜️ बड़ी files दोबारा compress करें
               </button>
