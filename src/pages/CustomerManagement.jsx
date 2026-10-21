@@ -90,6 +90,7 @@ export default function CustomerManagement({ user }) {
     pinCode: c.pinCode || '',
     state: c.state || 'M.P.',
     dob: c.dob || '',
+    nomineeName: c.nomineeName || c.nominee || '',
     financerName: c.financeCompany || c.financerName || '',
     vehiclePrice: c.price || 0,
     linkedVehicle: {
@@ -180,6 +181,7 @@ export default function CustomerManagement({ user }) {
         district: c.district,
         pinCode: c.pinCode,
         dob: c.dob,
+        nomineeName: c.nomineeName || '',
         vehicleModel: c.linkedVehicle?.name || '',
         variant: c.linkedVehicle?.model || '',
         vehicleColor: c.linkedVehicle?.color || '',
@@ -224,7 +226,9 @@ export default function CustomerManagement({ user }) {
       const columnNames = Object.keys(rows[0]);
       console.log('📋 Excel Columns:', columnNames);
 
-      const findCol = (patterns) => columnNames.find(c => patterns.some(p => c.toLowerCase().includes(p.toLowerCase())));
+      // 🆕 Nominee वाले कॉलम अलग पहचानें — ताकि वे Customer के Name/DOB/Address वाले कॉलम में न मिल जाएँ
+      const isNomCol = (c) => /nomin|नॉमिनी|नामिनी/i.test(c);
+      const findCol = (patterns) => columnNames.find(c => !isNomCol(c) && patterns.some(p => c.toLowerCase().includes(p.toLowerCase())));
       const nameCol = findCol(['cost name', 'customer name', 'cust name', 'name']);
       const phoneCol = findCol(['mob no', 'mobile no', 'phone', 'mob', 'contact']);
       const vehicleCol = findCol(['veh', 'vehicle', 'model name']);
@@ -246,6 +250,34 @@ export default function CustomerManagement({ user }) {
       const keyCol = findCol(['key no', 'key']);
 
       if (!nameCol) throw new Error('❌ Name वाला कॉलम नहीं मिला! कॉलम: ' + columnNames.join(', '));
+
+      // 🆕 Nominee: Excel में एक ही कॉलम में "नाम (रिश्ता) DOB" हो सकता है, या अलग-अलग कॉलम (नाम / Relation / DOB)
+      const nomCols   = columnNames.filter(isNomCol);
+      const nomDobCol = nomCols.find(c => /dob|birth|date|जन्म/i.test(c));
+      const nomRelCol = nomCols.find(c => /relat|रिश्ता|रिलेशन/i.test(c))
+                     || columnNames.find(c => !isNomCol(c) && /^\s*relation/i.test(c) && nomCols.length);
+      const nomNameCols = nomCols.filter(c => c !== nomDobCol && c !== nomRelCol);
+      const fmtDMY = (val) => {
+        if (!val && val !== 0) return '';
+        const pad = (n) => String(n).padStart(2, '0');
+        if (val instanceof Date && !isNaN(val)) {
+          const d = new Date(val.getTime() + 12 * 3600 * 1000);   // 12 घंटे जोड़ें — timezone से तारीख़ न खिसके
+          return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`;
+        }
+        if (typeof val === 'number' && val > 1000) {
+          const d = new Date((val - 25569) * 86400000);
+          return `${pad(d.getUTCDate())}-${pad(d.getUTCMonth() + 1)}-${d.getUTCFullYear()}`;
+        }
+        return String(val).trim();
+      };
+      const buildNominee = (row) => {
+        const nm  = nomNameCols.map(c => String(row[c] || '').trim()).filter(Boolean).join(' ');
+        if (!nm) return '';
+        const rel = nomRelCol ? String(row[nomRelCol] || '').trim() : '';
+        const dob = nomDobCol ? fmtDMY(row[nomDobCol]) : '';
+        // एक ही कॉलम में पहले से पूरा लिखा हो (नाम + रिश्ता + DOB) तो वैसा ही रखें
+        return `${nm}${rel && !nm.includes(rel) ? ` (${rel})` : ''}${dob && !nm.includes(dob) ? ` ${dob}` : ''}`.trim();
+      };
 
       const parseDate = (val) => {
         if (!val) return '';
@@ -276,6 +308,7 @@ export default function CustomerManagement({ user }) {
           phone: phoneCol ? String(row[phoneCol] || '').trim() : '',
           aadhar: aadharCol ? String(row[aadharCol] || '').trim() : '',
           pan: '',
+          nomineeName: buildNominee(row),
           address: addressCol ? String(row[addressCol] || '').trim() : '',
           district: districtCol ? String(row[districtCol] || '').trim() : '',
           pinCode: pinCol ? String(row[pinCol] || '').trim() : '',
@@ -365,6 +398,7 @@ export default function CustomerManagement({ user }) {
       phone: customer.phone || customer.mobileNo || '',
       aadhar: customer.aadhar || customer.aadharNo || '',
       pan: customer.pan || customer.panNo || '',
+      nomineeName: customer.nomineeName || customer.nominee || '',
       address: customer.address || '',
       district: customer.district || customer.dist || '',
       pinCode: customer.pinCode || '',

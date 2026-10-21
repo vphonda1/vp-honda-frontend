@@ -1032,17 +1032,49 @@ export default function DocumentVault() {
     catch { return {}; }
   });
   const sentPackRef = useRef(null);
+  const saveSentLocal = (obj) => { try { localStorage.setItem('vpDocSentLog', JSON.stringify(obj)); } catch {} };
   const markSent = (meta, nFiles) => {
     if (!meta?.fKey || !meta?.kind) return;
     const k = `${meta.fKey}|${meta.kind}`;
     const newPack = sentPackRef.current !== meta.packId;   // एक ही share-window में कई files = 1 बार
     sentPackRef.current = meta.packId;
+    // 1) फोन पर तुरंत निशान (server का इंतज़ार नहीं)
     setSentLog(prev => {
       const old = prev[k] || { count: 0 };
       const next = { ...prev, [k]: { count: old.count + (newPack ? 1 : 0), last: new Date().toISOString(), files: nFiles || old.files || 0 } };
-      try { localStorage.setItem('vpDocSentLog', JSON.stringify(next)); } catch {}
+      saveSentLocal(next);
       return next;
     });
+    // 2) Server में सेव — ताकि सभी फोन/laptop पर दिखे। Server की गिनती ही आख़िरी मानी जाएगी।
+    apiFetch('/api/documents/sent-log', {
+      method: 'POST',
+      body: JSON.stringify({ fKey: meta.fKey, kind: meta.kind, inc: newPack ? 1 : 0, files: nFiles || 0 }),
+    }).then(row => {
+      if (!row) return;
+      setSentLog(prev => { const next = { ...prev, [k]: row }; saveSentLocal(next); return next; });
+    }).catch(e => console.warn('[sent-log] server save fail:', e?.message));
+  };
+  // Server से सबका "भेजा गया" रिकॉर्ड लाएं और local से मिला दें (जो server पर कम है वो ऊपर भेज दें)
+  const loadSentLog = async () => {
+    try {
+      const server = await apiFetch('/api/documents/sent-log');
+      if (!server || typeof server !== 'object') return;
+      let local = {};
+      try { local = JSON.parse(localStorage.getItem('vpDocSentLog') || '{}') || {}; } catch {}
+      const merged = { ...server };
+      Object.entries(local).forEach(([k, v]) => {
+        const sv = server[k];
+        if (!sv || (v?.count || 0) > (sv.count || 0)) {
+          merged[k] = v;
+          const [fKey, kind] = k.split('|');
+          if (fKey && kind) {
+            apiFetch('/api/documents/sent-log', { method: 'POST', body: JSON.stringify({ fKey, kind, count: v.count || 1, files: v.files || 0, last: v.last }) }).catch(() => {});
+          }
+        }
+      });
+      setSentLog(merged);
+      saveSentLocal(merged);
+    } catch (e) { console.warn('[sent-log] load fail:', e?.message); }
   };
   const sentInfo = (fKey, kind) => sentLog[`${fKey}|${kind}`] || null;
   const sentWhen = (iso) => {
@@ -1069,6 +1101,14 @@ export default function DocumentVault() {
     }
     setLoading(false);
   };
+
+  useEffect(() => {
+    loadSentLog();
+    // दूसरे फोन/laptop से भेजा हो तो पेज पर लौटते ही ताज़ा हो जाए
+    const onVis = () => { if (document.visibilityState === 'visible') loadSentLog(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
 
   useEffect(() => {
     loadDocuments();
@@ -1154,7 +1194,9 @@ export default function DocumentVault() {
       aadharNo:      c.aadhar || c.aadharNo || c.aadhaar || '',
       vehicleModel:  c.vehicleModel || c.linkedVehicle?.name || c.vehicle || '',
       chassisNo:     c.chassisNo || c.linkedVehicle?.chassisNo || c.linkedVehicle?.frameNo || c.frameNo || '',
-      nomineeName:   c.nomineeName || c.nominee || '',
+      // Nominee: सीधा field, या कोई भी field जिसके नाम में "nominee" हो (नाम + रिश्ता + DOB एक साथ)
+      nomineeName:   c.nomineeName || c.nominee ||
+                     (() => { const k = Object.keys(c || {}).find(x => /nomin/i.test(x) && typeof c[x] === 'string' && c[x].trim()); return k ? c[k] : ''; })(),
       hypothecation: c.hypothecation || c.financerName || c.financeCompany || c.financer || '',
     };
     // 2️⃣ जो वहाँ खाली है वह इसी ग्राहक के पुराने document से
