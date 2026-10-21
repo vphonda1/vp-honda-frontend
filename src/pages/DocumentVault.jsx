@@ -1236,15 +1236,42 @@ export default function DocumentVault() {
   };
 
 
+  // ── Folder के अंदर "+ Doc" दबाने पर form में ग्राहक की सारी जानकारी भरना ──────────
+  //    पहले: folder के पुराने document → फिर Customer Management के record → वरना खाली।
+  //    (हर खाना साफ़ सेट होता है, ताकि पिछले ग्राहक की जानकारी बची न रह जाए)
+  const folderFormFill = (folder) => {
+    const prev = prevDocInfo(folder.name, folder.phone);
+    const ph10 = (folder.phone || '').toString().replace(/\D/g, '').slice(-10);
+    const nmL  = (folder.name || '').trim().toLowerCase();
+    const cust = (customerPool || []).find(c => {
+      const p = (c.phone || c.mobileNo || '').toString().replace(/\D/g, '').slice(-10);
+      const n = (c.customerName || c.name || '').trim().toLowerCase();
+      return (ph10.length === 10 && p === ph10) || (n && n === nmL);
+    }) || {};
+    const pickS = (...v) => { for (const x of v) if (x && String(x).trim()) return String(x).trim(); return ''; };
+    return {
+      customerName:  folder.name,
+      customerPhone: folder.phone || '',
+      aadharNo:      pickS(folder.aadharNo, prev.aadharNo, cust.aadhar, cust.aadharNo, cust.aadhaar).replace(/\D/g, '').slice(0, 12),
+      vehicleModel:  pickS(folder.vehicleModel, prev.vehicleModel, cust.vehicleModel, cust.linkedVehicle?.name, cust.vehicle),
+      chassisNo:     pickS(folder.chassisNo, prev.chassisNo, cust.chassisNo, cust.linkedVehicle?.frameNo, cust.linkedVehicle?.chassisNo, cust.frameNo).toUpperCase(),
+      nomineeName:   pickS(folder.nomineeName, prev.nomineeName, cust.nomineeName, cust.nominee),
+      hypothecation: pickS(folder.hypothecation, prev.hypothecation, cust.hypothecation, cust.financerName, cust.financeCompany),
+    };
+  };
+
   // ── Folders ─────────────────────────────────────────────────────────────────
   // ✅ FIX: Always recompute key (ignore old d.folder) — पुराने duplicate folders merge हो जाएंगे
   const folders = docs.reduce((acc, d) => {
     const key = folderKey(d.customerName, d.customerPhone);
-    if (!acc[key]) acc[key] = { name: d.customerName, phone: d.customerPhone, docs: [], date: d.savedAt, nomineeName: '', hypothecation: '' };
+    if (!acc[key]) acc[key] = { name: d.customerName, phone: d.customerPhone, docs: [], date: d.savedAt, nomineeName: '', hypothecation: '', aadharNo: '', vehicleModel: '', chassisNo: '' };
     acc[key].docs.push(d);
     // Latest non-empty values रखें (अगर किसी एक doc में हैं)
     if (d.nomineeName)   acc[key].nomineeName   = d.nomineeName;
     if (d.hypothecation) acc[key].hypothecation = d.hypothecation;
+    if (d.aadharNo)      acc[key].aadharNo      = d.aadharNo;
+    if (d.vehicleModel)  acc[key].vehicleModel  = d.vehicleModel;
+    if (d.chassisNo)     acc[key].chassisNo     = d.chassisNo;
     // Latest date
     if (new Date(d.savedAt) > new Date(acc[key].date)) acc[key].date = d.savedAt;
     return acc;
@@ -1902,7 +1929,7 @@ export default function DocumentVault() {
             </div>
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:10 }}>
               {folder.docs.map(d => <DocCard key={d.id||d._id} doc={d} onView={() => openDoc(d)} onDelete={() => deleteDoc(d.id||d._id)} onShare={() => shareSingleDoc(d)}/>)}
-              <div onClick={() => { setForm(f => ({...f, customerName:folder.name, customerPhone:folder.phone||'', nomineeName:folder.nomineeName||'', hypothecation:folder.hypothecation||''})); setCustSearch(folder.name); setShowForm(true); }}
+              <div onClick={() => { setForm(f => ({...f, ...folderFormFill(folder)})); setCustSearch(folder.name); setShowForm(true); }}
                 style={{ background:'#0f172a', border:'2px dashed #334155', borderRadius:10, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:20, cursor:'pointer', gap:6, minHeight:140 }}>
                 <span style={{ fontSize:24 }}>➕</span>
                 <span style={{ color:'#64748b', fontSize:10, fontWeight:700 }}>Add Doc</span>
