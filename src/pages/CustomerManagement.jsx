@@ -198,7 +198,7 @@ export default function CustomerManagement({ user }) {
       }));
       const res = await fetch(api('/api/customers/sync'), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customers: syncData }),
+        body: JSON.stringify({ customers: syncData, force: true }),   // Customer Management का बदलाव जान-बूझकर होता है
       });
       if (!res.ok) console.error('MongoDB sync failed');
     } catch (err) { console.error('Sync error:', err); }
